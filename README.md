@@ -1,26 +1,28 @@
 <p align="center">
-  <strong>beetle</strong><br>
-  <sub>甲虫</sub>
+  <code>╭─────────────────────────────────────╮</code><br>
+  <code>│  B E E T L E  ·  甲虫               │</code><br>
+  <code>│  ESP32 边缘 AI Agent · 单板多协议   │</code><br>
+  <code>╰─────────────────────────────────────╯</code>
 </p>
 
 <p align="center">
-  <code>一块板子 · 多端对话 · 零服务器 · 插电即用</code>
+  <strong>零中继 · 上电即联 · Rust · ReAct</strong>
 </p>
 
 <p align="center">
-  <strong>ESP32 边缘 AI Agent 固件</strong> · Rust · ReAct · 多通道同源
+  <sub>飞书 · 钉钉 · 企微 · QQ · Telegram · WebSocket → 同源汇聚</sub>
 </p>
 
 ---
 
-## ▸ 定位
+## ▸ 任务简报 (MISSION BRIEF)
 
 > **单板即 Agent。** 飞书、钉钉、企微、QQ 频道、Telegram、WebSocket 全部汇聚到同一块 ESP32，无 Gateway、无常开 PC；配网用热点 + 浏览器，板型用 `BOARD=xxx` 切换，OTA 失败不覆盖当前分区。  
 > 受 [OpenClaw](https://github.com/openclaw/openclaw) 启发，用 Rust 在 MCU 上跑类型安全的全栈 Agent。
 
 ---
 
-## ▸ 架构一图
+## ▸ 系统拓扑 (SYSTEM TOPOLOGY)
 
 ```
   FEISHU  DINGTALK  WECOM  QQ  TG  WS
@@ -28,16 +30,16 @@
        \     |      |   /    |  /
         \    |      |  /     | /
          \   ▼      ▼ ▼      ▼
-          ╔═══════════════════════╗
-          ║  ◉ ESP32  · 单板     ║
-          ║  一只甲虫 · 一 Agent ║
-          ║  ReAct │ 工具 │ 记忆  ║
-          ╚═══════════════════════╝
+    ┌─────────────────────────────────┐
+    │  ◉ ESP32  EDGE NODE             │
+    │  ONE BOARD · ONE AGENT          │
+    │  ReAct │ TOOLS │ MEMORY         │
+    └─────────────────────────────────┘
 ```
 
 ---
 
-## ▸ 特性速览
+## ▸ 能力矩阵 (CAPABILITY MATRIX)
 
 | 维度 | 说明 |
 |------|------|
@@ -49,7 +51,7 @@
 
 ---
 
-## ▸ 快速开始
+## ▸ 快速部署 (QUICK DEPLOY)
 
 ### macOS / Linux
 
@@ -79,7 +81,7 @@ Windows 需安装 **Visual Studio**（带「使用 C++ 的桌面开发」及 Win
 
 ---
 
-## ▸ 环境与构建
+## ▸ 环境与构建 (ENV & BUILD)
 
 - **Rust**：`rust-toolchain.toml` 使用 `esp` channel，需先安装 [esp-rs 工具链](https://docs.espressif.com/projects/rust-book/en/latest/introduction.html)（`espup install`）
 - **烧录**：[espflash](https://github.com/esp-rs/espflash)（`cargo install espflash`）
@@ -93,7 +95,7 @@ cargo build --release
 
 ---
 
-## ▸ 支持板型（BOARD）
+## ▸ 支持板型 (BOARD)
 
 | BOARD | 说明 |
 |-------|------|
@@ -105,7 +107,7 @@ cargo build --release
 
 ---
 
-## ▸ 配置概要
+## ▸ 配置概要 (CONFIG)
 
 - **编译时**：构建前环境变量 `BEETLE_*`；NVS 有对应 key 则运行时覆盖
 - **运行时**：配置页写入 NVS；密钥不打印、不写 SPIFFS
@@ -125,7 +127,7 @@ cargo build --release
 
 ---
 
-## ▸ 其他
+## ▸ 其他 (MISC)
 
 - **SPIFFS**：`spiffs_data/` 打包烧录到 spiffs 分区，存记忆、会话、skills
 - **OTA**（feature `ota`）：从配置 URL 拉固件写备用分区，失败不改写当前分区
@@ -133,7 +135,7 @@ cargo build --release
 
 ---
 
-## ▸ 文档
+## ▸ 文档 (DOCS)
 
 | 文档 | 说明 |
 |------|------|
@@ -143,7 +145,7 @@ cargo build --release
 
 ---
 
-## ▸ 参考
+## ▸ 参考 (REFERENCES)
 
 - [Rust on ESP Book](https://docs.espressif.com/projects/rust-book/)
 - [esp-idf-svc](https://github.com/esp-rs/esp-idf-svc)
