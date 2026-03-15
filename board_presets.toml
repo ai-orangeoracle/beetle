@@ -1,0 +1,5 @@
+# 板型预设：BOARD=xxx 时 build.sh / build.ps1 据此选择 target 与 features。
+# 分区表由 sdkconfig.defaults.esp32s3 决定；仅支持带 PSRAM 的 S3。
+
+[boards.esp32-s3-16mb]
+target = "xtensa-esp32s3-espidf"

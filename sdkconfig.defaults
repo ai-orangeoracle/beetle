@@ -1,0 +1,13 @@
+# beetle (甲虫) - Common defaults
+# Target-specific: sdkconfig.defaults.esp32s3 / sdkconfig.defaults.esp32c3
+
+# 不用蓝牙时显式关闭，减少链接进固件的组件（若需 BLE 可删此行）
+CONFIG_BT_ENABLED=n
+
+# 浏览器请求头（Origin/Accept/User-Agent/Referer/X-Pairing-Code 等）常超默认 512 字节，避免 431
+CONFIG_HTTPD_MAX_REQ_HDR_LEN=2048
+
+CONFIG_LWIP_LOCAL_HOSTNAME="beetle"
+
+# 线程默认栈：agent/build_context + JSON 序列化等需要更大栈，避免栈溢出
+CONFIG_PTHREAD_TASK_STACK_SIZE_DEFAULT=16384

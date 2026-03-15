@@ -1,0 +1,53 @@
+# Pocket Crayfish 配置页 · 设计约束
+
+## 项目定位
+
+- **产品**：随身小龙虾（Pocket Crayfish）固件的配置前端，用于连接设备后配置 WiFi、LLM、通道（飞书/钉钉/企微/QQ/Telegram）、系统与技能等。
+- **风格**：现代、扁平化、精致，偏工具型与可信赖感。
+
+## Token 化（单源）
+
+**禁止在组件、theme 的 styleOverrides 内硬编码色值、圆角、动效时长、焦点环尺寸等。** 单源来自：
+
+- **颜色 / 语义**：`src/config/themeTokens.ts` 的 `ThemeTokens`（per mode × brand），通过 `createAppTheme` 注入到 `:root` 的 `--background`、`--foreground`、`--primary`、`--border`、`--muted`、`--card`、`--surface`、`--primary-soft`、`--primary-fg`、`--accent`、`--border-subtle`、`--overlay`、`--backdrop-overlay`、`--glass-blur`、`--transition-duration`、`--foreground-soft` 等。
+- **布局 / 动效**：`themeTokens.ts` 的 `LAYOUT_TOKENS`（`radiusControl`、`radiusCard`、`radiusChip`、`easeEmphasized`、`easeOutSmooth`、`durationImageHoverMs`、按钮高度、padding 等），并注入 `:root` 的 `--radius-control`、`--radius-card`、`--radius-chip`、`--ease-emphasized`、`--ease-out-smooth`、`--focus-ring-width`、`--focus-ring-offset`。
+- **宽度**：`src/config/layout.ts` 的 `CONTENT_MAX_WIDTH`、`SETTINGS_DRAWER_WIDTH`、`SIDEBAR_WIDTH_EXPANDED` 等，与 theme breakpoints 一致。
+
+组件与 theme 中一律使用 `var(--xxx)` 或从 token/常量引用，不写死 `#hex`、`12px`、`200ms` 等（除 token 定义文件本身）。
+
+## 视觉原则
+
+### 必须遵守
+
+- **扁平化**：界面层次通过留白、色块与轻微对比区分，不依赖立体感
+- **精致**：细节克制，间距与字号统一，动效引用 `var(--transition-duration)` 或 `LAYOUT_TOKENS`
+- **禁止重阴影**：若有阴影仅限极轻级别
+- **禁止重边框**：分割用 `var(--border)` / `var(--border-subtle)` 的细线
+
+### 推荐做法
+
+- 颜色只用 `var(--primary)`、`var(--border)`、`var(--card)` 等；圆角用 `var(--radius-control)` / `var(--radius-card)`；动效用 `var(--transition-duration)`、`var(--ease-emphasized)` 等
+- 导航与主体宽度用 `Container maxWidth="lg"`（即 `CONTENT_MAX_WIDTH`）
+
+## 组件与布局
+
+- **导航栏**：与主体同宽（`CONTENT_MAX_WIDTH`），样式遵循主题中的 `MuiAppBar`（无重阴影、无粗边框）
+- **卡片 / 列表**：优先用主题提供的 Card、Paper 等组件样式，不额外加重阴影或边框
+- **按钮 / 输入框**：使用主题已定制的 MUI 组件，保持扁平、无强立体感
+
+## 设计约束清单（写 UI/样式时必须遵守）
+
+以下为 `.cursor/rules/design-constraints.mdc` 的完整内容来源，AI 与开发写样式时以此为准：
+
+- **Token 化**：禁止在组件和 theme 的 styleOverrides 中硬编码色值、圆角、动效时长、焦点环等。颜色只用 `var(--primary)`、`var(--border)`、`var(--card)`、`var(--muted)`、`var(--foreground)` 等；圆角用 `var(--radius-control)`、`var(--radius-card)`、`var(--radius-chip)`；动效用 `var(--transition-duration)`、`var(--ease-emphasized)`；焦点环用 `var(--focus-ring-width)`、`var(--focus-ring-offset)`。单源为 `src/config/themeTokens.ts`（ThemeTokens + LAYOUT_TOKENS）和 `appTheme` 注入的 `:root` 变量。
+- **风格**：现代、扁平化、精致；禁止重阴影、粗/重边框。
+- **阴影**：仅允许极轻级别；禁止大面积、高模糊、深色强阴影。
+- **边框**：分割用 `var(--border)` 或 `var(--border-subtle)` 的细线，不写死色值。
+- **布局**：内容宽度用 `CONTENT_MAX_WIDTH` / `maxWidth="lg"`，不写死 1200 等数字。
+- **组件**：优先用主题已定制的 MUI 组件，不额外加重阴影或边框。
+- **新增 token**：在 themeTokens 中定义，并在 appTheme 的 `:root` 中注入对应 CSS 变量。
+
+## 变更与扩展
+
+- 新增页面或组件前请对照本文档（含上节约束清单），确保不引入重阴影、重边框与硬编码色值/尺寸/动效。
+- 新增颜色或尺寸 token 时：颜色放入 `ThemeTokens`（按 mode/brand），布局/动效放入 `LAYOUT_TOKENS`，并在 `appTheme` 的 `:root` 中注入对应 CSS 变量。

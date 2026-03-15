@@ -1,0 +1,372 @@
+//! WiFi：SoftAP（配置热点） + 可选 STA（连接用户路由器）。
+//! 单次初始化，AP 始终开启以便通过 192.168.4.1 访问配置 API。
+//! 支持通过通道向 WiFi 线程请求扫描，供 GET /api/wifi/scan 使用。
+
+use crate::config::AppConfig;
+use crate::error::{Error, Result};
+use embedded_svc::wifi::{AccessPointConfiguration, AuthMethod, ClientConfiguration, Configuration};
+use esp_idf_svc::eventloop::EspSystemEventLoop;
+use esp_idf_svc::hal::peripherals::Peripherals;
+use esp_idf_svc::nvs::EspDefaultNvsPartition;
+use esp_idf_svc::wifi::{BlockingWifi, EspWifi};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+const TAG: &str = "platform::wifi";
+const CONNECT_TIMEOUT_SECS: u64 = 15;
+const SCAN_RESP_TIMEOUT: Duration = Duration::from_secs(15);
+const SCAN_RETRY: u32 = 3;
+const SCAN_RETRY_DELAY: Duration = Duration::from_millis(400);
+/// STA 状态轮询间隔（毫秒）。
+const STA_POLL_INTERVAL_MS: u64 = 5_000;
+/// 发起 connect() 后的冷却期（毫秒）：给 WiFi 驱动足够时间完成 auth/assoc/DHCP，
+/// 冷却期内不再检查也不再发起 connect()，避免频繁重连干扰驱动状态机。
+const STA_RECONNECT_COOLDOWN_MS: u64 = 15_000;
+/// WiFi STA 是否已连接且获得 IP；由 WiFi 线程写入，WSS/HTTP 线程读取。
+static WIFI_STA_CONNECTED: AtomicBool = AtomicBool::new(false);
+
+/// 其他线程查询 WiFi STA 是否就绪（已连接且有 IP）。
+pub fn is_wifi_sta_connected() -> bool {
+    WIFI_STA_CONNECTED.load(Ordering::Relaxed)
+}
+
+/// GET /api/wifi/scan 返回的单个 AP；按信号强度排序后供前端下拉选择。
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct WifiApEntry {
+    pub ssid: String,
+    pub rssi: i8,
+}
+
+/// SoftAP 固定 SSID，供用户连接后访问 192.168.4.1
+const SOFTAP_SSID: &str = "Beetle";
+/// SoftAP 无密码（开放热点），便于开箱配置
+const SOFTAP_PASSWORD: &str = "";
+
+/// 通道内扫描结果：成功为列表，失败为错误字符串（避免与 crate::error::Result 混淆）。
+enum ScanResponse {
+    Ok(Vec<WifiApEntry>),
+    Err(String),
+}
+
+/// 扫描句柄：通过通道向 WiFi 线程请求一次扫描，返回 AP 列表（按 RSSI 降序）。
+#[derive(Clone)]
+pub struct WifiScanHandle {
+    req_tx: mpsc::Sender<()>,
+    resp_rx: Arc<Mutex<mpsc::Receiver<ScanResponse>>>,
+}
+
+/// 向设备请求一次 WiFi 扫描的 trait；由 Platform::wifi_scan() 返回。
+pub trait WifiScan: Send + Sync {
+    fn request_scan(&self) -> Result<Vec<WifiApEntry>>;
+}
+
+impl WifiScan for WifiScanHandle {
+    fn request_scan(&self) -> Result<Vec<WifiApEntry>> {
+        let _ = self.req_tx.send(());
+        let guard = self.resp_rx.lock().map_err(|e| Error::Other {
+            source: Box::new(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                e.to_string(),
+            )),
+            stage: "wifi_scan_lock",
+        })?;
+        match guard.recv_timeout(SCAN_RESP_TIMEOUT) {
+            Ok(ScanResponse::Ok(list)) => Ok(list),
+            Ok(ScanResponse::Err(msg)) => Err(Error::config("wifi_scan", msg)),
+            Err(mpsc::RecvTimeoutError::Timeout) => Err(Error::config("wifi_scan", "scan timeout")),
+            Err(mpsc::RecvTimeoutError::Disconnected) => Err(Error::Other {
+                source: Box::new(std::io::Error::new(
+                    std::io::ErrorKind::ConnectionAborted,
+                    "wifi scan channel closed",
+                )),
+                stage: "wifi_scan",
+            }),
+        }
+    }
+}
+
+/// 启动 WiFi：始终开 SoftAP（SSID Beetle）；若 config 中 wifi_ssid 非空则同时连 STA。
+/// 返回 Ok(()) 表示 AP 已起；返回 Ok(Some(handle)) 时 handle 可用于请求 WiFi 扫描；有 wifi_ssid 时 STA 连接超时或失败返回 Err。
+pub fn connect(config: &AppConfig) -> Result<Option<WifiScanHandle>> {
+    let ssid = config.wifi_ssid.clone();
+    let pass = config.wifi_pass.clone();
+
+    let (tx, rx) = mpsc::channel();
+    let (scan_req_tx, scan_req_rx) = mpsc::channel();
+    let (scan_resp_tx, scan_resp_rx) = mpsc::channel::<ScanResponse>();
+    std::thread::spawn(move || {
+        do_connect(ssid.as_str(), pass.as_str(), tx, scan_req_rx, scan_resp_tx);
+    });
+
+    let result = match rx.recv_timeout(Duration::from_secs(CONNECT_TIMEOUT_SECS)) {
+        Ok(Ok(())) => {
+            log::info!("[{}] WiFi ready (AP up, STA connected if configured)", TAG);
+            Ok(Some(WifiScanHandle {
+                req_tx: scan_req_tx,
+                resp_rx: Arc::new(Mutex::new(scan_resp_rx)),
+            }))
+        }
+        Ok(Err(e)) => Err(e),
+        Err(mpsc::RecvTimeoutError::Timeout) => {
+            log::warn!("[{}] WiFi STA connect timeout ({}s), AP is up", TAG, CONNECT_TIMEOUT_SECS);
+            Err(Error::config(
+                "wifi_connect",
+                format!("STA timeout after {}s", CONNECT_TIMEOUT_SECS),
+            ))
+        }
+        Err(mpsc::RecvTimeoutError::Disconnected) => Err(Error::Other {
+            source: Box::new(std::io::Error::new(
+                std::io::ErrorKind::ConnectionAborted,
+                "wifi thread disconnected",
+            )),
+            stage: "wifi_connect",
+        }),
+    };
+    result
+}
+
+/// 常驻循环：
+/// 1. 每 `STA_POLL_INTERVAL_MS` 检查 STA 连接状态，断连时非阻塞发起 reconnect。
+/// 2. 响应扫描请求（scan_req_rx）。
+/// `has_sta` 为 true 时才做 STA 保活检测（纯 AP 模式不需要）。
+///
+/// **重连策略**：只调 `wifi.connect()` 发起重连，**不调 `wait_netif_up()`**。
+/// `wait_netif_up()` 会阻塞线程数秒，阻止 WiFi 驱动处理内部事件，导致
+/// Mixed(AP+STA) 模式下 STA 反复断连。改为非阻塞后靠后续 poll 自然检测到连接恢复。
+fn run_scan_loop(
+    wifi: &mut BlockingWifi<EspWifi>,
+    scan_req_rx: &mpsc::Receiver<()>,
+    scan_resp_tx: &mpsc::Sender<ScanResponse>,
+    has_sta: bool,
+) {
+    use std::time::Instant;
+    let mut cooldown_until: Option<Instant> = None;
+
+    loop {
+        // -- STA 保活（非阻塞） --
+        if has_sta {
+            let in_cooldown = cooldown_until.map_or(false, |t| Instant::now() < t);
+            if !in_cooldown {
+                let connected = wifi.is_connected().unwrap_or(false);
+                if connected {
+                    if !WIFI_STA_CONNECTED.load(Ordering::Relaxed) {
+                        WIFI_STA_CONNECTED.store(true, Ordering::Relaxed);
+                        log::info!("[{}] STA connected (detected in poll)", TAG);
+                    }
+                    cooldown_until = None;
+                } else {
+                    if WIFI_STA_CONNECTED.load(Ordering::Relaxed) {
+                        log::warn!("[{}] STA disconnected, will reconnect", TAG);
+                    }
+                    WIFI_STA_CONNECTED.store(false, Ordering::Relaxed);
+                    match wifi.connect() {
+                        Ok(()) => {
+                            log::info!("[{}] STA connect() issued, cooldown {}ms", TAG, STA_RECONNECT_COOLDOWN_MS);
+                        }
+                        Err(e) => {
+                            log::warn!("[{}] STA connect() failed: {}", TAG, e);
+                        }
+                    }
+                    cooldown_until = Some(Instant::now() + Duration::from_millis(STA_RECONNECT_COOLDOWN_MS));
+                }
+            }
+        }
+
+        // -- 扫描请求 --
+        if scan_req_rx.try_recv().is_ok() {
+            let result = (|| {
+                let mut last_err_msg = String::new();
+                for attempt in 0..SCAN_RETRY {
+                    match wifi.scan() {
+                        Ok(aps) => {
+                            let mut entries: Vec<WifiApEntry> = aps
+                                .into_iter()
+                                .map(|ap| WifiApEntry {
+                                    ssid: ap.ssid.as_str().to_string(),
+                                    rssi: ap.signal_strength,
+                                })
+                                .collect();
+                            entries.sort_by(|a, b| b.rssi.cmp(&a.rssi));
+                            return ScanResponse::Ok(entries);
+                        }
+                        Err(e) => {
+                            last_err_msg = e.to_string();
+                            if attempt + 1 < SCAN_RETRY {
+                                std::thread::sleep(SCAN_RETRY_DELAY);
+                            }
+                        }
+                    }
+                }
+                let hint = if last_err_msg.contains("FAIL") || last_err_msg.contains("STATE") {
+                    " (WiFi busy, try again later)"
+                } else {
+                    ""
+                };
+                ScanResponse::Err(format!("{}{}", last_err_msg, hint))
+            })();
+            let _ = scan_resp_tx.send(result);
+        }
+
+        std::thread::park_timeout(Duration::from_millis(STA_POLL_INTERVAL_MS));
+    }
+}
+
+/// 成功启动后必须让本线程常驻不退出，否则 wifi 被 drop 会关闭热点。
+/// 收到 scan_req_rx 时执行一次 scan，结果通过 scan_resp_tx 送回。
+fn do_connect(
+    sta_ssid: &str,
+    sta_password: &str,
+    result_tx: mpsc::Sender<Result<()>>,
+    scan_req_rx: mpsc::Receiver<()>,
+    scan_resp_tx: mpsc::Sender<ScanResponse>,
+) {
+    let send_err = |e: Error| {
+        let _ = result_tx.send(Err(e));
+    };
+    let peripherals = match Peripherals::take().map_err(|e| Error::Other {
+        source: Box::new(e),
+        stage: "wifi_peripherals",
+    }) {
+        Ok(p) => p,
+        Err(e) => return send_err(e),
+    };
+    let sys_loop = match EspSystemEventLoop::take().map_err(|e| Error::Other {
+        source: Box::new(e),
+        stage: "wifi_event_loop",
+    }) {
+        Ok(s) => s,
+        Err(e) => return send_err(e),
+    };
+    let nvs = match EspDefaultNvsPartition::take().map_err(|e| Error::Other {
+        source: Box::new(e),
+        stage: "wifi_nvs",
+    }) {
+        Ok(n) => n,
+        Err(e) => return send_err(e),
+    };
+
+    let esp_wifi = match EspWifi::new(peripherals.modem, sys_loop.clone(), Some(nvs))
+        .map_err(|e| Error::Other {
+            source: Box::new(e),
+            stage: "wifi_new",
+        })
+    {
+        Ok(w) => w,
+        Err(e) => return send_err(e),
+    };
+    let mut wifi = match BlockingWifi::wrap(esp_wifi, sys_loop).map_err(|e| Error::Other {
+        source: Box::new(e),
+        stage: "wifi_wrap",
+    }) {
+        Ok(w) => w,
+        Err(e) => return send_err(e),
+    };
+
+    let ap_config = match (
+        SOFTAP_SSID.try_into().map_err(|_| Error::config("wifi_ap", "softap ssid too long")),
+        SOFTAP_PASSWORD
+            .try_into()
+            .map_err(|_| Error::config("wifi_ap", "softap password too long")),
+    ) {
+        (Ok(ssid), Ok(password)) => AccessPointConfiguration {
+            ssid,
+            password,
+            channel: 1,
+            ..Default::default()
+        },
+        (Err(e), _) | (_, Err(e)) => return send_err(e),
+    };
+
+    if sta_ssid.is_empty() {
+        if let Err(e) = wifi
+            .set_configuration(&Configuration::AccessPoint(ap_config))
+            .map_err(|e| Error::Other {
+                source: Box::new(e),
+                stage: "wifi_set_config",
+            })
+        {
+            return send_err(e);
+        }
+        if let Err(e) = wifi.start().map_err(|e| Error::Other {
+            source: Box::new(e),
+            stage: "wifi_start",
+        }) {
+            return send_err(e);
+        }
+        log::info!("[{}] SoftAP started (SSID: {})", TAG, SOFTAP_SSID);
+        let _ = result_tx.send(Ok(()));
+        run_scan_loop(&mut wifi, &scan_req_rx, &scan_resp_tx, false);
+        return;
+    }
+
+    let sta_auth = if sta_password.is_empty() {
+        AuthMethod::None
+    } else {
+        AuthMethod::WPA2Personal
+    };
+    let sta_config = match (
+        sta_ssid
+            .try_into()
+            .map_err(|_| Error::config("wifi_connect", "ssid too long")),
+        sta_password
+            .try_into()
+            .map_err(|_| Error::config("wifi_connect", "password too long")),
+    ) {
+        (Ok(ssid), Ok(password)) => ClientConfiguration {
+            ssid,
+            password,
+            auth_method: sta_auth,
+            ..Default::default()
+        },
+        (Err(e), _) | (_, Err(e)) => return send_err(e),
+    };
+
+    let ap_config_mixed = match (
+        SOFTAP_SSID.try_into().map_err(|_| Error::config("wifi_ap", "softap ssid too long")),
+        SOFTAP_PASSWORD
+            .try_into()
+            .map_err(|_| Error::config("wifi_ap", "softap password too long")),
+    ) {
+        (Ok(ssid), Ok(password)) => AccessPointConfiguration {
+            ssid,
+            password,
+            channel: 1,
+            ..Default::default()
+        },
+        (Err(e), _) | (_, Err(e)) => return send_err(e),
+    };
+
+    if let Err(e) = wifi
+        .set_configuration(&Configuration::Mixed(sta_config, ap_config_mixed))
+        .map_err(|e| Error::Other {
+            source: Box::new(e),
+            stage: "wifi_set_config",
+        })
+    {
+        return send_err(e);
+    }
+    if let Err(e) = wifi.start().map_err(|e| Error::Other {
+        source: Box::new(e),
+        stage: "wifi_start",
+    }) {
+        return send_err(e);
+    }
+    log::info!("[{}] SoftAP started (SSID: {}), connecting STA...", TAG, SOFTAP_SSID);
+    if let Err(e) = wifi.connect().map_err(|e| Error::Other {
+        source: Box::new(e),
+        stage: "wifi_connect",
+    }) {
+        return send_err(e);
+    }
+    if let Err(e) = wifi.wait_netif_up().map_err(|e| Error::Other {
+        source: Box::new(e),
+        stage: "wifi_wait_netif",
+    }) {
+        return send_err(e);
+    }
+    WIFI_STA_CONNECTED.store(true, Ordering::Relaxed);
+    let _ = result_tx.send(Ok(()));
+    run_scan_loop(&mut wifi, &scan_req_rx, &scan_resp_tx, true);
+}

@@ -1,0 +1,78 @@
+//! 工具抽象与注册。核心域不依赖 platform；HTTP 等由 main 注入 ToolContext。
+//! Tool trait and registry; no platform dependency.
+
+mod registry;
+
+pub mod board_info;
+pub mod cron;
+pub mod fetch_url;
+pub mod files;
+pub mod get_time;
+#[cfg(feature = "gpio")]
+pub mod gpio;
+pub mod remind_at;
+pub mod update_session_summary;
+pub mod web_search;
+
+pub use board_info::BoardInfoTool;
+pub use cron::CronTool;
+pub use fetch_url::FetchUrlTool;
+pub use files::FilesTool;
+pub use get_time::GetTimeTool;
+#[cfg(feature = "gpio")]
+pub use gpio::{GpioReadTool, GpioWriteTool};
+pub use registry::ToolRegistry;
+pub use remind_at::RemindAtTool;
+pub use update_session_summary::UpdateSessionSummaryTool;
+pub use web_search::WebSearchTool;
+
+use crate::error::{Error, Result};
+use serde_json::{Map, Value};
+
+/// 将 args 解析为 JSON 对象；供各 tool execute 统一使用，stage 用于错误上下文。
+pub fn parse_tool_args(args: &str, stage: &'static str) -> Result<Map<String, Value>> {
+    let v: Value = serde_json::from_str(args).map_err(|e| Error::Other {
+        source: Box::new(e),
+        stage,
+    })?;
+    v.as_object()
+        .cloned()
+        .ok_or_else(|| Error::config(stage, "tool args must be a JSON object"))
+}
+
+/// 单次 execute 的 args 最大长度（字符）。超限返回 Error::Config。
+pub const MAX_TOOL_ARGS_LEN: usize = 8 * 1024;
+/// 单次 execute 返回值最大长度（字符）。超限截断或返回 Error::Config。
+pub const MAX_TOOL_RESULT_LEN: usize = 16 * 1024;
+
+/// 工具执行时注入的上下文；HTTP 等由 lib 实现（如 EspHttpClient）。
+/// 当前会话的 chat_id/channel 供 remind_at 等工具使用；默认 None，agent 循环内用 wrapper 注入。
+pub trait ToolContext {
+    fn get(&mut self, url: &str) -> Result<(u16, crate::platform::ResponseBody)> {
+        self.get_with_headers(url, &[])
+    }
+    fn get_with_headers(&mut self, url: &str, headers: &[(&str, &str)]) -> Result<(u16, crate::platform::ResponseBody)>;
+    /// POST 请求，自定义 headers（须含 Content-Type 等）；供 web_search Tavily 等使用。
+    fn post_with_headers(
+        &mut self,
+        url: &str,
+        headers: &[(&str, &str)],
+        body: &[u8],
+    ) -> Result<(u16, crate::platform::ResponseBody)>;
+    /// 当前入站消息的 chat_id；remind_at 等工具写存储时使用。默认 None。
+    fn current_chat_id(&self) -> Option<&str> {
+        None
+    }
+    /// 当前入站消息的 channel。默认 None。
+    fn current_channel(&self) -> Option<&str> {
+        None
+    }
+}
+
+/// 工具 trait；Agent 按 name 派发，execute 时传入 ctx 以发 HTTP 等。
+pub trait Tool: Send + Sync {
+    fn name(&self) -> &str;
+    fn description(&self) -> &str;
+    fn schema(&self) -> Value;
+    fn execute(&self, args: &str, ctx: &mut dyn ToolContext) -> Result<String>;
+}

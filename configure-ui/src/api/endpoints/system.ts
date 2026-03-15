@@ -1,0 +1,96 @@
+import { request, API_ERROR } from '../client'
+import type { ApiResult } from '../client'
+
+export interface HealthData {
+  wifi?: string
+  inbound_depth?: number
+  outbound_depth?: number
+  last_error?: string
+}
+
+export interface DiagnoseItem {
+  severity: string
+  category: string
+  message: string
+}
+
+export async function getHealth(baseUrl: string): Promise<ApiResult<HealthData>> {
+  if (!baseUrl?.trim()) return { ok: false, error: API_ERROR.NO_BASE_URL }
+  const res = await request<HealthData>(baseUrl, '/api/health')
+  return res
+}
+
+export async function getDiagnose(baseUrl: string): Promise<ApiResult<DiagnoseItem[]>> {
+  if (!baseUrl?.trim()) return { ok: false, error: API_ERROR.NO_BASE_URL }
+  const res = await request<DiagnoseItem[]>(baseUrl, '/api/diagnose')
+  if (res.ok && Array.isArray(res.data)) return res
+  return { ok: false, error: res.error ?? 'Invalid response', data: [] }
+}
+
+/** GET /api/wifi/scan 返回项；设备扫描周边 WiFi，按 rssi 降序。 */
+export interface WifiApEntry {
+  ssid: string
+  rssi: number
+}
+
+export async function getWifiScan(baseUrl: string): Promise<ApiResult<WifiApEntry[]>> {
+  if (!baseUrl?.trim()) return { ok: false, error: API_ERROR.NO_BASE_URL }
+  const res = await request<WifiApEntry[]>(baseUrl, '/api/wifi/scan')
+  if (res.ok && Array.isArray(res.data)) return res
+  return { ok: false, error: res.error ?? 'Scan failed', data: [] }
+}
+
+/** GET /api/system_info 返回；需已激活（配对码已设置）。 */
+export interface SystemInfoData {
+  product_name: string
+  system_status: string
+  current_time?: string
+  firmware_version: string
+  board_id?: string
+  ota_available?: boolean
+  locale?: string
+}
+
+export async function getSystemInfo(
+  baseUrl: string,
+  pairingCode?: string,
+): Promise<ApiResult<SystemInfoData>> {
+  if (!baseUrl?.trim()) return { ok: false, error: API_ERROR.NO_BASE_URL }
+  return request<SystemInfoData>(baseUrl, '/api/system_info', { pairingCode })
+}
+
+/** GET /api/channel_connectivity 单通道项 */
+export interface ChannelConnectivityItem {
+  id: string
+  configured: boolean
+  ok: boolean
+  message: string | null
+}
+
+/** GET /api/channel_connectivity 响应 */
+export interface ChannelConnectivityResponse {
+  channels: ChannelConnectivityItem[]
+}
+
+export async function getChannelConnectivity(
+  baseUrl: string,
+  pairingCode?: string,
+): Promise<ApiResult<ChannelConnectivityResponse>> {
+  if (!baseUrl?.trim()) return { ok: false, error: API_ERROR.NO_BASE_URL }
+  return request<ChannelConnectivityResponse>(baseUrl, '/api/channel_connectivity', {
+    pairingCode,
+  })
+}
+
+/** POST /api/restart：配对码必填，设备将重启。 */
+export async function postRestart(
+  baseUrl: string,
+  pairingCode: string,
+): Promise<ApiResult<{ ok: boolean }>> {
+  if (!baseUrl?.trim()) return { ok: false, error: API_ERROR.NO_BASE_URL }
+  if (!pairingCode?.trim()) return { ok: false, error: API_ERROR.PAIRING_REQUIRED }
+  return request<{ ok: boolean }>(baseUrl, '/api/restart', {
+    method: 'POST',
+    pairingCode: pairingCode.trim(),
+  })
+}

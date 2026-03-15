@@ -1,0 +1,389 @@
+//! HTTP(S) 客户端：GET/POST、超时、响应体大小上限；可选 proxy（CONNECT 未实现时返回错误）。
+//! HTTP(S) client: GET/POST, timeout, response size limit; optional proxy.
+
+use crate::config::{parse_proxy_url_to_host_port, AppConfig};
+use crate::constants::MAX_RESPONSE_BODY_LEN;
+use crate::error::{Error, Result};
+use crate::platform::heap::{alloc_spiram_buffer, is_low_memory_no_spiram};
+use crate::platform::ResponseBody;
+use embedded_svc::http::client::Client as HttpClient;
+use embedded_svc::http::Method;
+use embedded_svc::io::{Read, Write};
+use esp_idf_svc::http::client::{Configuration as HttpConfig, EspHttpConnection};
+
+const TAG: &str = "platform::http_client";
+/// 单次请求超时（毫秒）。
+const REQUEST_TIMEOUT_MS: i32 = 30_000;
+/// 读响应体时的块大小；放栈上，不宜过大以免在 httpd 等小栈任务中溢出（如 GET /api/channel_connectivity 会多次 HTTP）。
+const RESPONSE_READ_CHUNK: usize = 1024;
+
+/// 喂任务看门狗（仅 ESP 目标）；长时间 HTTP/LLM 请求前调用，避免 TWDT 复位。若任务未订阅 TWDT 则 no-op。
+/// IDF 4.x 使用 esp_task_wdt_feed，IDF 5.x 使用 esp_task_wdt_reset（由 build.rs 根据 IDF_PATH/version.txt 设置 esp_idf_version_major）。
+#[cfg(all(
+    any(target_arch = "xtensa", target_arch = "riscv32"),
+    esp_idf_version_major = "4"
+))]
+fn feed_task_watchdog() {
+    unsafe {
+        let _ = esp_idf_svc::sys::esp_task_wdt_feed();
+    }
+}
+
+#[cfg(all(
+    any(target_arch = "xtensa", target_arch = "riscv32"),
+    not(esp_idf_version_major = "4")
+))]
+fn feed_task_watchdog() {
+    unsafe {
+        let _ = esp_idf_svc::sys::esp_task_wdt_reset();
+    }
+}
+
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+fn feed_task_watchdog() {}
+
+/// ESP 上单次 TLS 准入等待最长时间（与请求超时同量级，避免长时间占锁）。
+const TLS_ADMISSION_TIMEOUT_SECS: u64 = 30;
+
+/// 封装 EspHttpConnection，提供 GET/POST，超时与响应体上限；可选 proxy（CONNECT 隧道暂未实现）。
+pub struct EspHttpClient {
+    conn: EspHttpConnection,
+    /// 若设置，请求应经 CONNECT 隧道；当前未实现则 get/post 返回错误。
+    proxy_host: Option<String>,
+    #[allow(dead_code)]
+    proxy_port: Option<String>,
+}
+
+impl EspHttpClient {
+    /// 新建 HTTPS 客户端（无 proxy）；直连。
+    pub fn new() -> Result<Self> {
+        Self::new_optional_proxy(None)
+    }
+
+    /// 新建客户端；若 config.proxy_url 非空则解析为 host:port 并标记使用 proxy（CONNECT 隧道未实现时请求会失败）。
+    pub fn new_with_config(config: &AppConfig) -> Result<Self> {
+        let proxy = parse_proxy_url_to_host_port(config.proxy_url.trim()).map(|(h, p)| (h, p));
+        Self::new_optional_proxy(proxy)
+    }
+
+    fn default_http_config() -> HttpConfig {
+        HttpConfig {
+            crt_bundle_attach: Some(esp_idf_svc::sys::esp_crt_bundle_attach),
+            timeout: Some(std::time::Duration::from_millis(REQUEST_TIMEOUT_MS as u64)),
+            ..Default::default()
+        }
+    }
+
+    fn new_optional_proxy(proxy: Option<(String, String)>) -> Result<Self> {
+        if proxy.is_some() {
+            log::warn!("[{}] proxy CONNECT tunnel not implemented, request will fail", TAG);
+        }
+        let config = Self::default_http_config();
+        let conn = EspHttpConnection::new(&config).map_err(|e| Error::Other {
+            source: Box::new(e),
+            stage: "http_client_new",
+        })?;
+        let (proxy_host, proxy_port) = match proxy {
+            Some((h, p)) => (Some(h), Some(p)),
+            None => (None, None),
+        };
+        Ok(EspHttpClient {
+            conn,
+            proxy_host,
+            proxy_port,
+        })
+    }
+
+    fn check_proxy_and_watchdog(&self) -> Result<()> {
+        if self.proxy_host.is_some() {
+            return Err(Error::Other {
+                source: Box::new(std::io::Error::new(
+                    std::io::ErrorKind::Unsupported,
+                    "proxy CONNECT tunnel not implemented",
+                )),
+                stage: "proxy_connect",
+            });
+        }
+        feed_task_watchdog();
+        Ok(())
+    }
+
+    fn prepare_connection(&mut self) -> Result<()> {
+        if self.conn.is_request_initiated() || self.conn.is_response_initiated() {
+            log::warn!("[{}] connection is not in initial phase, recreating", TAG);
+            self.replace_connection()?;
+        }
+        Ok(())
+    }
+
+    fn execute_request<T, F>(&mut self, action: F) -> Result<T>
+    where
+        F: FnOnce(&mut EspHttpConnection) -> Result<T>,
+    {
+        #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+        let _tls_guard = crate::platform::tls_admission::acquire_tls_permit(
+            std::time::Duration::from_secs(TLS_ADMISSION_TIMEOUT_SECS),
+        )?;
+        #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+        crate::platform::tls_admission::check_internal_heap_for_tls()?;
+
+        self.prepare_connection()?;
+
+        let result = action(&mut self.conn);
+
+        // 仅失败时重建连接，成功则复用以节省 TLS 握手时间。
+        if let Err(ref err) = result {
+            log::warn!("[{}] request error, replacing connection: {:?}", TAG, err);
+            if let Err(ref e) = self.replace_connection() {
+                log::warn!("[{}] failed to replace connection: {:?}", TAG, e);
+            }
+        }
+
+        result
+    }
+
+    /// 替换为新建连接，用于重试前恢复 "initial" 状态（submit 失败后底层连接不可复用）。
+    pub fn replace_connection(&mut self) -> Result<()> {
+        let config = Self::default_http_config();
+        self.conn = EspHttpConnection::new(&config).map_err(|e| Error::Other {
+            source: Box::new(e),
+            stage: "http_client_replace",
+        })?;
+        Ok(())
+    }
+
+    fn do_get(&mut self, url: &str, headers: &[(&str, &str)]) -> Result<(u16, ResponseBody)> {
+        self.execute_request(|conn| {
+            let mut client = HttpClient::wrap(conn);
+            let request = client.request(Method::Get, url, headers).map_err(|e| Error::Other {
+                source: Box::new(e),
+                stage: "http_get_request",
+            })?;
+            let mut response = request.submit().map_err(|e| Error::Other {
+                source: Box::new(e),
+                stage: "http_get_submit",
+            })?;
+            let status = response.status();
+            if is_low_memory_no_spiram() {
+                drain_response(&mut response);
+                return Err(Error::Other {
+                    source: Box::new(std::io::Error::new(
+                        std::io::ErrorKind::OutOfMemory,
+                        "low heap, skip large response",
+                    )),
+                    stage: "http_get_submit",
+                });
+            }
+            match read_response_body(&mut response) {
+                Ok(body) => Ok((status, body)),
+                Err(e) => {
+                    drain_response(&mut response);
+                    Err(e)
+                }
+            }
+        })
+    }
+
+    fn do_post_inner(
+        &mut self,
+        url: &str,
+        headers: &[(&str, &str)],
+        body: &[u8],
+    ) -> Result<(u16, ResponseBody)> {
+        self.execute_request(|conn| {
+            let mut client = HttpClient::wrap(conn);
+            let mut request = client.post(url, headers).map_err(|e| Error::Other {
+                source: Box::new(e),
+                stage: "http_post_request",
+            })?;
+            request.write_all(body).map_err(|e| Error::Other {
+                source: Box::new(std::io::Error::new(std::io::ErrorKind::Other, format!("{:?}", e))),
+                stage: "http_post_write",
+            })?;
+            request.flush().map_err(|e| Error::Other {
+                source: Box::new(std::io::Error::new(std::io::ErrorKind::Other, format!("{:?}", e))),
+                stage: "http_post_flush",
+            })?;
+            let mut response = request.submit().map_err(|e| Error::Other {
+                source: Box::new(e),
+                stage: "http_post_submit",
+            })?;
+            let status = response.status();
+            if is_low_memory_no_spiram() {
+                drain_response(&mut response);
+                return Err(Error::Other {
+                    source: Box::new(std::io::Error::new(
+                        std::io::ErrorKind::OutOfMemory,
+                        "low heap, skip large response",
+                    )),
+                    stage: "http_post_submit",
+                });
+            }
+            match read_response_body(&mut response) {
+                Ok(resp_body) => Ok((status, resp_body)),
+                Err(e) => {
+                    drain_response(&mut response);
+                    Err(e)
+                }
+            }
+        })
+    }
+
+    /// GET 请求；返回 (status_code, body)，body 不超过 MAX_RESPONSE_BODY_LEN。若已配置 proxy 且 CONNECT 未实现则返回错误。
+    pub fn get(&mut self, url: &str) -> Result<(u16, ResponseBody)> {
+        self.check_proxy_and_watchdog()?;
+        self.do_get(url, &[])
+    }
+
+    /// GET 请求，自定义 headers；供 ToolContext 使用（如 Brave API key）。内部实现，避免与 trait 重名。
+    pub fn get_with_headers_inner(&mut self, url: &str, headers: &[(&str, &str)]) -> Result<(u16, ResponseBody)> {
+        self.check_proxy_and_watchdog()?;
+        self.do_get(url, headers)
+    }
+
+    /// POST 请求；body 为请求体；返回 (status_code, response_body)。若已配置 proxy 且 CONNECT 未实现则返回错误。
+    pub fn post(&mut self, url: &str, body: &[u8]) -> Result<(u16, ResponseBody)> {
+        self.check_proxy_and_watchdog()?;
+        let mut cl_buf = [0u8; 20];
+        let content_length = crate::util::usize_to_decimal_buf(&mut cl_buf, body.len());
+        let headers = [
+            ("content-type", "application/json"),
+            ("content-length", content_length),
+        ];
+        self.do_post_inner(url, &headers, body)
+    }
+
+    /// POST 请求，自定义 headers（须含 content-type、content-length）；供 LlmHttpClient 使用。
+    pub fn post_with_headers(
+        &mut self,
+        url: &str,
+        headers: &[(&str, &str)],
+        body: &[u8],
+    ) -> Result<(u16, ResponseBody)> {
+        self.check_proxy_and_watchdog()?;
+        self.do_post_inner(url, headers, body)
+    }
+}
+
+/// 首次分配块大小，避免无 PSRAM 时单次分配过大；后续按 read 循环 grow 至 MAX_RESPONSE_BODY_LEN。
+const INITIAL_RESPONSE_BODY_CAP: usize = 8 * 1024;
+
+/// 最多 drain 的字节数，防止无限读取恶意超长响应。
+const MAX_DRAIN_BYTES: usize = 512 * 1024;
+
+/// 将响应体读空（最多 MAX_DRAIN_BYTES），便于连接回到 initial 状态供下次请求使用。
+fn drain_response<R: Read>(r: &mut R) {
+    let mut buf = [0u8; 512];
+    let mut total = 0usize;
+    loop {
+        match r.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => {
+                total += n;
+                if total >= MAX_DRAIN_BYTES {
+                    break;
+                }
+            }
+            Err(_) => break,
+        }
+    }
+}
+
+/// S3 上优先从 PSRAM 分配整块读入，返回 ResponseBody（Drop 时释放 PSRAM），无堆拷贝；否则用 Vec 按块增长。
+fn read_response_body<R: Read>(r: &mut R) -> Result<ResponseBody> {
+    #[cfg(target_arch = "xtensa")]
+    if let Some(psram_ptr) = alloc_spiram_buffer(MAX_RESPONSE_BODY_LEN) {
+        return read_response_body_into_psram(psram_ptr, MAX_RESPONSE_BODY_LEN, r);
+    }
+
+    let mut out = Vec::with_capacity(INITIAL_RESPONSE_BODY_CAP.min(MAX_RESPONSE_BODY_LEN));
+    let mut buf = [0u8; RESPONSE_READ_CHUNK];
+    loop {
+        let n = r.read(&mut buf).map_err(|e| Error::Other {
+            source: Box::new(std::io::Error::new(std::io::ErrorKind::Other, format!("{:?}", e))),
+            stage: "http_read",
+        })?;
+        if n == 0 {
+            break;
+        }
+        let remain = MAX_RESPONSE_BODY_LEN.saturating_sub(out.len());
+        if remain == 0 {
+            log::warn!("[{}] response body truncated at {} bytes", TAG, MAX_RESPONSE_BODY_LEN);
+            drain_response(r);
+            break;
+        }
+        let take = n.min(remain);
+        out.extend_from_slice(&buf[..take]);
+        if take < n {
+            drain_response(r);
+            break;
+        }
+    }
+    Ok(ResponseBody::Heap(out))
+}
+
+/// 将响应体读入 PSRAM 块，返回 ResponseBody（Drop 时 free），不 to_vec。仅 xtensa。
+/// 读取失败时释放 PSRAM 缓冲区，防止泄漏。
+#[cfg(target_arch = "xtensa")]
+fn read_response_body_into_psram<R: Read>(
+    ptr: *mut u8,
+    max_len: usize,
+    r: &mut R,
+) -> Result<ResponseBody> {
+    let mut len = 0usize;
+    let mut buf = [0u8; RESPONSE_READ_CHUNK];
+    loop {
+        let n = match r.read(&mut buf) {
+            Ok(n) => n,
+            Err(e) => {
+                unsafe { crate::platform::heap::free_spiram_buffer(ptr); }
+                return Err(Error::Other {
+                    source: Box::new(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        format!("{:?}", e),
+                    )),
+                    stage: "http_read",
+                });
+            }
+        };
+        if n == 0 {
+            break;
+        }
+        let remain = max_len.saturating_sub(len);
+        if remain == 0 {
+            log::warn!("[{}] response body truncated at {} bytes", TAG, max_len);
+            drain_response(r);
+            break;
+        }
+        let take = n.min(remain);
+        unsafe {
+            std::ptr::copy_nonoverlapping(buf.as_ptr(), ptr.add(len), take);
+        }
+        len += take;
+        if take < n {
+            drain_response(r);
+            break;
+        }
+    }
+    Ok(ResponseBody::PSRAM {
+        ptr: Some(ptr),
+        len,
+    })
+}
+
+impl crate::platform::PlatformHttpClient for EspHttpClient {
+    fn get(&mut self, url: &str, headers: &[(&str, &str)]) -> Result<(u16, ResponseBody)> {
+        self.get_with_headers_inner(url, headers)
+    }
+    fn post(
+        &mut self,
+        url: &str,
+        headers: &[(&str, &str)],
+        body: &[u8],
+    ) -> Result<(u16, ResponseBody)> {
+        self.post_with_headers(url, headers, body)
+    }
+    fn reset_connection_for_retry(&mut self) {
+        let _ = self.replace_connection();
+    }
+}

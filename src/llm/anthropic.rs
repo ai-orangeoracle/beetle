@@ -1,0 +1,159 @@
+//! Anthropic Messages API 客户端；依赖注入 HTTP，不依赖 platform。
+//! 错误均带 stage（llm_request / llm_parse）；后续健康检查可统计最近一次失败或计数。
+//! Anthropic client; HTTP injected, no platform dependency.
+
+use crate::config::{AppConfig, LlmSource};
+use crate::error::{Error, Result};
+use crate::llm::types::{
+    AnthropicRequest, AnthropicRequestMessage, AnthropicResponse, AnthropicTool,
+};
+use crate::llm::{LlmClient, LlmHttpClient, LlmResponse, Message, ToolSpec};
+use crate::llm::types::{MAX_REQUEST_BODY_LEN};
+use serde_json;
+
+const TAG: &str = "llm::anthropic";
+const API_BASE: &str = "https://api.anthropic.com/v1/messages";
+const DEFAULT_MAX_TOKENS: u32 = 1024;
+
+/// Anthropic Messages API 客户端；持 config 只读，HTTP 由 chat 时注入。
+pub struct AnthropicClient {
+    model: String,
+    api_key: String,
+    max_tokens: u32,
+    api_base: String,
+}
+
+impl AnthropicClient {
+    pub fn new(config: &AppConfig) -> Self {
+        Self::from_source(&LlmSource {
+            provider: config.model_provider.clone(),
+            api_key: config.api_key.clone(),
+            model: config.model.clone(),
+            api_url: config.api_url.clone(),
+        })
+    }
+
+    /// 从单源配置构造，供多源回退使用。api_url 非空时替代默认 API_BASE。
+    pub fn from_source(source: &LlmSource) -> Self {
+        let api_base = if source.api_url.trim().is_empty() {
+            API_BASE.to_string()
+        } else {
+            source.api_url.trim_end_matches('/').to_string()
+        };
+        Self {
+            model: source.model.clone(),
+            api_key: source.api_key.clone(),
+            max_tokens: DEFAULT_MAX_TOKENS,
+            api_base,
+        }
+    }
+}
+
+impl LlmClient for AnthropicClient {
+    fn chat(
+        &self,
+        http: &mut dyn LlmHttpClient,
+        system: &str,
+        messages: &[Message],
+        tools: Option<&[ToolSpec]>,
+    ) -> Result<LlmResponse> {
+        let tools_api = tools.and_then(|t| {
+            if t.is_empty() {
+                None
+            } else {
+                Some(
+                    t.iter()
+                        .map(|s| AnthropicTool {
+                            name: s.name.clone(),
+                            description: s.description.clone(),
+                            input_schema: s.parameters.clone(),
+                        })
+                        .collect::<Vec<_>>(),
+                )
+            }
+        });
+        let req = AnthropicRequest {
+            model: self.model.clone(),
+            max_tokens: self.max_tokens,
+            system: if system.is_empty() {
+                None
+            } else {
+                Some(system.to_string())
+            },
+            messages: messages
+                .iter()
+                .map(|m| AnthropicRequestMessage {
+                    role: m.role.clone(),
+                    content: m.content.clone(),
+                })
+                .collect(),
+            tools: tools_api,
+        };
+        let body = serde_json::to_vec(&req).map_err(|e| Error::Other {
+            source: Box::new(e),
+            stage: "llm_parse",
+        })?;
+        if body.len() > MAX_REQUEST_BODY_LEN {
+            return Err(Error::config(
+                "llm_request",
+                format!("request body exceeds {} bytes", MAX_REQUEST_BODY_LEN),
+            ));
+        }
+
+        crate::llm::retry::with_retry(2, 500, TAG, http, |http| {
+            do_request(http, &self.api_base, &self.api_key, &body)
+        })
+    }
+}
+
+fn do_request(
+    http: &mut dyn LlmHttpClient,
+    url: &str,
+    api_key: &str,
+    body: &[u8],
+) -> Result<LlmResponse> {
+    const ANTHROPIC_VERSION: &str = "2023-06-01";
+    let mut cl_buf = [0u8; 20];
+    let content_length = crate::util::usize_to_decimal_buf(&mut cl_buf, body.len());
+    let headers = [
+        ("x-api-key", api_key),
+        ("anthropic-version", ANTHROPIC_VERSION),
+        ("content-type", "application/json"),
+        ("content-length", content_length),
+    ];
+    let (status, resp_body) = http.do_post(url, &headers, body).map_err(|e| match e {
+        Error::Http { status_code, .. } => Error::Http {
+            status_code,
+            stage: "llm_request",
+        },
+        _ => Error::Other {
+            source: Box::new(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("{:?}", e),
+            )),
+            stage: "llm_request",
+        },
+    })?;
+
+    if status == 429 {
+        log::warn!("[{}] rate limited (429), backing off", TAG);
+        std::thread::sleep(std::time::Duration::from_secs(5));
+        return Err(Error::Http {
+            status_code: 429,
+            stage: "llm_request",
+        });
+    }
+    if status >= 400 {
+        return Err(Error::Http {
+            status_code: status,
+            stage: "llm_request",
+        });
+    }
+
+    let parsed: AnthropicResponse = serde_json::from_slice(resp_body.as_ref()).map_err(|e| Error::Other {
+        source: Box::new(e),
+        stage: "llm_parse",
+    })?;
+
+    Ok(LlmResponse::from_anthropic(parsed))
+}

@@ -1,0 +1,53 @@
+import { useState } from 'react'
+import { Routes, Route, Navigate } from 'react-router-dom'
+import { ErrorBoundary } from './components/ErrorBoundary'
+import { Layout } from './components/Layout'
+import { SettingsDrawer } from './components/SettingsDrawer'
+import { ConfigProvider } from './contexts/ConfigProvider'
+import { DeviceProvider } from './contexts/DeviceProvider'
+import { ToastProvider } from './contexts/ToastProvider'
+import { UnsavedProvider } from './contexts/UnsavedProvider'
+import { DevicePage } from './pages/DevicePage'
+import { AIConfigPage } from './pages/AIConfigPage'
+import { ChannelsConfigPage } from './pages/ChannelsConfigPage'
+import { SystemConfigPage } from './pages/SystemConfigPage'
+import { SystemLogsPage } from './pages/SystemLogsPage'
+import { SoulUserPage } from './pages/SoulUserPage'
+import { SkillsPage } from './pages/SkillsPage'
+import { PlaceholderPage } from './pages/PlaceholderPage'
+import { useScrollToTop } from './hooks/useScrollToTop'
+
+function App() {
+  useScrollToTop()
+  const [settingsOpen, setSettingsOpen] = useState(false)
+
+  return (
+    <DeviceProvider>
+      <ToastProvider>
+        <UnsavedProvider>
+          <ConfigProvider>
+            <ErrorBoundary>
+              <SettingsDrawer open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+            <Routes>
+        <Route element={<Layout onOpenSettings={() => setSettingsOpen(true)} />}>
+          <Route path="/" element={<Navigate to="/device" replace />} />
+          <Route path="/config" element={<Navigate to="/ai-config" replace />} />
+          <Route path="/device" element={<DevicePage />} />
+          <Route path="/ai-config" element={<AIConfigPage />} />
+          <Route path="/channels-config" element={<ChannelsConfigPage />} />
+          <Route path="/system-config" element={<SystemConfigPage />} />
+          <Route path="/system-logs" element={<SystemLogsPage />} />
+          <Route path="/soul-user" element={<SoulUserPage />} />
+          <Route path="/skills" element={<SkillsPage />} />
+          <Route path="*" element={<PlaceholderPage />} />
+        </Route>
+      </Routes>
+            </ErrorBoundary>
+          </ConfigProvider>
+        </UnsavedProvider>
+      </ToastProvider>
+    </DeviceProvider>
+  )
+}
+
+export default App

@@ -1,0 +1,12 @@
+/* 科技感无衬线 UI、等宽数据/代码、Logo 用 Orbitron */
+:root {
+  --font-sans: 'IBM Plex Sans', 'Helvetica Neue', Arial, sans-serif;
+  --font-mono: 'JetBrains Mono', 'SF Mono', Consolas, monospace;
+  --font-display: 'Orbitron', 'IBM Plex Sans', sans-serif;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}

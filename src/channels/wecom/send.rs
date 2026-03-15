@@ -1,0 +1,303 @@
+//! 企业微信通道：出站经 MessageSink 队列，由 main 用 HTTP 鉴权后发送应用消息；入站无。
+//! 鉴权 GET gettoken，发送 POST message/send；text 按 2048 字节分片（官方限制）。Sink 统一为 dispatch::QueuedSink。
+
+use crate::channels::ChannelHttpClient;
+use crate::config::AppConfig;
+
+pub const WECOM_GETTOKEN_BASE: &str = "https://qyapi.weixin.qq.com/cgi-bin/gettoken";
+pub const WECOM_SEND_BASE: &str = "https://qyapi.weixin.qq.com/cgi-bin/message/send";
+/// 企业微信 text 消息 content 最大 2048 字节（官方文档）。
+const WECOM_MAX_TEXT_BYTES: usize = 2048;
+
+#[derive(serde::Deserialize)]
+pub struct WecomTokenResponse {
+    #[serde(default)]
+    pub errcode: i32,
+    #[serde(default)]
+    pub errmsg: String,
+    pub access_token: Option<String>,
+}
+
+#[derive(serde::Deserialize)]
+pub struct WecomSendResponse {
+    #[serde(default)]
+    pub errcode: i32,
+    #[serde(default)]
+    pub errmsg: String,
+}
+
+const CONNECTIVITY_MESSAGE: &str = "BOT, Hello";
+
+/// 连通性检查：供 GET /api/channel_connectivity 使用。
+pub fn check_connectivity<H: ChannelHttpClient + ?Sized>(
+    config: &AppConfig,
+    http: &mut H,
+) -> super::super::connectivity::ChannelConnectivityItem {
+    use super::super::connectivity;
+    let configured = !config.wecom_corp_id.trim().is_empty()
+        && !config.wecom_corp_secret.trim().is_empty()
+        && config.wecom_agent_id.trim().parse::<u32>().is_ok();
+    let (ok, message) = if !configured {
+        (false, None)
+    } else {
+        let url = format!(
+            "{}?corpid={}&corpsecret={}",
+            WECOM_GETTOKEN_BASE,
+            config.wecom_corp_id.trim(),
+            config.wecom_corp_secret.trim()
+        );
+        let (status, resp_body) = match http.http_get(&url) {
+            Ok(r) => r,
+            Err(e) => return connectivity::item("wecom", configured, false, Some(e.to_string())),
+        };
+        if status >= 400 {
+            return connectivity::item("wecom", configured, false, Some(format!("gettoken status {}", status)));
+        }
+        let r: WecomTokenResponse = match serde_json::from_slice(resp_body.as_ref()) {
+            Ok(x) => x,
+            Err(e) => return connectivity::item("wecom", configured, false, Some(e.to_string())),
+        };
+        if r.errcode != 0 {
+            return connectivity::item("wecom", configured, false, Some(format!("{} {}", r.errcode, r.errmsg)));
+        }
+        let token = match r.access_token {
+            Some(t) if !t.is_empty() => t,
+            _ => return connectivity::item("wecom", configured, false, Some("no access_token".into())),
+        };
+        let touser = config.wecom_default_touser.trim();
+        if touser.is_empty() {
+            (true, None)
+        } else {
+            let agent_id_u32: u32 = match config.wecom_agent_id.trim().parse() {
+                Ok(n) => n,
+                Err(_) => return connectivity::item("wecom", configured, false, Some("invalid agent_id".into())),
+            };
+            let body = serde_json::json!({
+                "touser": touser,
+                "msgtype": "text",
+                "agentid": agent_id_u32,
+                "text": { "content": CONNECTIVITY_MESSAGE }
+            });
+            let body_bytes = match serde_json::to_vec(&body) {
+                Ok(b) => b,
+                Err(e) => return connectivity::item("wecom", configured, false, Some(e.to_string())),
+            };
+            let send_url = format!("{}?access_token={}", WECOM_SEND_BASE, token);
+            let (status, resp_body) = match http.http_post(&send_url, &body_bytes) {
+                Ok(r) => r,
+                Err(e) => return connectivity::item("wecom", configured, false, Some(e.to_string())),
+            };
+            if status >= 400 {
+                return connectivity::item("wecom", configured, false, Some(format!("send status {}", status)));
+            }
+            let send_r: WecomSendResponse = match serde_json::from_slice(resp_body.as_ref()) {
+                Ok(x) => x,
+                Err(e) => return connectivity::item("wecom", configured, false, Some(e.to_string())),
+            };
+            if send_r.errcode != 0 {
+                return connectivity::item("wecom", configured, false, Some(format!("send {} {}", send_r.errcode, send_r.errmsg)));
+            }
+            (true, None)
+        }
+    };
+    connectivity::item("wecom", configured, ok, message)
+}
+
+fn acquire_wecom_token<H: ChannelHttpClient>(
+    http: &mut H,
+    corp_id: &str,
+    corp_secret: &str,
+) -> Option<String> {
+    const TAG: &str = "wecom_send";
+    let url = format!(
+        "{}?corpid={}&corpsecret={}",
+        WECOM_GETTOKEN_BASE, corp_id, corp_secret
+    );
+    let (status, resp_body) = match http.http_get(&url) {
+        Ok(r) => r,
+        Err(e) => {
+            log::warn!("[{}] gettoken failed: {}", TAG, e);
+            return None;
+        }
+    };
+    if status >= 400 {
+        log::warn!("[{}] gettoken status={}", TAG, status);
+        return None;
+    }
+    let token_resp: WecomTokenResponse = match serde_json::from_slice(resp_body.as_ref()) {
+        Ok(t) => t,
+        Err(e) => {
+            log::warn!("[{}] gettoken parse: {}", TAG, e);
+            return None;
+        }
+    };
+    if token_resp.errcode != 0 {
+        log::warn!(
+            "[{}] gettoken errcode={} errmsg={}",
+            TAG,
+            token_resp.errcode,
+            token_resp.errmsg
+        );
+        return None;
+    }
+    match token_resp.access_token {
+        Some(t) if !t.is_empty() => Some(t),
+        _ => {
+            log::warn!("[{}] gettoken empty access_token", TAG);
+            None
+        }
+    }
+}
+
+fn send_one_wecom<H: ChannelHttpClient>(
+    http: &mut H,
+    token: &str,
+    agent_id_u32: u32,
+    chat_id: &str,
+    default_touser: &str,
+    content: &str,
+) {
+    const TAG: &str = "wecom_send";
+    let touser = if chat_id.trim().is_empty() {
+        default_touser
+    } else {
+        chat_id.trim()
+    };
+    if touser.is_empty() {
+        return;
+    }
+    let chunks = crate::channels::chunk::chunk_str_by_utf8_bytes(content, WECOM_MAX_TEXT_BYTES);
+    for chunk in chunks {
+        let body = serde_json::json!({
+            "touser": touser,
+            "msgtype": "text",
+            "agentid": agent_id_u32,
+            "text": { "content": chunk }
+        });
+        let body_bytes = match serde_json::to_vec(&body) {
+            Ok(b) => b,
+            Err(e) => {
+                log::warn!("[{}] send json: {}", TAG, e);
+                continue;
+            }
+        };
+        let send_url = format!("{}?access_token={}", WECOM_SEND_BASE, token);
+        if let Ok((status, resp_body)) =
+            crate::channels::send::send_post(TAG, http, &send_url, &body_bytes)
+        {
+            if status < 400 {
+                if let Ok(resp) =
+                    serde_json::from_slice::<WecomSendResponse>(resp_body.as_ref())
+                {
+                    if resp.errcode != 0 {
+                        log::warn!(
+                            "[{}] send errcode={} errmsg={}",
+                            TAG,
+                            resp.errcode,
+                            resp.errmsg
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// 从 rx 取出待发送（一次性 drain）。
+pub fn flush_wecom_sends<H: ChannelHttpClient>(
+    rx: &std::sync::mpsc::Receiver<(String, String)>,
+    corp_id: &str,
+    corp_secret: &str,
+    agent_id: &str,
+    default_touser: &str,
+    http: &mut H,
+) {
+    if corp_id.is_empty() || corp_secret.is_empty() {
+        return;
+    }
+    let agent_id_u32: u32 = match agent_id.parse() {
+        Ok(n) => n,
+        Err(_) => {
+            log::warn!("[wecom_send] invalid agent_id");
+            return;
+        }
+    };
+    let token = match acquire_wecom_token(http, corp_id, corp_secret) {
+        Some(t) => t,
+        None => return,
+    };
+    while let Ok((chat_id, content)) = rx.try_recv() {
+        send_one_wecom(http, &token, agent_id_u32, &chat_id, default_touser, &content);
+    }
+}
+
+/// 持续运行的企业微信发送循环；按需创建 HTTP 客户端，发完即释放。
+pub fn run_wecom_sender_loop<H, F>(
+    rx: std::sync::mpsc::Receiver<(String, String)>,
+    corp_id: &str,
+    corp_secret: &str,
+    agent_id: &str,
+    default_touser: &str,
+    mut create_http: F,
+) where
+    H: ChannelHttpClient,
+    F: FnMut() -> crate::error::Result<H>,
+{
+    const TAG: &str = "wecom_sender";
+    if corp_id.is_empty() || corp_secret.is_empty() {
+        return;
+    }
+    let agent_id_u32: u32 = match agent_id.parse() {
+        Ok(n) => n,
+        Err(_) => {
+            log::warn!("[{}] invalid agent_id", TAG);
+            return;
+        }
+    };
+    #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+    crate::platform::task_wdt::register_current_task_to_task_wdt();
+    log::info!("[{}] sender loop started", TAG);
+
+    let recv_timeout = std::time::Duration::from_secs(30);
+    loop {
+        let (chat_id, content) = match rx.recv_timeout(recv_timeout) {
+            Ok(item) => item,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                crate::platform::task_wdt::feed_current_task();
+                continue;
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                log::info!("[{}] rx disconnected, exiting", TAG);
+                break;
+            }
+        };
+        crate::platform::task_wdt::feed_current_task();
+        let mut sent = false;
+        for retry in 0..3u8 {
+            if retry > 0 {
+                std::thread::sleep(std::time::Duration::from_secs(2));
+                crate::platform::task_wdt::feed_current_task();
+            }
+            let mut http = match create_http() {
+                Ok(h) => h,
+                Err(e) => {
+                    log::warn!("[{}] create http failed (attempt {}): {}", TAG, retry + 1, e);
+                    continue;
+                }
+            };
+            let token = match acquire_wecom_token(&mut http, corp_id, corp_secret) {
+                Some(t) => t,
+                None => continue,
+            };
+            send_one_wecom(&mut http, &token, agent_id_u32, &chat_id, default_touser, &content);
+            while let Ok((cid, cnt)) = rx.try_recv() {
+                send_one_wecom(&mut http, &token, agent_id_u32, &cid, default_touser, &cnt);
+            }
+            sent = true;
+            break;
+        }
+        if !sent {
+            log::error!("[{}] message dropped after 3 retries, chat_id={}", TAG, chat_id);
+        }
+    }
+}

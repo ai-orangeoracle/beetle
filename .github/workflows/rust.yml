@@ -1,0 +1,84 @@
+# 阶段 10.3：Rust 固件构建与检查 / Stage 10.3: Rust firmware build and checks
+name: Rust
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+env:
+  RUST_BACKTRACE: 1
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: default
+            features: ""
+          - name: cli-ota
+            features: "cli,ota"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Xtensa Rust toolchain
+        uses: esp-rs/xtensa-toolchain@v1.5.2
+        with:
+          default: true
+          targets: xtensa-esp32s3-espidf
+
+      - name: Cache esp-idf and cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.espressif
+            ~/.cargo/registry
+            target
+          key: esp-${{ runner.os }}-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
+
+      - name: Build (release)
+        run: |
+          if [ -z "${{ matrix.features }}" ]; then
+            cargo build --release --target xtensa-esp32s3-espidf
+          else
+            cargo build --release --target xtensa-esp32s3-espidf --features "${{ matrix.features }}"
+          fi
+
+  fmt:
+    name: Fmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust (esp)
+        uses: esp-rs/xtensa-toolchain@v1.5.2
+        with:
+          default: true
+          targets: xtensa-esp32s3-espidf
+      - name: Check format
+        run: cargo fmt -- --check
+
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Xtensa Rust toolchain
+        uses: esp-rs/xtensa-toolchain@v1.5.2
+        with:
+          default: true
+          targets: xtensa-esp32s3-espidf
+      - name: Cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.espressif
+            ~/.cargo/registry
+            target
+          key: esp-clippy-${{ runner.os }}-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
+      - name: Clippy
+        run: cargo clippy --release --target xtensa-esp32s3-espidf -- -D warnings

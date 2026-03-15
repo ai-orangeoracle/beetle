@@ -1,0 +1,147 @@
+//! 统一错误类型。所有公共 API 返回 `Result<T, Error>`，错误带上下文便于生产排查。
+//! Unified error type. Public APIs return `Result<T, Error>` with context (stage, status_code).
+
+use thiserror::Error;
+
+/// 项目统一错误类型。各层通过 `?` 与 `.map_err()` 收敛；stage 为编译期字面量，避免错误路径堆分配。
+/// Project-wide error. Use `?` and `.map_err()` with meaningful stage; no unwrap/expect in production paths.
+#[derive(Error, Debug)]
+pub enum Error {
+    #[error("NVS (stage: {stage})")]
+    Nvs {
+        #[source]
+        source: Option<Box<dyn std::error::Error + Send + Sync>>,
+        stage: &'static str,
+    },
+
+    #[error("SPIFFS (stage: {stage})")]
+    Spiffs {
+        #[source]
+        source: Option<Box<dyn std::error::Error + Send + Sync>>,
+        stage: &'static str,
+    },
+
+    #[error("config: {message} (stage: {stage})")]
+    Config {
+        message: String,
+        stage: &'static str,
+    },
+
+    #[error("IO: {source} (stage: {stage})")]
+    Io {
+        #[source]
+        source: std::io::Error,
+        stage: &'static str,
+    },
+
+    #[error("ESP-IDF: code={code} (stage: {stage})")]
+    Esp {
+        code: i32,
+        stage: &'static str,
+    },
+
+    #[error("HTTP: status={status_code} (stage: {stage})")]
+    Http {
+        status_code: u16,
+        stage: &'static str,
+    },
+
+    #[error("other: {source} (stage: {stage})")]
+    Other {
+        #[source]
+        source: Box<dyn std::error::Error + Send + Sync>,
+        stage: &'static str,
+    },
+}
+
+impl Error {
+    pub fn nvs_stage(stage: &'static str) -> Self {
+        Error::Nvs {
+            source: None,
+            stage,
+        }
+    }
+
+    pub fn nvs(stage: &'static str, source: impl std::error::Error + Send + Sync + 'static) -> Self {
+        Error::Nvs {
+            source: Some(Box::new(source)),
+            stage,
+        }
+    }
+
+    pub fn spiffs_stage(stage: &'static str) -> Self {
+        Error::Spiffs {
+            source: None,
+            stage,
+        }
+    }
+
+    pub fn spiffs(stage: &'static str, source: impl std::error::Error + Send + Sync + 'static) -> Self {
+        Error::Spiffs {
+            source: Some(Box::new(source)),
+            stage,
+        }
+    }
+
+    pub fn config(stage: &'static str, message: impl Into<String>) -> Self {
+        Error::Config {
+            message: message.into(),
+            stage,
+        }
+    }
+
+    pub fn io(stage: &'static str, source: std::io::Error) -> Self {
+        Error::Io {
+            source,
+            stage,
+        }
+    }
+
+    pub fn esp(stage: &'static str, code: i32) -> Self {
+        Error::Esp {
+            code,
+            stage,
+        }
+    }
+
+    pub fn http(stage: &'static str, status_code: u16) -> Self {
+        Error::Http {
+            status_code,
+            stage,
+        }
+    }
+
+    /// 返回错误的 stage 字符串，便于日志与监控。
+    pub fn stage(&self) -> &'static str {
+        match self {
+            Error::Nvs { stage, .. } => stage,
+            Error::Spiffs { stage, .. } => stage,
+            Error::Config { stage, .. } => stage,
+            Error::Io { stage, .. } => stage,
+            Error::Esp { stage, .. } => stage,
+            Error::Http { stage, .. } => stage,
+            Error::Other { stage, .. } => stage,
+        }
+    }
+
+    /// 是否为 TLS 准入相关错误（供退避/重试判定）。
+    pub fn is_tls_admission(&self) -> bool {
+        self.stage() == "tls_admission"
+    }
+
+    /// 覆盖 stage 并返回同一变体，便于保留 Config/Http 等判别用于监控与排查。
+    pub fn with_stage(self, stage: &'static str) -> Self {
+        match self {
+            Error::Nvs { source, .. } => Error::Nvs { source, stage },
+            Error::Spiffs { source, .. } => Error::Spiffs { source, stage },
+            Error::Config { message, .. } => Error::Config { message, stage },
+            Error::Io { source, .. } => Error::Io { source, stage },
+            Error::Esp { code, .. } => Error::Esp { code, stage },
+            Error::Http { status_code, .. } => Error::Http { status_code, stage },
+            Error::Other { source, .. } => Error::Other { source, stage },
+        }
+    }
+}
+
+/// 简化 `Result<T, Error>` 类型别名。
+pub type Result<T> = std::result::Result<T, Error>;

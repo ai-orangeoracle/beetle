@@ -1,0 +1,20 @@
+import { useTranslation } from "react-i18next";
+import Typography from "@mui/material/Typography";
+import Box from "@mui/material/Box";
+
+export function PlaceholderPage() {
+  const { t } = useTranslation();
+  return (
+    <Box sx={{ py: 8, textAlign: "center" }}>
+      <Typography
+        sx={{
+          color: "var(--muted)",
+          fontSize: "var(--font-size-body)",
+          lineHeight: "var(--line-height-relaxed)",
+        }}
+      >
+        {t("common.pageComingSoon")}
+      </Typography>
+    </Box>
+  );
+}

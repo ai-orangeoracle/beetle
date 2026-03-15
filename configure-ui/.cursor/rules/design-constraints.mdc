@@ -1,0 +1,17 @@
+---
+description: AI 人才市场 UI 设计约束：现代、扁平、精致，全面 token 化，禁止硬编码
+alwaysApply: true
+---
+
+# 设计约束（AI 人才市场）
+
+完整说明与**设计约束清单**见 **docs/DESIGN.md**（含「设计约束清单」一节）。写 UI/样式时必须遵守：
+
+- **Token 化**：禁止在组件和 theme 的 styleOverrides 中硬编码色值、圆角、动效时长、焦点环等。颜色只用 `var(--primary)`、`var(--border)`、`var(--card)`、`var(--muted)`、`var(--foreground)` 等；圆角用 `var(--radius-control)`、`var(--radius-card)`、`var(--radius-chip)`；动效用 `var(--transition-duration)`、`var(--ease-emphasized)`；焦点环用 `var(--focus-ring-width)`、`var(--focus-ring-offset)`。单源为 `src/config/themeTokens.ts`（ThemeTokens + LAYOUT_TOKENS）和 `appTheme` 注入的 `:root` 变量。
+- **风格**：现代、扁平化、精致；禁止重阴影、粗/重边框。
+- **阴影**：仅允许极轻级别；禁止大面积、高模糊、深色强阴影。
+- **边框**：分割用 `var(--border)` 或 `var(--border-subtle)` 的细线，不写死色值。
+- **布局**：内容宽度用 `CONTENT_MAX_WIDTH` / `maxWidth="lg"`，不写死 1200 等数字。
+- **组件**：优先用主题已定制的 MUI 组件，不额外加重阴影或边框。
+
+新增 token 时在 themeTokens 中定义并在 appTheme 的 :root 中注入对应 CSS 变量。

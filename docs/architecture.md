@@ -1,0 +1,55 @@
+# 架构概要
+
+本文档面向外部读者，简要说明模块划分、数据流与扩展方式，不涉及内部实现细节。
+
+---
+
+## 模块划分
+
+| 模块 | 职责 |
+|------|------|
+| **config** | 编译时/环境变量与 NVS、SPIFFS 配置加载与校验；密钥不打印、不落盘。 |
+| **error** | 统一错误类型（stage 为 `&'static str`）；公共 API 返回 `Result<T, Error>`。 |
+| **bus** | 入站/出站消息队列（固定容量、背压）；通道与 Agent 解耦。 |
+| **memory** | 长期记忆与会话存储；系统提示聚合。 |
+| **platform** | 平台抽象（配置存储、技能存储、HTTP 客户端等）与 ESP32 实现；唯一直接依赖 esp-idf-svc 的模块。 |
+| **llm** | LLM 客户端抽象；支持 Anthropic、OpenAI 兼容（含 Ollama）等。 |
+| **tools** | 工具注册表；GetTime、Cron、FetchUrl、WebSearch、RemindAt、Files 等；新工具实现 Tool trait 并注册。 |
+| **agent** | 上下文构建、ReAct 循环；依赖 LlmClient、ToolRegistry、Memory、Session。 |
+| **channels** | 通道抽象与分发；Telegram、飞书、钉钉、企微、QQ 频道、WebSocket 等；入站推 bus，出站由 dispatch 按 channel 分发；单通道连续失败会熔断冷却，避免拖垮全局。 |
+| **metrics** | 运行指标与错误画像：消息进/出、LLM/tool 调用与错误、WDT feed、dispatch 成功/失败、按 stage 聚合错误（含 session 写入失败）；供 health API 与 heartbeat 基线日志暴露。 |
+| **cli** (可选) | 串口命令：wifi_status、heap_info、session_list、restart、ota 等。 |
+| **ota** (可选) | 从 URL 拉取固件、写 OTA 分区；失败不破坏当前分区。 |
+| **cron / heartbeat / skills** | 定时任务、周期日志（含 metrics 基线）、SPIFFS 技能加载。 |
+
+---
+
+## 数据流
+
+```
+  通道（飞书/钉钉/企微/QQ/Telegram/WebSocket）
+       ↓ push
+  入站队列 (Inbound)
+       ↓
+  Agent（build_context → LlmClient → Tools → 写会话）
+       ↓ push
+  出站队列 (Outbound)
+       ↓
+  Dispatch 按 channel 分发给各 MessageSink
+```
+
+- **入站**：各通道（或 cron）将用户/系统消息推入 Inbound；Agent 从 Inbound 取消息处理。
+- **Agent**：从 Memory/Session 聚合系统提示与历史消息，调用 LLM；若有 tool_use 则执行工具并追加结果，循环直至 end_turn；写会话并将回复推入 Outbound。
+- **出站**：Dispatch 从 Outbound 取消息，按 channel 调用对应通道的发送接口；单通道连续失败达阈值后进入冷却期，冷却期内不再向该通道发送。
+
+**可观测与健康**：`GET /api/health` 返回 WiFi、入站/出站队列深度、最近错误摘要及 **metrics** 快照（消息进/出、LLM/tool 调用与错误、WDT feed、按 stage 的错误计数等，无敏感信息）。heartbeat 每 30 秒打一条 metrics 基线日志，便于对比优化前后。
+
+---
+
+## 扩展方式
+
+- **新通道**：出站统一使用 `dispatch::QueuedSink`（`QueuedSink::new(tx, "stage")`），在 main 的 `run_app` 编排中注册到 dispatch 的 sink 列表；通道侧只需实现 `flush_*_sends` 从对应 rx 取消息并发 HTTP。入站时向 bus 的 Inbound 发送消息。若需自定义发送逻辑，可实现 `MessageSink` trait 并注册。
+- **新工具**：实现 `Tool` trait（`name`、`description`、`schema` 含 parameters、`execute`），在 `tools/mod.rs` 中可用 `parse_tool_args(args, stage)` 解析 JSON 参数；注册到 `ToolRegistry`，返回值由 Registry 统一截断至 `MAX_TOOL_RESULT_LEN`。
+- **新 LLM 后端**：实现 `LlmClient` trait，由 main 注入给 agent。
+
+核心（agent、bus、llm、tools、memory）不依赖具体通道或平台实现，仅依赖抽象 trait，便于维护与扩展。
