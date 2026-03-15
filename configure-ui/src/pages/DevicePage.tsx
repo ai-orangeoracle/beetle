@@ -26,7 +26,7 @@ import {
 } from "../api/endpoints/system";
 
 /** 与固件 mDNS 一致，默认用域名而非 IP */
-const DEFAULT_DEVICE_BASE_URL = "http://pocketcrayfish.local";
+const DEFAULT_DEVICE_BASE_URL = "http://beetle.local";
 
 export function DevicePage() {
   const { t } = useTranslation();

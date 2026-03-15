@@ -13,7 +13,7 @@ import LinkRounded from "@mui/icons-material/LinkRounded";
 import PaletteOutlined from "@mui/icons-material/PaletteOutlined";
 import SettingsOutlined from "@mui/icons-material/SettingsOutlined";
 import SmartToyOutlined from "@mui/icons-material/SmartToyOutlined";
-import WorkOutlineIcon from "@mui/icons-material/WorkOutline";
+import { BeetleIcon } from "./BeetleIcon";
 import { useTranslation } from "react-i18next";
 import { Link, useLocation } from "react-router-dom";
 import { NavBlockerContext } from "../contexts/NavBlockerContext";
@@ -128,7 +128,7 @@ export function Sidebar({ drawer }: SidebarProps) {
             flexShrink: 0,
           }}
         >
-          <WorkOutlineIcon
+          <BeetleIcon
             sx={{ color: "var(--primary-fg)", fontSize: "var(--icon-size-sm)" }}
           />
         </Box>
@@ -145,6 +145,7 @@ export function Sidebar({ drawer }: SidebarProps) {
               overflow: "hidden",
               textOverflow: "ellipsis",
               whiteSpace: "nowrap",
+              textTransform: "uppercase",
             }}
           >
             {t("app.name")}

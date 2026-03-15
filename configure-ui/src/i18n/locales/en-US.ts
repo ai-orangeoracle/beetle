@@ -1,7 +1,7 @@
 export const enUS = {
   translation: {
     app: {
-      name: 'Pocket Crayfish',
+      name: 'beetle',
       tagline: 'Config',
     },
     nav: {
@@ -19,7 +19,7 @@ export const enUS = {
       sectionConnection: 'Device URL & pairing code',
       sectionConnectionDesc: 'Find the device URL on the device screen or packaging; set the pairing code on the device pairing page.',
       baseUrlLabel: 'Device URL',
-      baseUrlPlaceholder: 'e.g. http://pocketcrayfish.local or http://192.168.4.1',
+      baseUrlPlaceholder: 'e.g. http://beetle.local or http://192.168.4.1',
       pairingCodeLabel: 'Pairing code',
       pairingCodePlaceholder: '6 digits, required for write operations',
       save: 'Save',

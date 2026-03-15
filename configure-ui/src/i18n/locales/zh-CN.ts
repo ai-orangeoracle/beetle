@@ -1,7 +1,7 @@
 export const zhCN = {
   translation: {
     app: {
-      name: 'Pocket Crayfish',
+      name: '甲虫',
       tagline: '配置',
     },
     nav: {
@@ -19,7 +19,7 @@ export const zhCN = {
       sectionConnection: '设备地址与配对码',
       sectionConnectionDesc: '设备地址可在设备显示屏或包装上查看；配对码需在设备配对页设置。',
       baseUrlLabel: '设备地址',
-      baseUrlPlaceholder: '如 http://pocketcrayfish.local 或 http://192.168.4.1',
+      baseUrlPlaceholder: '如 http://beetle.local 或 http://192.168.4.1',
       pairingCodeLabel: '配对码',
       pairingCodePlaceholder: '6 位数字，写操作时必填',
       save: '保存',
