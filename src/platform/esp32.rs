@@ -7,14 +7,13 @@ use crate::platform::abstraction::Platform;
 use crate::platform::{
     fetch_url::fetch_url_to_bytes,
     heartbeat_file::read_heartbeat_file,
-    spiffs::{read_file, remove_file, spiffs_usage, write_file, SPIFFS_BASE},
-    spiffs_important_message::SpiffsImportantMessageStore,
-    spiffs_pending_retry::SpiffsPendingRetryStore,
-    spiffs_remind_at::SpiffsRemindAtStore,
-    spiffs_session_summary::SpiffsSessionSummaryStore,
-    spiffs_skill_meta::SpiffsSkillMetaStore,
-    spiffs_task_continuation::SpiffsTaskContinuationStore,
-    NvsConfigStore, SpiffsMemoryStore, SpiffsSessionStore, SpiffsSkillStorage,
+    spiffs::{
+        read_file, remove_file, spiffs_usage, write_file, SpiffsImportantMessageStore,
+        SpiffsMemoryStore, SpiffsPendingRetryStore, SpiffsRemindAtStore, SpiffsSessionStore,
+        SpiffsSessionSummaryStore, SpiffsSkillMetaStore, SpiffsSkillStorage,
+        SpiffsTaskContinuationStore, SPIFFS_BASE,
+    },
+    NvsConfigStore,
 };
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 use crate::{

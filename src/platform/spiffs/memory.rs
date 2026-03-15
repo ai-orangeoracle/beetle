@@ -2,12 +2,16 @@
 //! MemoryStore implementation over SPIFFS.
 
 use crate::error::{Error, Result};
-use crate::memory::{MemoryStore, MAX_MEMORY_CONTENT_LEN, MAX_SOUL_USER_LEN, REL_PATH_DAILY_DIR, REL_PATH_MEMORY, REL_PATH_SOUL, REL_PATH_USER};
-use crate::platform::spiffs::{list_dir, read_file, write_file};
+use crate::memory::{
+    MemoryStore, MAX_MEMORY_CONTENT_LEN, MAX_SOUL_USER_LEN, REL_PATH_DAILY_DIR, REL_PATH_MEMORY,
+    REL_PATH_SOUL, REL_PATH_USER,
+};
 use std::path::PathBuf;
 
+use super::{list_dir, read_file, write_file, SPIFFS_BASE};
+
 fn full_path(rel: &str) -> PathBuf {
-    let mut p = PathBuf::from(super::spiffs::SPIFFS_BASE);
+    let mut p = PathBuf::from(SPIFFS_BASE);
     p.push(rel);
     p
 }
@@ -80,7 +84,7 @@ impl MemoryStore for SpiffsMemoryStore {
     }
 
     fn get_daily_note(&self, name: &str) -> Result<String> {
-        let mut p = PathBuf::from(super::spiffs::SPIFFS_BASE);
+        let mut p = PathBuf::from(SPIFFS_BASE);
         p.push(REL_PATH_DAILY_DIR);
         p.push(name);
         let buf = read_file(&p)?;
@@ -94,7 +98,7 @@ impl MemoryStore for SpiffsMemoryStore {
                 format!("content length {} exceeds {}", content.len(), MAX_MEMORY_CONTENT_LEN),
             ));
         }
-        let mut p = PathBuf::from(super::spiffs::SPIFFS_BASE);
+        let mut p = PathBuf::from(SPIFFS_BASE);
         p.push(REL_PATH_DAILY_DIR);
         p.push(name);
         write_file(&p, content.as_bytes())

@@ -3,9 +3,10 @@
 use crate::constants::{REMIND_AT_MAX_CONTEXT_LEN, REMIND_AT_MAX_ENTRIES};
 use crate::error::{Error, Result};
 use crate::memory::RemindAtStore;
-use crate::platform::spiffs::{read_file, write_file};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+
+use super::{read_file, write_file, SPIFFS_BASE};
 
 const REL_PATH_REMIND_AT: &str = "memory/remind_at.json";
 
@@ -18,7 +19,7 @@ struct RemindEntry {
 }
 
 fn full_path() -> PathBuf {
-    let mut p = PathBuf::from(crate::platform::spiffs::SPIFFS_BASE);
+    let mut p = PathBuf::from(SPIFFS_BASE);
     p.push(REL_PATH_REMIND_AT);
     p
 }

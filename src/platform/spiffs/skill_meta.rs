@@ -2,9 +2,10 @@
 
 use crate::error::{Error, Result};
 use crate::platform::abstraction::SkillMetaStore;
-use crate::platform::spiffs::{read_file, write_file, SPIFFS_BASE};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+
+use super::{read_file, write_file, SPIFFS_BASE};
 
 const REL_PATH: &str = "config/skills_meta.json";
 

@@ -18,15 +18,6 @@ pub mod nvs;
 pub mod pairing;
 pub mod response;
 pub mod spiffs;
-pub mod spiffs_important_message;
-pub mod spiffs_memory;
-pub mod spiffs_pending_retry;
-pub mod spiffs_skill_meta;
-pub mod spiffs_skill_storage;
-pub mod spiffs_session;
-pub mod spiffs_remind_at;
-pub mod spiffs_session_summary;
-pub mod spiffs_task_continuation;
 pub mod wifi;
 #[cfg(all(
     any(target_arch = "xtensa", target_arch = "riscv32"),
@@ -45,9 +36,8 @@ pub use nvs::{
     default_config_store, default_config_store_arc, erase_namespace,
     init_nvs, read_string, write_string, NvsConfigStore,
 };
-pub use spiffs::{init_spiffs, spiffs_usage, SPIFFS_BASE};
-pub use spiffs_memory::SpiffsMemoryStore;
-pub use spiffs_session::SpiffsSessionStore;
-pub use spiffs_skill_meta::SpiffsSkillMetaStore;
-pub use spiffs_skill_storage::{default_skill_storage_arc, SpiffsSkillStorage};
+pub use spiffs::{
+    default_skill_storage_arc, init_spiffs, spiffs_usage, SpiffsMemoryStore, SpiffsSessionStore,
+    SpiffsSkillMetaStore, SpiffsSkillStorage, SPIFFS_BASE,
+};
 pub use wifi::{connect as connect_wifi, is_wifi_sta_connected, WifiApEntry, WifiScan, WifiScanHandle};

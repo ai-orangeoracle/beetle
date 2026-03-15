@@ -4,9 +4,10 @@
 use crate::constants::TASK_CONTINUATION_MAX_OUTPUT_LEN;
 use crate::error::{Error, Result};
 use crate::memory::{TaskContinuationStore, REL_PATH_TASK_CONTINUATION};
-use crate::platform::spiffs::{read_file, write_file};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+
+use super::{read_file, write_file, SPIFFS_BASE};
 
 #[derive(Serialize, Deserialize)]
 struct TaskContinuationState {
@@ -16,7 +17,7 @@ struct TaskContinuationState {
 }
 
 fn full_path() -> PathBuf {
-    let mut p = PathBuf::from(crate::platform::spiffs::SPIFFS_BASE);
+    let mut p = PathBuf::from(SPIFFS_BASE);
     p.push(REL_PATH_TASK_CONTINUATION);
     p
 }

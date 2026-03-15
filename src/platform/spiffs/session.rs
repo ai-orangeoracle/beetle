@@ -6,11 +6,12 @@ use crate::memory::{
     SessionMessage, SessionStore, MAX_SESSION_ENTRIES, MAX_SESSION_MESSAGE_LEN,
     REL_PATH_SESSIONS_DIR,
 };
-use crate::platform::spiffs::{list_dir, read_file, write_file};
 use serde_json;
 use std::path::PathBuf;
 
-const TAG: &str = "platform::spiffs_session";
+use super::{list_dir, read_file, write_file, SPIFFS_BASE};
+
+const TAG: &str = "platform::spiffs::session";
 
 /// 文件名中 chat_id 部分最大长度（不含 .jsonl），超出则用 hash 短名，满足 ESP-IDF 路径/文件名限制。
 const MAX_CHAT_ID_FILENAME_LEN: usize = 20;
@@ -37,7 +38,7 @@ fn session_path(chat_id: &str) -> Result<(PathBuf, bool)> {
     {
         return Err(Error::config("session_path", "chat_id contains invalid chars"));
     }
-    let mut p = PathBuf::from(super::spiffs::SPIFFS_BASE);
+    let mut p = PathBuf::from(SPIFFS_BASE);
     p.push(REL_PATH_SESSIONS_DIR);
     let (filename, write_header) = if chat_id.len() <= MAX_CHAT_ID_FILENAME_LEN {
         (format!("{}{}", chat_id, SESSION_FILE_EXT), false)
@@ -195,7 +196,7 @@ impl SessionStore for SpiffsSessionStore {
     }
 
     fn list_chat_ids(&self) -> Result<Vec<String>> {
-        let mut p = PathBuf::from(super::spiffs::SPIFFS_BASE);
+        let mut p = PathBuf::from(SPIFFS_BASE);
         p.push(REL_PATH_SESSIONS_DIR);
         let names = match list_dir(&p) {
             Ok(n) => n,

@@ -43,6 +43,10 @@ alwaysApply: false
 - 公共 API 必须有 rustdoc（中英均可）；新增模块在 `lib.rs` 或对应 `mod.rs` 中导出稳定接口。
 - 遵循 `rustfmt` 与 `clippy`（`cargo clippy` 无警告）；嵌入式注意栈与堆使用，大 buffer 使用 PSRAM。
 
+## Git
+
+- **Commit messages**：必须使用英文撰写（subject 与 body 均英文），便于国际协作与历史检索。
+
 ## 扩展
 
 - 新通道：实现 `MessageSink` trait 并注册，不修改 bus/agent。

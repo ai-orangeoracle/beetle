@@ -4,10 +4,11 @@
 use crate::constants::SESSION_SUMMARY_MAX_LEN;
 use crate::error::{Error, Result};
 use crate::memory::{SessionSummaryStore, REL_PATH_SESSION_SUMMARIES};
-use crate::platform::spiffs::{read_file, write_file};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
+
+use super::{read_file, write_file, SPIFFS_BASE};
 
 const MAX_SESSION_SUMMARY_CHATS: usize = 32;
 
@@ -18,7 +19,7 @@ struct SummaryEntry {
 }
 
 fn full_path() -> PathBuf {
-    let mut p = PathBuf::from(crate::platform::spiffs::SPIFFS_BASE);
+    let mut p = PathBuf::from(SPIFFS_BASE);
     p.push(REL_PATH_SESSION_SUMMARIES);
     p
 }

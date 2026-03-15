@@ -5,12 +5,13 @@ use crate::bus::{PcMsg, MAX_CONTENT_LEN};
 use crate::constants::PENDING_RETRY_MAX_REPLAY;
 use crate::error::{Error, Result};
 use crate::memory::{PendingRetryStore, REL_PATH_PENDING_RETRY};
-use crate::platform::spiffs::{read_file, write_file};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+use super::{read_file, write_file, SPIFFS_BASE};
+
 fn full_path() -> PathBuf {
-    let mut p = PathBuf::from(crate::platform::spiffs::SPIFFS_BASE);
+    let mut p = PathBuf::from(SPIFFS_BASE);
     p.push(REL_PATH_PENDING_RETRY);
     p
 }

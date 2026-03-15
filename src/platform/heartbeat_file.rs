@@ -10,9 +10,9 @@ const MAX_HEARTBEAT_LEN: usize = 8192;
 /// 读取 HEARTBEAT.md 内容。路径 = SPIFFS_BASE + REL_PATH_HEARTBEAT。
 /// 文件不存在或读失败返回空字符串；内容超过 8KB 截断。
 pub fn read_heartbeat_file() -> Result<String> {
-    let mut path = PathBuf::from(super::spiffs::SPIFFS_BASE);
+    let mut path = PathBuf::from(crate::platform::spiffs::SPIFFS_BASE);
     path.push(REL_PATH_HEARTBEAT);
-    let buf = match super::spiffs::read_file(&path) {
+    let buf = match crate::platform::spiffs::read_file(&path) {
         Ok(b) => b,
         Err(_) => return Ok(String::new()),
     };

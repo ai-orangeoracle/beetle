@@ -3,8 +3,9 @@
 
 use crate::error::Result;
 use crate::platform::abstraction::SkillStorage;
-use crate::platform::spiffs::{list_dir, read_file, remove_file, write_file, SPIFFS_BASE};
 use std::path::PathBuf;
+
+use super::{list_dir, read_file, remove_file, write_file, SPIFFS_BASE};
 
 const SKILLS_SUBDIR: &str = "skills";
 const MAX_SKILL_COUNT: usize = 64;

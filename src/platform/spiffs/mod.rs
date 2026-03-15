@@ -138,3 +138,25 @@ pub fn list_dir(path: impl AsRef<Path>) -> Result<Vec<String>> {
     }
     Ok(names)
 }
+
+// --- 子模块与对外类型 ---
+
+pub mod important_message;
+pub mod memory;
+pub mod pending_retry;
+pub mod remind_at;
+pub mod session;
+pub mod session_summary;
+pub mod skill_meta;
+pub mod skill_storage;
+pub mod task_continuation;
+
+pub use important_message::SpiffsImportantMessageStore;
+pub use memory::SpiffsMemoryStore;
+pub use pending_retry::SpiffsPendingRetryStore;
+pub use remind_at::SpiffsRemindAtStore;
+pub use session::SpiffsSessionStore;
+pub use session_summary::SpiffsSessionSummaryStore;
+pub use skill_meta::SpiffsSkillMetaStore;
+pub use skill_storage::{default_skill_storage_arc, SpiffsSkillStorage};
+pub use task_continuation::SpiffsTaskContinuationStore;

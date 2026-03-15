@@ -3,18 +3,13 @@
 
 use crate::error::{Error, Result};
 use crate::memory::{ImportantMessageStore, REL_PATH_IMPORTANT_MESSAGE};
-use crate::platform::spiffs::{read_file, write_file};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-#[derive(Serialize, Deserialize)]
-struct ImportantMessageState {
-    chat_id: String,
-    offset_from_end: u32,
-}
+use super::{read_file, write_file, SPIFFS_BASE};
 
 fn full_path() -> PathBuf {
-    let mut p = PathBuf::from(crate::platform::spiffs::SPIFFS_BASE);
+    let mut p = PathBuf::from(SPIFFS_BASE);
     p.push(REL_PATH_IMPORTANT_MESSAGE);
     p
 }
@@ -84,4 +79,10 @@ impl ImportantMessageStore for SpiffsImportantMessageStore {
             Ok(())
         }
     }
+}
+
+#[derive(Serialize, Deserialize)]
+struct ImportantMessageState {
+    chat_id: String,
+    offset_from_end: u32,
 }
