@@ -146,9 +146,12 @@ pub fn current_unix_secs() -> u64 {
 }
 
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
-/// 当前 Unix 秒。ESP 无 SNTP 时返回 0，调用方可通过参数传入「当前」时间。
+/// 当前 Unix 秒。SNTP 同步后 ESP-IDF 自动更新系统时钟，SystemTime 即可取得正确时间。
 pub fn current_unix_secs() -> u64 {
-    0
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 /// 星期几名称。days = Unix 秒 / 86400，1970-01-01 (days=0) 为 Thursday。

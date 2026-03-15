@@ -231,6 +231,7 @@ fn main() {
                 "[{}] WiFi ready (SoftAP up, STA connected if configured)",
                 TAG
             );
+            beetle::platform::init_sntp();
             true
         }
         Err(e) => {

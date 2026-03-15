@@ -17,6 +17,7 @@ pub mod http_server;
 pub mod nvs;
 pub mod pairing;
 pub mod response;
+pub mod sntp;
 pub mod spiffs;
 pub mod wifi;
 #[cfg(all(
@@ -41,3 +42,4 @@ pub use spiffs::{
     SpiffsSkillMetaStore, SpiffsSkillStorage, SPIFFS_BASE,
 };
 pub use wifi::{connect as connect_wifi, is_wifi_sta_connected, WifiApEntry, WifiScan, WifiScanHandle};
+pub use sntp::init_sntp;
