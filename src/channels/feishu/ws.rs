@@ -26,6 +26,47 @@ const FRAME_METHOD_DATA: i32 = 1;
 const HEADER_TYPE: &str = "type";
 const MESSAGE_TYPE_EVENT: &str = "event";
 const FEISHU_HEARTBEAT_MS: u64 = 120_000;
+const DEDUP_CACHE_CAPACITY: usize = 32;
+
+/// 固定容量环形去重缓存；O(n) 查找但 n ≤ 32，无堆碎片。
+struct DeduplicateRing {
+    ids: Vec<String>,
+    pos: usize,
+    cap: usize,
+}
+
+impl DeduplicateRing {
+    fn new(cap: usize) -> Self {
+        Self {
+            ids: Vec::with_capacity(cap),
+            pos: 0,
+            cap,
+        }
+    }
+
+    /// 已存在返回 true（重复），否则插入并返回 false。
+    fn contains_or_insert(&mut self, id: &str) -> bool {
+        if self.ids.iter().any(|s| s == id) {
+            return true;
+        }
+        if self.ids.len() < self.cap {
+            self.ids.push(id.to_string());
+        } else {
+            self.ids[self.pos] = id.to_string();
+        }
+        self.pos = (self.pos + 1) % self.cap.max(1);
+        false
+    }
+}
+
+fn extract_event_id(payload_str: &str) -> Option<String> {
+    let v: serde_json::Value = serde_json::from_str(payload_str).ok()?;
+    v.get("header")
+        .and_then(|h| h.get("event_id"))
+        .and_then(|e| e.as_str())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+}
 
 pub fn get_ws_url(
     http: &mut dyn ChannelHttpClient,
@@ -119,11 +160,12 @@ fn build_ping_frame() -> Result<Vec<u8>> {
     encode_control_frame("ping", 0, "")
 }
 
-/// 飞书 WSS 协议驱动：取 URL、无 Hello、pbbp2 解析、pbbp2 ping 心跳。
+/// 飞书 WSS 协议驱动：取 URL、无 Hello、pbbp2 解析、pbbp2 ping 心跳、event_id 去重。
 struct FeishuWssDriver {
     app_id: String,
     app_secret: String,
     allowed_chat_ids: Vec<String>,
+    dedup: DeduplicateRing,
 }
 
 impl WssGatewayDriver for FeishuWssDriver {
@@ -169,6 +211,13 @@ impl WssGatewayDriver for FeishuWssDriver {
             Err(_) => return Ok(WssRecvAction::Ignore),
         };
         log::info!("[{}] event frame received, payload_len={}", TAG, frame.payload.len());
+        if let Some(event_id) = extract_event_id(payload_str) {
+            if self.dedup.contains_or_insert(&event_id) {
+                log::info!("[{}] duplicate event_id, ack only", TAG);
+                let ack = encode_control_frame("reply", frame.log_id, &frame.log_id_new)?;
+                return Ok(WssRecvAction::DispatchAndAck(None, ack));
+            }
+        }
         let msg = event_body_to_pcmsg(payload_str, &self.allowed_chat_ids);
         let ack = encode_control_frame("reply", frame.log_id, &frame.log_id_new)?;
         Ok(WssRecvAction::DispatchAndAck(msg, ack))
@@ -190,6 +239,7 @@ pub fn run_feishu_ws_loop(
         app_id,
         app_secret,
         allowed_chat_ids,
+        dedup: DeduplicateRing::new(DEDUP_CACHE_CAPACITY),
     };
     let create_http = || EspHttpClient::new();
     let connect = |url: &str| connect_esp_wss(url);

@@ -1,151 +1,177 @@
-<p align="center">
-  <code>╭─────────────────────────────────────╮</code><br>
-  <code>│  B E E T L E  ·  甲虫               │</code><br>
-  <code>│  ESP32 边缘 AI Agent · 单板多协议   │</code><br>
-  <code>╰─────────────────────────────────────╯</code>
-</p>
+# Beetle
 
-<p align="center">
-  <strong>零中继 · 上电即联 · Rust · ReAct</strong>
-</p>
+[![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE)
 
-<p align="center">
-  <sub>飞书 · 钉钉 · 企微 · QQ · Telegram · WebSocket → 同源汇聚</sub>
-</p>
+**English** | [中文](README.zh-CN.md)
+
+**ESP32 edge AI Agent firmware** · Single board, multi-protocol · Rust · ReAct · Zero relay
+
+Feishu, DingTalk, WeCom, QQ Channel, Telegram, and WebSocket converge on one ESP32—no gateway, no always-on PC. Provision via hotspot + browser; switch board type with `BOARD=xxx`.
 
 ---
 
-## ▸ 任务简报 (MISSION BRIEF)
+## Table of contents
 
-> **单板即 Agent。** 飞书、钉钉、企微、QQ 频道、Telegram、WebSocket 全部汇聚到同一块 ESP32，无 Gateway、无常开 PC；配网用热点 + 浏览器，板型用 `BOARD=xxx` 切换，OTA 失败不覆盖当前分区。  
-> 受 [OpenClaw](https://github.com/openclaw/openclaw) 启发，用 Rust 在 MCU 上跑类型安全的全栈 Agent。
+- [Overview](#overview)
+- [Prerequisites](#prerequisites)
+- [Quick start](#quick-start)
+- [Environment & build](#environment--build)
+- [Supported boards](#supported-boards)
+- [Configuration](#configuration)
+- [Features](#features)
+- [Storage & security](#storage--security)
+- [Documentation](#documentation)
+- [Troubleshooting](#troubleshooting)
+- [References & license](#references--license)
 
 ---
 
-## ▸ 系统拓扑 (SYSTEM TOPOLOGY)
+## Overview
+
+- **Board as Agent**: ReAct, tools, and memory run entirely on the ESP32; no cloud inference.
+- **Unified multi-channel**: All channels share one queue and one Agent; new channels register by implementing a trait.
+- **Browser provisioning**: When unprovisioned, the device opens hotspot **Beetle** (no password); open **http://192.168.4.1**. After WiFi is set, use **http://beetle.local** (mDNS); pairing code protects write operations.
+- Inspired by [OpenClaw](https://github.com/openclaw/openclaw); type-safe full-stack Agent on MCU in Rust.
+
+**System topology:**
 
 ```
   FEISHU  DINGTALK  WECOM  QQ  TG  WS
       \      |      |    /   |   /
        \     |      |   /    |  /
-        \    |      |  /     | /
-         \   ▼      ▼ ▼      ▼
+        \   ▼      ▼ ▼      ▼
     ┌─────────────────────────────────┐
-    │  ◉ ESP32  EDGE NODE             │
-    │  ONE BOARD · ONE AGENT          │
+    │  ◉ ESP32  ·  ONE BOARD ONE AGENT │
     │  ReAct │ TOOLS │ MEMORY         │
     └─────────────────────────────────┘
 ```
 
 ---
 
-## ▸ 能力矩阵 (CAPABILITY MATRIX)
+## Prerequisites
 
-| 维度 | 说明 |
-|------|------|
-| **板子即 Agent** | ReAct、工具、记忆均在 ESP32 内完成，无云端推理依赖 |
-| **多通道统一** | 飞书 / 钉钉 / 企微 / QQ 频道 / Telegram / WebSocket 同队列、同一 Agent |
-| **浏览器配网** | 热点 **Beetle** → **192.168.4.1**；已连 WiFi → **http://beetle.local**（mDNS），配对码保护写操作 |
-| **Rust 全栈** | 类型安全、统一错误与资源上界，新通道/工具/LLM 实现 trait 即注册 |
-| **记忆与工具** | 长期记忆、会话摘要、到点提醒；FetchUrl、WebSearch、Cron、Files；Skills 注入系统提示 |
+| Environment | Requirement |
+|-------------|-------------|
+| **Rust** | [esp-rs toolchain](https://docs.espressif.com/projects/rust-book/en/latest/introduction.html), `espup install` |
+| **Flash** | [espflash](https://github.com/esp-rs/espflash), `cargo install espflash` |
+| **macOS / Linux** | No extra deps; first run of `build.sh` may prompt for espup/ldproxy |
+| **Windows** | Visual Studio (Desktop development with C++ + Windows 10/11 SDK) |
 
 ---
 
-## ▸ 快速部署 (QUICK DEPLOY)
+## Quick start
 
 ### macOS / Linux
 
 ```bash
-./build.sh              # 仅构建
-./build.sh --flash      # 构建后烧录（会提示擦除、选串口）
-BOARD=esp32-s3-16mb ./build.sh --flash   # 指定板型并烧录（默认 S3）
-ESPFLASH_PORT=/dev/cu.usbserial-xxx ./build.sh --flash   # 指定串口（也支持 cu.usbmodem*，如板载 USB）
+./build.sh                    # Build only
+./build.sh --flash            # Build and flash (prompts for erase, port)
+BOARD=esp32-s3-16mb ./build.sh --flash
+ESPFLASH_PORT=/dev/cu.usbserial-xxx ./build.sh --flash   # Specify port
 ```
 
 ### Windows
 
-在项目根目录用 **PowerShell** 或 **cmd**（`build.cmd` 会调用 `build.ps1`）：
+In project root, use **PowerShell** or **cmd** (`build.cmd` calls `build.ps1`):
 
 ```powershell
-.\build.ps1              # 仅构建
-.\build.ps1 --flash       # 构建后烧录（会提示擦除、选串口）
-$env:BOARD="esp32-s3-16mb"; .\build.ps1 --flash   # 指定板型并烧录（默认 S3）
-$env:ESPFLASH_PORT="COM3"; .\build.ps1 --flash   # 指定串口（如 COM3）
+.\build.ps1
+.\build.ps1 --flash
+$env:BOARD="esp32-s3-16mb"; .\build.ps1 --flash
+$env:ESPFLASH_PORT="COM3"; .\build.ps1 --flash
 ```
 
-Windows 需安装 **Visual Studio**（带「使用 C++ 的桌面开发」及 Windows 10/11 SDK）；若路径过长可先 `.\build.ps1 clean` 再构建。
+If path is too long, run `.\build.ps1 clean` then build again.
+
+**First use**: Device powers on with hotspot **Beetle**; open **http://192.168.4.1** in a browser to set WiFi and pairing code.
 
 ---
 
-首次缺工具链会自动安装 espup/ldproxy。未配网时设备开热点 **Beetle**（无密码），浏览器打开 **192.168.4.1** 填 WiFi 与配对码。
-
----
-
-## ▸ 环境与构建 (ENV & BUILD)
-
-- **Rust**：`rust-toolchain.toml` 使用 `esp` channel，需先安装 [esp-rs 工具链](https://docs.espressif.com/projects/rust-book/en/latest/introduction.html)（`espup install`）
-- **烧录**：[espflash](https://github.com/esp-rs/espflash)（`cargo install espflash`）
+## Environment & build
 
 ```bash
 cargo build --release
 ```
 
-- **Features**：`config_api`（默认）、`telegram`、`feishu`（默认）、`websocket`、`cli`、`ota`、`gpio`，例：`cargo build --release --features cli,ota`
-- **Target**：默认 `xtensa-esp32s3-espidf`；其他板型见下节
+- **Target**: Default `xtensa-esp32s3-espidf`; board type from `BOARD` and `board_presets.toml`.
+- **Features**: `config_api` (default), `telegram`, `feishu` (default), `websocket`, `cli`, `ota`, `gpio`.  
+  Example: `cargo build --release --features cli,ota`
+
+Flash: use `--flash` to flash; `./build.sh clean` to clean; `--no-monitor` to skip serial monitor. Set `ESPFLASH_PORT` to e.g. `/dev/cu.usbserial-xxx` or `COM3`. On connect failure: check USB cable/port; put board in download mode (hold BOOT, tap RESET); script prints diagnostics on erase/flash failure.
 
 ---
 
-## ▸ 支持板型 (BOARD)
+## Supported boards
 
-| BOARD | 说明 |
-|-------|------|
-| `esp32-s3-16mb` | ESP32-S3，16MB + PSRAM（默认，唯一支持板型） |
+| BOARD | Description |
+|-------|-------------|
+| `esp32-s3-16mb` | ESP32-S3, 16MB Flash + PSRAM (default; only supported board) |
 
-分区表由 `board_presets.toml` 与 sdkconfig.defaults.esp32s3 决定，**须使用项目自带分区表**，否则会报 `spiffs partition could not be found`。
-
-烧录：`--flash` 才烧录；`./build.sh clean` 清理；`--no-monitor` 不打开串口监控。指定串口：`ESPFLASH_PORT=/dev/cu.usbserial-xxx` 或 `ESPFLASH_PORT=/dev/cu.usbmodem*`（板载 USB/CH340）。若连接失败：检查 USB 线/口、板子进入下载模式（按住 BOOT 短按 RESET）、或换另一串口；脚本会在 erase/flash 失败时打印诊断提示。
+Partition table is defined by `board_presets.toml` and `sdkconfig.defaults.esp32s3`. **Use the project partition table** or you will get `spiffs partition could not be found`.
 
 ---
 
-## ▸ 配置概要 (CONFIG)
+## Configuration
 
-- **编译时**：构建前环境变量 `BEETLE_*`；NVS 有对应 key 则运行时覆盖
-- **运行时**：配置页写入 NVS；密钥不打印、不写 SPIFFS
+- **At build time**: Env vars `BEETLE_*` before build; NVS keys override at runtime if present.
+- **At runtime**: Config page writes to NVS; secrets are not logged or written to SPIFFS.
 
-| 类别 | 键 |
-|------|-----|
-| WiFi | `WIFI_SSID`、`WIFI_PASS` |
-| Telegram | `TG_TOKEN`、`TG_ALLOWED_CHAT_IDS` |
-| 飞书 | `FEISHU_APP_ID`、`FEISHU_APP_SECRET`、`FEISHU_ALLOWED_CHAT_IDS` |
-| 钉钉 | `DINGTALK_WEBHOOK_URL` |
-| 企微 | `WECOM_CORP_ID`、`WECOM_CORP_SECRET`、`WECOM_AGENT_ID`、`WECOM_DEFAULT_TOUSER` |
-| QQ 频道 | `QQ_CHANNEL_APP_ID`、`QQ_CHANNEL_SECRET` |
-| LLM | `API_KEY`、`MODEL`、`MODEL_PROVIDER`、`API_URL`（兼容 Ollama 等） |
-| 代理 / 搜索 | `PROXY_URL`、`SEARCH_KEY`、`TAVILY_KEY` |
+| Category | Config keys |
+|----------|-------------|
+| WiFi | `WIFI_SSID`, `WIFI_PASS` |
+| Telegram | `TG_TOKEN`, `TG_ALLOWED_CHAT_IDS` |
+| Feishu | `FEISHU_APP_ID`, `FEISHU_APP_SECRET`, `FEISHU_ALLOWED_CHAT_IDS` |
+| DingTalk | `DINGTALK_WEBHOOK_URL` |
+| WeCom | `WECOM_CORP_ID`, `WECOM_CORP_SECRET`, `WECOM_AGENT_ID`, `WECOM_DEFAULT_TOUSER` |
+| QQ Channel | `QQ_CHANNEL_APP_ID`, `QQ_CHANNEL_SECRET` |
+| LLM | `API_KEY`, `MODEL`, `MODEL_PROVIDER`, `API_URL` (Ollama-compatible etc.) |
+| Proxy / search | `PROXY_URL`, `SEARCH_KEY`, `TAVILY_KEY` |
 
-完整键名与校验见 `src/config.rs`。配网与配置页详见 [配置与使用](docs/configuration.md)。
-
----
-
-## ▸ 其他 (MISC)
-
-- **SPIFFS**：`spiffs_data/` 打包烧录到 spiffs 分区，存记忆、会话、skills
-- **OTA**（feature `ota`）：从配置 URL 拉固件写备用分区，失败不改写当前分区
-- **安全**：密钥不打印、不写盘；队列/消息/响应体上界集中配置
+Full key names and validation: `src/config.rs`. Provisioning and config page: [Configuration](docs/en-us/configuration.md).
 
 ---
 
-## ▸ 文档 (DOCS)
+## Features
 
-| 文档 | 说明 |
-|------|------|
-| [配置与使用](docs/configuration.md) | 配网、配置页、mDNS、常用配置 |
-| [硬件与资源](docs/hardware.md) | 板型、内存、PSRAM、看门狗、编译选项 |
-| [架构概要](docs/architecture.md) | 模块划分、数据流、扩展方式 |
+| Area | Description |
+|------|-------------|
+| Board as Agent | ReAct, tools, memory on ESP32 |
+| Unified channels | Feishu / DingTalk / WeCom / QQ Channel / Telegram / WebSocket, same queue, same Agent |
+| Browser provisioning | Hotspot Beetle → 192.168.4.1; after WiFi → http://beetle.local (mDNS), pairing code for writes |
+| Rust stack | Type-safe, unified errors and resource limits; new channel/tool/LLM via trait |
+| Memory & tools | Long-term memory, session summary, reminders; FetchUrl, WebSearch, Cron, Files; Skills in system prompt |
 
 ---
 
-## ▸ 参考 (REFERENCES)
+## Storage & security
+
+- **SPIFFS**: `spiffs_data/` is packed and flashed to the spiffs partition (memory, sessions, skills).
+- **OTA** (feature `ota`): Fetches firmware from config URL to spare partition; failure does not overwrite current partition.
+- **Security**: Secrets not logged or written to disk; queue/message/response size limits are centralized; config page writes require pairing code.
+
+---
+
+## Documentation
+
+| Doc | Description |
+|-----|-------------|
+| [Configuration](docs/en-us/configuration.md) | Provisioning, config page, mDNS, common config |
+| [Hardware & resources](docs/en-us/hardware.md) | Boards, memory, PSRAM, watchdog, build options, troubleshooting |
+| [Architecture](docs/en-us/architecture.md) | Modules, data flow, extension |
+
+---
+
+## Troubleshooting
+
+- **`spiffs partition could not be found`**: Use the project partition table (see [Hardware](docs/en-us/hardware.md)).
+- **Flash/connect failure**: Check USB cable/port; put board in download mode (hold BOOT, tap RESET); set `ESPFLASH_PORT`.
+- **Task watchdog / DNS etc.**: See [Hardware – known issues](docs/en-us/hardware.md#known-issues-and-troubleshooting).
+
+---
+
+## References & license
 
 - [Rust on ESP Book](https://docs.espressif.com/projects/rust-book/)
 - [esp-idf-svc](https://github.com/esp-rs/esp-idf-svc)
+
+This project is dual-licensed under **MIT OR Apache-2.0**. See [LICENSE](LICENSE).

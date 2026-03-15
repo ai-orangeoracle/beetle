@@ -15,6 +15,9 @@ const TLS_ADMISSION_RETRY_SLEEP_SECS: u64 = 5;
 const HEARTBEAT_INTERVAL_MIN_MS: u64 = 10_000;
 const HEARTBEAT_INTERVAL_MAX_MS: u64 = 300_000;
 const DEFAULT_HEARTBEAT_INTERVAL_MS: u64 = 120_000;
+/// recv_timeout 单次上限（秒）；须小于 TWDT 超时（sdkconfig 60s），
+/// 避免长心跳间隔通道（如飞书 120s）在空闲时触发看门狗。
+const WDT_RECV_CHUNK_SECS: u64 = 25;
 /// WiFi 就绪等待上限（秒）；超出后仍尝试连接（WiFi 可能随时恢复）。
 const WIFI_WAIT_MAX_SECS: u64 = 60;
 
@@ -151,14 +154,17 @@ pub fn run_wss_gateway_loop<D, H, C, CreateHttp, Conn>(
         let interval_ms = state
             .heartbeat_interval_ms
             .clamp(HEARTBEAT_INTERVAL_MIN_MS, HEARTBEAT_INTERVAL_MAX_MS);
-        let heartbeat_timeout = Duration::from_millis(interval_ms);
+        let heartbeat_interval = Duration::from_millis(interval_ms);
+        let recv_chunk = heartbeat_interval.min(Duration::from_secs(WDT_RECV_CHUNK_SECS));
         let mut last_seq: Option<u64> = None;
+        let mut last_heartbeat = Instant::now();
         let mut session_ended = false;
 
         while !session_ended {
             crate::platform::task_wdt::feed_current_task();
-            match conn.recv_timeout(heartbeat_timeout) {
+            match conn.recv_timeout(recv_chunk) {
                 Ok(Some(WssEvent::Binary(data))) => {
+                    last_heartbeat = Instant::now();
                     log::debug!("[{}] recv binary len={}", tag, data.len());
                     match driver.on_recv(&data) {
                         Ok(WssRecvAction::Dispatch(Some(msg))) => {
@@ -227,19 +233,22 @@ pub fn run_wss_gateway_loop<D, H, C, CreateHttp, Conn>(
                     session_ended = true;
                 }
                 Ok(None) => {
-                    let payload = match driver.build_heartbeat(last_seq) {
-                        Ok(p) => p,
-                        Err(e) => {
-                            log::warn!("[{}] build_heartbeat failed: {}", tag, e);
-                            continue;
+                    if last_heartbeat.elapsed() >= heartbeat_interval {
+                        let payload = match driver.build_heartbeat(last_seq) {
+                            Ok(p) => p,
+                            Err(e) => {
+                                log::warn!("[{}] build_heartbeat failed: {}", tag, e);
+                                continue;
+                            }
+                        };
+                        if !payload.is_empty() {
+                            log::debug!("[{}] send heartbeat len={}", tag, payload.len());
+                            if conn.send_binary(&payload).is_err() {
+                                log::warn!("[{}] send heartbeat failed", tag);
+                                session_ended = true;
+                            }
                         }
-                    };
-                    if !payload.is_empty() {
-                        log::debug!("[{}] send heartbeat len={}", tag, payload.len());
-                        if conn.send_binary(&payload).is_err() {
-                            log::warn!("[{}] send heartbeat failed", tag);
-                            session_ended = true;
-                        }
+                        last_heartbeat = Instant::now();
                     }
                 }
                 Err(e) => {
