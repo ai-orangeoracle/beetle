@@ -262,6 +262,64 @@ impl EspHttpClient {
         self.check_proxy_and_watchdog()?;
         self.do_post_inner(url, headers, body)
     }
+
+    /// SSE 流式 POST：发送请求后循环 read + 回调 on_chunk，不将完整响应体读入内存。
+    /// 每次 read 前喂看门狗；总读量超 budget 时截断。
+    pub fn do_post_streaming(
+        &mut self,
+        url: &str,
+        headers: &[(&str, &str)],
+        body: &[u8],
+        on_chunk: &mut dyn FnMut(&[u8]) -> Result<()>,
+    ) -> Result<u16> {
+        self.check_proxy_and_watchdog()?;
+        self.execute_request(|conn| {
+            let mut client = HttpClient::wrap(conn);
+            let mut request = client.post(url, headers).map_err(|e| Error::Other {
+                source: Box::new(e),
+                stage: "http_post_request",
+            })?;
+            request.write_all(body).map_err(|e| Error::Other {
+                source: Box::new(std::io::Error::new(std::io::ErrorKind::Other, format!("{:?}", e))),
+                stage: "http_post_write",
+            })?;
+            request.flush().map_err(|e| Error::Other {
+                source: Box::new(std::io::Error::new(std::io::ErrorKind::Other, format!("{:?}", e))),
+                stage: "http_post_flush",
+            })?;
+            let mut response = request.submit().map_err(|e| Error::Other {
+                source: Box::new(e),
+                stage: "http_post_submit",
+            })?;
+            let status = response.status();
+
+            let max_len = crate::resource::current_budget().response_body_max;
+            let mut total = 0usize;
+            let mut buf = [0u8; RESPONSE_READ_CHUNK];
+            loop {
+                feed_task_watchdog();
+                let n = response.read(&mut buf).map_err(|e| Error::Other {
+                    source: Box::new(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        format!("{:?}", e),
+                    )),
+                    stage: "http_read",
+                })?;
+                if n == 0 {
+                    break;
+                }
+                total += n;
+                if total > max_len {
+                    log::warn!("[{}] streaming response truncated at {} bytes", TAG, max_len);
+                    drain_response(&mut response);
+                    break;
+                }
+                on_chunk(&buf[..n])?;
+            }
+
+            Ok(status)
+        })
+    }
 }
 
 /// 首次分配块大小，避免无 PSRAM 时单次分配过大；后续按 read 循环 grow 至 budget.response_body_max。
@@ -395,6 +453,15 @@ impl crate::platform::PlatformHttpClient for EspHttpClient {
         } else {
             self.post_with_headers(url, headers, body)
         }
+    }
+    fn post_streaming(
+        &mut self,
+        url: &str,
+        headers: &[(&str, &str)],
+        body: &[u8],
+        on_chunk: &mut dyn FnMut(&[u8]) -> Result<()>,
+    ) -> Result<u16> {
+        EspHttpClient::do_post_streaming(self, url, headers, body, on_chunk)
     }
     fn reset_connection_for_retry(&mut self) {
         let _ = self.replace_connection();

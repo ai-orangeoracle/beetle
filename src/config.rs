@@ -62,6 +62,9 @@ pub struct LlmSource {
     pub api_key: String,
     pub model: String,
     pub api_url: String,
+    /// SSE 流式模式；true 时 LLM 客户端使用 SSE 逐块读取响应，降低峰值内存。默认 false（整包读取）。
+    #[serde(default)]
+    pub stream: bool,
 }
 
 /// NVS 仅存 6 个小键；LLM/通道存 SPIFFS config/llm.json、config/channels.json，减少 4361。
@@ -326,6 +329,7 @@ impl AppConfig {
                 api_key: c.api_key.clone(),
                 model: c.model.clone(),
                 api_url: c.api_url.clone(),
+                stream: false,
             }];
         }
         c.load_errors = if load_errors.is_empty() {
@@ -573,6 +577,7 @@ impl AppConfig {
                 api_key: c.api_key.clone(),
                 model: c.model.clone(),
                 api_url: c.api_url.clone(),
+                stream: false,
             }];
         }
         validate_llm_sources(

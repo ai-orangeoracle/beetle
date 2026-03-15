@@ -46,7 +46,7 @@ pub trait SkillStorage: Send + Sync {
     fn remove(&self, name: &str) -> Result<()>;
 }
 
-/// 统一 HTTP 客户端：仅 get/post/reset 三方法，LlmHttpClient、ToolContext、ChannelHttpClient 由 lib 层 blanket 转发。
+/// 统一 HTTP 客户端：仅 get/post/post_streaming/reset 方法，LlmHttpClient、ToolContext、ChannelHttpClient 由 lib 层 blanket 转发。
 pub trait PlatformHttpClient {
     fn get(&mut self, url: &str, headers: &[(&str, &str)]) -> Result<(u16, ResponseBody)>;
     fn post(
@@ -55,6 +55,19 @@ pub trait PlatformHttpClient {
         headers: &[(&str, &str)],
         body: &[u8],
     ) -> Result<(u16, ResponseBody)>;
+    /// SSE 流式 POST：发送请求后逐块回调 on_chunk，不将响应体读入内存。
+    /// 默认实现回退到 post()，将完整响应体一次性传给 on_chunk。
+    fn post_streaming(
+        &mut self,
+        url: &str,
+        headers: &[(&str, &str)],
+        body: &[u8],
+        on_chunk: &mut dyn FnMut(&[u8]) -> Result<()>,
+    ) -> Result<u16> {
+        let (status, resp_body) = self.post(url, headers, body)?;
+        on_chunk(resp_body.as_ref())?;
+        Ok(status)
+    }
     fn reset_connection_for_retry(&mut self) {}
 }
 
@@ -69,6 +82,15 @@ impl PlatformHttpClient for Box<dyn PlatformHttpClient + '_> {
         body: &[u8],
     ) -> Result<(u16, ResponseBody)> {
         (**self).post(url, headers, body)
+    }
+    fn post_streaming(
+        &mut self,
+        url: &str,
+        headers: &[(&str, &str)],
+        body: &[u8],
+        on_chunk: &mut dyn FnMut(&[u8]) -> Result<()>,
+    ) -> Result<u16> {
+        (**self).post_streaming(url, headers, body, on_chunk)
     }
     fn reset_connection_for_retry(&mut self) {
         (**self).reset_connection_for_retry()

@@ -1,5 +1,6 @@
 //! OpenAI Chat Completions 兼容客户端；可对接 OpenAI / OpenRouter / 本地兼容服务。
 //! 错误带 stage（llm_request / llm_parse）；HTTP 由 main 注入。
+//! Supports both non-streaming (default) and SSE streaming modes.
 
 use crate::config::{AppConfig, LlmSource};
 use crate::error::{Error, Result};
@@ -18,6 +19,7 @@ pub struct OpenAiCompatibleClient {
     model: String,
     api_key: String,
     max_tokens: u32,
+    stream: bool,
 }
 
 impl OpenAiCompatibleClient {
@@ -27,6 +29,7 @@ impl OpenAiCompatibleClient {
             api_key: config.api_key.clone(),
             model: config.model.clone(),
             api_url: config.api_url.clone(),
+            stream: false,
         })
     }
 
@@ -42,6 +45,7 @@ impl OpenAiCompatibleClient {
             model: source.model.clone(),
             api_key: source.api_key.clone(),
             max_tokens: DEFAULT_MAX_TOKENS,
+            stream: source.stream,
         }
     }
 }
@@ -169,10 +173,24 @@ impl LlmClient for OpenAiCompatibleClient {
             tools: tools_api,
         };
 
-        let body = serde_json::to_vec(&req).map_err(|e| Error::Other {
-            source: Box::new(e),
-            stage: "llm_parse",
-        })?;
+        // 流式模式在请求体中加 "stream": true。
+        let body = if self.stream {
+            let mut val = serde_json::to_value(&req).map_err(|e| Error::Other {
+                source: Box::new(e),
+                stage: "llm_parse",
+            })?;
+            val.as_object_mut().unwrap().insert("stream".to_string(), serde_json::Value::Bool(true));
+            serde_json::to_vec(&val).map_err(|e| Error::Other {
+                source: Box::new(e),
+                stage: "llm_parse",
+            })?
+        } else {
+            serde_json::to_vec(&req).map_err(|e| Error::Other {
+                source: Box::new(e),
+                stage: "llm_parse",
+            })?
+        };
+
         if body.len() > MAX_REQUEST_BODY_LEN {
             return Err(Error::config(
                 "llm_request",
@@ -181,9 +199,15 @@ impl LlmClient for OpenAiCompatibleClient {
         }
 
         let url = format!("{}{}", self.api_base, CHAT_PATH);
-        crate::llm::retry::with_retry(2, 500, TAG, http, |http| {
-            do_request(http, &url, &self.api_key, &body)
-        })
+        if self.stream {
+            crate::llm::retry::with_retry(2, 500, TAG, http, |http| {
+                do_request_streaming(http, &url, &self.api_key, &body)
+            })
+        } else {
+            crate::llm::retry::with_retry(2, 500, TAG, http, |http| {
+                do_request(http, &url, &self.api_key, &body)
+            })
+        }
     }
 }
 
@@ -277,4 +301,166 @@ fn do_request(
             tool_calls
         },
     })
+}
+
+// ---------- SSE streaming ----------
+
+/// OpenAI SSE 流式累加器：逐事件拼接 content / tool_calls。
+struct OpenAiStreamAccumulator {
+    content: String,
+    stop_reason: StopReason,
+    /// 按 index 累积 tool_calls（OpenAI streaming delta 中 tool_calls 带 index 字段）。
+    tool_calls: Vec<OpenAiToolCallBuilder>,
+}
+
+struct OpenAiToolCallBuilder {
+    id: String,
+    name: String,
+    arguments: String,
+}
+
+impl OpenAiStreamAccumulator {
+    fn new() -> Self {
+        Self {
+            content: String::new(),
+            stop_reason: StopReason::Other,
+            tool_calls: Vec::new(),
+        }
+    }
+
+    /// 处理单条 SSE data（JSON chunk）。data: [DONE] 表示结束。
+    fn handle_data(&mut self, data: &str) {
+        if data == "[DONE]" {
+            return;
+        }
+
+        let val: serde_json::Value = match serde_json::from_str(data) {
+            Ok(v) => v,
+            Err(_) => return,
+        };
+
+        let choices = match val.get("choices").and_then(|v| v.as_array()) {
+            Some(c) => c,
+            None => return,
+        };
+
+        for choice in choices {
+            // finish_reason
+            if let Some(fr) = choice.get("finish_reason").and_then(|v| v.as_str()) {
+                self.stop_reason = finish_reason_to_stop_reason(Some(fr));
+            }
+
+            let delta = match choice.get("delta") {
+                Some(d) => d,
+                None => continue,
+            };
+
+            // delta.content
+            if let Some(text) = delta.get("content").and_then(|v| v.as_str()) {
+                self.content.push_str(text);
+            }
+
+            // delta.tool_calls
+            if let Some(tc_arr) = delta.get("tool_calls").and_then(|v| v.as_array()) {
+                for tc in tc_arr {
+                    let index = tc.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                    // 确保 tool_calls vec 足够长。
+                    while self.tool_calls.len() <= index {
+                        self.tool_calls.push(OpenAiToolCallBuilder {
+                            id: String::new(),
+                            name: String::new(),
+                            arguments: String::new(),
+                        });
+                    }
+                    let builder = &mut self.tool_calls[index];
+                    if let Some(id) = tc.get("id").and_then(|v| v.as_str()) {
+                        builder.id = id.to_string();
+                    }
+                    if let Some(func) = tc.get("function") {
+                        if let Some(name) = func.get("name").and_then(|v| v.as_str()) {
+                            builder.name.push_str(name);
+                        }
+                        if let Some(args) = func.get("arguments").and_then(|v| v.as_str()) {
+                            builder.arguments.push_str(args);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn finish(self) -> LlmResponse {
+        let tool_calls: Vec<ToolCall> = self.tool_calls
+            .into_iter()
+            .filter(|tc| !tc.name.is_empty())
+            .map(|tc| ToolCall {
+                id: tc.id,
+                name: tc.name,
+                input: if tc.arguments.is_empty() { "{}".to_string() } else { tc.arguments },
+            })
+            .collect();
+        LlmResponse {
+            content: self.content,
+            stop_reason: self.stop_reason,
+            tool_calls: if tool_calls.is_empty() { None } else { Some(tool_calls) },
+        }
+    }
+}
+
+fn do_request_streaming(
+    http: &mut dyn LlmHttpClient,
+    url: &str,
+    api_key: &str,
+    body: &[u8],
+) -> Result<LlmResponse> {
+    let mut cl_buf = [0u8; 20];
+    let content_length = crate::util::usize_to_decimal_buf(&mut cl_buf, body.len());
+    let auth_value = format!("Bearer {}", api_key);
+    let mut headers: Vec<(&str, &str)> = vec![
+        ("Content-Type", "application/json"),
+        ("Content-Length", content_length),
+    ];
+    if !api_key.is_empty() {
+        headers.insert(0, ("Authorization", auth_value.as_str()));
+    }
+
+    let mut accumulator = OpenAiStreamAccumulator::new();
+    let mut sse_reader = crate::llm::sse::SseLineReader::new();
+
+    let status = http.do_post_streaming(url, &headers, body, &mut |chunk| {
+        sse_reader.feed(chunk);
+        while let Some(event) = sse_reader.next_event() {
+            accumulator.handle_data(&event.data);
+        }
+        Ok(())
+    }).map_err(|e| match e {
+        Error::Http { status_code, .. } => Error::Http {
+            status_code,
+            stage: "llm_request",
+        },
+        _ => Error::Other {
+            source: Box::new(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("{:?}", e),
+            )),
+            stage: "llm_request",
+        },
+    })?;
+
+    if status == 429 {
+        log::warn!("[{}] rate limited (429), backing off", TAG);
+        std::thread::sleep(std::time::Duration::from_secs(5));
+        return Err(Error::Http {
+            status_code: 429,
+            stage: "llm_request",
+        });
+    }
+    if status >= 400 {
+        return Err(Error::Http {
+            status_code: status,
+            stage: "llm_request",
+        });
+    }
+
+    Ok(accumulator.finish())
 }

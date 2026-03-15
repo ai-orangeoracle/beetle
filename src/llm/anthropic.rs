@@ -1,14 +1,16 @@
 //! Anthropic Messages API 客户端；依赖注入 HTTP，不依赖 platform。
 //! 错误均带 stage（llm_request / llm_parse）；后续健康检查可统计最近一次失败或计数。
 //! Anthropic client; HTTP injected, no platform dependency.
+//! Supports both non-streaming (default) and SSE streaming modes.
 
 use crate::config::{AppConfig, LlmSource};
 use crate::error::{Error, Result};
 use crate::llm::types::{
     AnthropicRequest, AnthropicRequestMessage, AnthropicResponse, AnthropicTool,
+    StopReason, ToolCall,
 };
 use crate::llm::{LlmClient, LlmHttpClient, LlmResponse, Message, ToolSpec};
-use crate::llm::types::{MAX_REQUEST_BODY_LEN};
+use crate::llm::types::MAX_REQUEST_BODY_LEN;
 use serde_json;
 
 const TAG: &str = "llm::anthropic";
@@ -21,6 +23,7 @@ pub struct AnthropicClient {
     api_key: String,
     max_tokens: u32,
     api_base: String,
+    stream: bool,
 }
 
 impl AnthropicClient {
@@ -30,6 +33,7 @@ impl AnthropicClient {
             api_key: config.api_key.clone(),
             model: config.model.clone(),
             api_url: config.api_url.clone(),
+            stream: false,
         })
     }
 
@@ -45,6 +49,7 @@ impl AnthropicClient {
             api_key: source.api_key.clone(),
             max_tokens: DEFAULT_MAX_TOKENS,
             api_base,
+            stream: source.stream,
         }
     }
 }
@@ -89,10 +94,25 @@ impl LlmClient for AnthropicClient {
                 .collect(),
             tools: tools_api,
         };
-        let body = serde_json::to_vec(&req).map_err(|e| Error::Other {
-            source: Box::new(e),
-            stage: "llm_parse",
-        })?;
+
+        // 流式模式在请求体中加 "stream": true。
+        let body = if self.stream {
+            let mut val = serde_json::to_value(&req).map_err(|e| Error::Other {
+                source: Box::new(e),
+                stage: "llm_parse",
+            })?;
+            val.as_object_mut().unwrap().insert("stream".to_string(), serde_json::Value::Bool(true));
+            serde_json::to_vec(&val).map_err(|e| Error::Other {
+                source: Box::new(e),
+                stage: "llm_parse",
+            })?
+        } else {
+            serde_json::to_vec(&req).map_err(|e| Error::Other {
+                source: Box::new(e),
+                stage: "llm_parse",
+            })?
+        };
+
         if body.len() > MAX_REQUEST_BODY_LEN {
             return Err(Error::config(
                 "llm_request",
@@ -100,9 +120,15 @@ impl LlmClient for AnthropicClient {
             ));
         }
 
-        crate::llm::retry::with_retry(2, 500, TAG, http, |http| {
-            do_request(http, &self.api_base, &self.api_key, &body)
-        })
+        if self.stream {
+            crate::llm::retry::with_retry(2, 500, TAG, http, |http| {
+                do_request_streaming(http, &self.api_base, &self.api_key, &body)
+            })
+        } else {
+            crate::llm::retry::with_retry(2, 500, TAG, http, |http| {
+                do_request(http, &self.api_base, &self.api_key, &body)
+            })
+        }
     }
 }
 
@@ -156,4 +182,166 @@ fn do_request(
     })?;
 
     Ok(LlmResponse::from_anthropic(parsed))
+}
+
+// ---------- SSE streaming ----------
+
+/// Anthropic SSE 流式累加器：逐事件拼接 content / tool_calls，最终产出 LlmResponse。
+struct AnthropicStreamAccumulator {
+    content: String,
+    stop_reason: StopReason,
+    /// 当前正在累积的 tool_use 块列表。
+    tool_calls: Vec<ToolCallBuilder>,
+}
+
+struct ToolCallBuilder {
+    id: String,
+    name: String,
+    input_json: String,
+}
+
+impl AnthropicStreamAccumulator {
+    fn new() -> Self {
+        Self {
+            content: String::new(),
+            stop_reason: StopReason::Other,
+            tool_calls: Vec::new(),
+        }
+    }
+
+    /// 处理单条 SSE 事件（event type + JSON data）。
+    fn handle_event(&mut self, event_type: &str, data: &str) {
+        match event_type {
+            "content_block_start" => {
+                // content_block_start: 新增 text 或 tool_use block。
+                if let Ok(val) = serde_json::from_str::<serde_json::Value>(data) {
+                    if let Some(cb) = val.get("content_block") {
+                        let block_type = cb.get("type").and_then(|v| v.as_str()).unwrap_or("");
+                        if block_type == "tool_use" {
+                            let id = cb.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                            let name = cb.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                            self.tool_calls.push(ToolCallBuilder {
+                                id,
+                                name,
+                                input_json: String::new(),
+                            });
+                        }
+                    }
+                }
+            }
+            "content_block_delta" => {
+                if let Ok(val) = serde_json::from_str::<serde_json::Value>(data) {
+                    if let Some(delta) = val.get("delta") {
+                        let delta_type = delta.get("type").and_then(|v| v.as_str()).unwrap_or("");
+                        match delta_type {
+                            "text_delta" => {
+                                if let Some(text) = delta.get("text").and_then(|v| v.as_str()) {
+                                    self.content.push_str(text);
+                                }
+                            }
+                            "input_json_delta" => {
+                                if let Some(partial) = delta.get("partial_json").and_then(|v| v.as_str()) {
+                                    if let Some(tc) = self.tool_calls.last_mut() {
+                                        tc.input_json.push_str(partial);
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            "message_delta" => {
+                if let Ok(val) = serde_json::from_str::<serde_json::Value>(data) {
+                    if let Some(delta) = val.get("delta") {
+                        if let Some(sr) = delta.get("stop_reason").and_then(|v| v.as_str()) {
+                            self.stop_reason = match sr {
+                                "end_turn" => StopReason::EndTurn,
+                                "tool_use" => StopReason::ToolUse,
+                                "max_tokens" => StopReason::MaxTokens,
+                                _ => StopReason::Other,
+                            };
+                        }
+                    }
+                }
+            }
+            _ => {
+                // message_start, content_block_stop, message_stop, ping: 忽略。
+            }
+        }
+    }
+
+    /// 流结束，产出最终 LlmResponse。
+    fn finish(self) -> LlmResponse {
+        let tool_calls: Vec<ToolCall> = self.tool_calls
+            .into_iter()
+            .map(|tc| ToolCall {
+                id: tc.id,
+                name: tc.name,
+                input: if tc.input_json.is_empty() { "{}".to_string() } else { tc.input_json },
+            })
+            .collect();
+        LlmResponse {
+            content: self.content,
+            stop_reason: self.stop_reason,
+            tool_calls: if tool_calls.is_empty() { None } else { Some(tool_calls) },
+        }
+    }
+}
+
+fn do_request_streaming(
+    http: &mut dyn LlmHttpClient,
+    url: &str,
+    api_key: &str,
+    body: &[u8],
+) -> Result<LlmResponse> {
+    const ANTHROPIC_VERSION: &str = "2023-06-01";
+    let mut cl_buf = [0u8; 20];
+    let content_length = crate::util::usize_to_decimal_buf(&mut cl_buf, body.len());
+    let headers = [
+        ("x-api-key", api_key),
+        ("anthropic-version", ANTHROPIC_VERSION),
+        ("content-type", "application/json"),
+        ("content-length", content_length),
+    ];
+
+    let mut accumulator = AnthropicStreamAccumulator::new();
+    let mut sse_reader = crate::llm::sse::SseLineReader::new();
+
+    let status = http.do_post_streaming(url, &headers, body, &mut |chunk| {
+        sse_reader.feed(chunk);
+        while let Some(event) = sse_reader.next_event() {
+            accumulator.handle_event(&event.event, &event.data);
+        }
+        Ok(())
+    }).map_err(|e| match e {
+        Error::Http { status_code, .. } => Error::Http {
+            status_code,
+            stage: "llm_request",
+        },
+        _ => Error::Other {
+            source: Box::new(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("{:?}", e),
+            )),
+            stage: "llm_request",
+        },
+    })?;
+
+    if status == 429 {
+        log::warn!("[{}] rate limited (429), backing off", TAG);
+        std::thread::sleep(std::time::Duration::from_secs(5));
+        return Err(Error::Http {
+            status_code: 429,
+            stage: "llm_request",
+        });
+    }
+    if status >= 400 {
+        return Err(Error::Http {
+            status_code: status,
+            stage: "llm_request",
+        });
+    }
+
+    Ok(accumulator.finish())
 }

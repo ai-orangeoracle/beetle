@@ -74,6 +74,15 @@ impl<T: platform::PlatformHttpClient> llm::LlmHttpClient for T {
     ) -> Result<(u16, platform::ResponseBody)> {
         platform::PlatformHttpClient::post(self, url, headers, body)
     }
+    fn do_post_streaming(
+        &mut self,
+        url: &str,
+        headers: &[(&str, &str)],
+        body: &[u8],
+        on_chunk: &mut dyn FnMut(&[u8]) -> Result<()>,
+    ) -> Result<u16> {
+        platform::PlatformHttpClient::post_streaming(self, url, headers, body, on_chunk)
+    }
     fn reset_connection_for_retry(&mut self) {
         platform::PlatformHttpClient::reset_connection_for_retry(self);
     }

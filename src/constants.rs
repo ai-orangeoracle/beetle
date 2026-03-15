@@ -75,3 +75,6 @@ pub const PENDING_RETRY_MAX_REPLAY: u32 = 3;
 pub const CHANNEL_FAIL_COOLDOWN_SECS: u64 = 60;
 /// Dispatch 熔断阈值：连续失败此次数后进入冷却。
 pub const CHANNEL_FAIL_THRESHOLD: u32 = 3;
+
+/// SSE 流式响应行缓冲区大小（字节）；单行 SSE data 不应超此值。
+pub const SSE_LINE_BUF_SIZE: usize = 4096;
