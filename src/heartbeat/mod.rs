@@ -40,6 +40,7 @@ pub fn run_heartbeat_loop(version: &'static str, interval_secs: u64) {
         let interval = std::time::Duration::from_secs(interval_secs);
         loop {
             std::thread::sleep(interval);
+            crate::resource::update();
             let uptime_secs = START.get().map(|s| s.elapsed().as_secs()).unwrap_or(0);
             #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
             {
@@ -72,6 +73,7 @@ pub fn run_heartbeat_loop_with_tasks(
     std::thread::spawn(move || {
         loop {
             std::thread::sleep(interval);
+            crate::resource::update();
             let uptime_secs = START.get().map(|s| s.elapsed().as_secs()).unwrap_or(0);
             #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
             {

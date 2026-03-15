@@ -8,7 +8,6 @@ use crate::channels::wss_gateway::driver::{WssGatewayDriver, WssRecvAction, WssS
 use crate::error::Result;
 use std::time::{Duration, Instant};
 
-const BACKOFF_MIN_SECS: u64 = 5;
 const BACKOFF_MAX_SECS: u64 = 120;
 const HELLO_RECV_TIMEOUT_MS: u64 = 15_000;
 const TLS_ADMISSION_RETRY_SLEEP_SECS: u64 = 5;
@@ -62,7 +61,7 @@ pub fn run_wss_gateway_loop<D, H, C, CreateHttp, Conn>(
 {
     #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
     crate::platform::task_wdt::register_current_task_to_task_wdt();
-    let mut backoff_secs = BACKOFF_MIN_SECS;
+    let mut backoff_secs = crate::resource::current_budget().reconnect_backoff_secs;
     loop {
         // 每轮开始前确认 WiFi 就绪
         wait_for_wifi(tag);
@@ -169,7 +168,9 @@ pub fn run_wss_gateway_loop<D, H, C, CreateHttp, Conn>(
                     match driver.on_recv(&data) {
                         Ok(WssRecvAction::Dispatch(Some(msg))) => {
                             let chat_id = msg.chat_id.clone();
-                            if inbound_tx.try_send(msg).is_err() {
+                            if !crate::resource::current_budget().should_accept_inbound {
+                                log::debug!("[{}] pressure critical, drop msg chat_id={}", tag, chat_id);
+                            } else if inbound_tx.try_send(msg).is_err() {
                                 log::warn!(
                                     "[{}] inbound queue full, dropping msg chat_id={}",
                                     tag,
@@ -185,22 +186,27 @@ pub fn run_wss_gateway_loop<D, H, C, CreateHttp, Conn>(
                         Ok(WssRecvAction::DispatchAndAck(msg, ack)) => {
                             let enqueued = if let Some(msg) = msg {
                                 let chat_id = msg.chat_id.clone();
-                                match inbound_tx.try_send(msg) {
-                                    Ok(()) => {
-                                        log::info!(
-                                            "[{}] message enqueued, chat_id={}",
-                                            tag,
-                                            chat_id
-                                        );
-                                        true
-                                    }
-                                    Err(std::sync::mpsc::TrySendError::Full(_)) => {
-                                        log::warn!("[{}] inbound queue full, skip ack to trigger re-delivery, chat_id={}", tag, chat_id);
-                                        false
-                                    }
-                                    Err(std::sync::mpsc::TrySendError::Disconnected(_)) => {
-                                        log::error!("[{}] inbound_tx disconnected", tag);
-                                        false
+                                if !crate::resource::current_budget().should_accept_inbound {
+                                    log::debug!("[{}] pressure critical, drop msg chat_id={}", tag, chat_id);
+                                    true
+                                } else {
+                                    match inbound_tx.try_send(msg) {
+                                        Ok(()) => {
+                                            log::info!(
+                                                "[{}] message enqueued, chat_id={}",
+                                                tag,
+                                                chat_id
+                                            );
+                                            true
+                                        }
+                                        Err(std::sync::mpsc::TrySendError::Full(_)) => {
+                                            log::warn!("[{}] inbound queue full, skip ack to trigger re-delivery, chat_id={}", tag, chat_id);
+                                            false
+                                        }
+                                        Err(std::sync::mpsc::TrySendError::Disconnected(_)) => {
+                                            log::error!("[{}] inbound_tx disconnected", tag);
+                                            false
+                                        }
                                     }
                                 }
                             } else {
@@ -260,8 +266,7 @@ pub fn run_wss_gateway_loop<D, H, C, CreateHttp, Conn>(
 
         log::info!("[{}] disconnected, dropping connection before reconnect", tag);
         drop(conn);
-        // 断连后重置退避到最小值——大概率是网络层问题，WiFi 恢复后应尽快重连。
-        backoff_secs = BACKOFF_MIN_SECS;
+        backoff_secs = crate::resource::current_budget().reconnect_backoff_secs;
         log::info!("[{}] will reconnect after WiFi check + {}s backoff", tag, backoff_secs);
         sleep_with_wdt(backoff_secs);
     }

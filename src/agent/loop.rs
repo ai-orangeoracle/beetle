@@ -1,7 +1,8 @@
 //! Agent ReAct 循环：入站一条 → context → chat（含 tool_use 多轮）→ 会话持久化 → 出站一条。
 //! 仅依赖 trait；HTTP/Tool 由 main 注入同一实现（如 EspHttpClient）。
 
-use crate::agent::context::{build_context, DEFAULT_MESSAGES_MAX_LEN, DEFAULT_SYSTEM_MAX_LEN};
+use crate::agent::context::build_context;
+use crate::resource::PressureLevel;
 use crate::bus::{InboundTx, OutboundTx, PcMsg, MAX_CONTENT_LEN};
 use crate::util::{truncate_content_to_max, truncate_to_byte_len};
 use crate::constants::{
@@ -92,7 +93,6 @@ pub struct AgentLoopConfig<'a> {
     pub session_summary_store: &'a dyn SessionSummaryStore,
     pub tool_specs: &'a [ToolSpec],
     pub get_skill_descriptions: &'a dyn Fn() -> String,
-    pub heap_ok: &'a dyn Fn() -> bool,
     pub session_max_messages: usize,
     pub tg_group_activation: &'a str,
     pub task_continuation: &'a dyn TaskContinuationStore,
@@ -158,55 +158,73 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
             continue;
         }
 
-        if !(config.heap_ok)() {
-            if msg.chat_id == "cron" {
-                let now = Instant::now();
-                let should_log = low_mem_defer_log
-                    .as_ref()
-                    .map(|(id, t)| id != "cron" || t.elapsed() >= LOW_MEM_DEFER_LOG_INTERVAL)
-                    .unwrap_or(true);
-                if should_log {
-                    log::warn!("[agent] low memory, drop cron (no requeue)");
-                    low_mem_defer_log = Some(("cron".to_string(), now));
-                }
-                continue;
-            }
-            let defer_out = PcMsg {
-                channel: msg.channel.clone(),
-                chat_id: msg.chat_id.clone(),
-                content: LOW_MEMORY_USER_MESSAGE.to_string(),
-                is_group: false,
-            };
-            metrics::record_message_out();
-            let _ = outbound_tx.try_send(defer_out);
-            let chat_id = msg.chat_id.clone();
-            match inbound_tx.try_send(msg) {
-                Ok(()) => {
+        let pressure = crate::resource::current_budget().level;
+        match pressure {
+            PressureLevel::Critical => {
+                if msg.chat_id == "cron" {
                     let now = Instant::now();
                     let should_log = low_mem_defer_log
                         .as_ref()
-                        .map(|(id, t)| id != &chat_id || t.elapsed() >= LOW_MEM_DEFER_LOG_INTERVAL)
+                        .map(|(id, t)| id != "cron" || t.elapsed() >= LOW_MEM_DEFER_LOG_INTERVAL)
                         .unwrap_or(true);
                     if should_log {
-                        log::warn!("[agent] low memory, defer chat_id={}", chat_id);
-                        low_mem_defer_log = Some((chat_id, now));
+                        log::warn!("[agent] critical memory, drop cron (no requeue)");
+                        low_mem_defer_log = Some(("cron".to_string(), now));
+                    }
+                    continue;
+                }
+                let defer_out = PcMsg {
+                    channel: msg.channel.clone(),
+                    chat_id: msg.chat_id.clone(),
+                    content: LOW_MEMORY_USER_MESSAGE.to_string(),
+                    is_group: false,
+                };
+                metrics::record_message_out();
+                let _ = outbound_tx.try_send(defer_out);
+                let chat_id = msg.chat_id.clone();
+                match inbound_tx.try_send(msg) {
+                    Ok(()) => {
+                        let now = Instant::now();
+                        let should_log = low_mem_defer_log
+                            .as_ref()
+                            .map(|(id, t)| id != &chat_id || t.elapsed() >= LOW_MEM_DEFER_LOG_INTERVAL)
+                            .unwrap_or(true);
+                        if should_log {
+                            log::warn!("[agent] critical memory, defer chat_id={}", chat_id);
+                            low_mem_defer_log = Some((chat_id, now));
+                        }
+                    }
+                    Err(std::sync::mpsc::TrySendError::Full(m)) => {
+                        let _ = config.pending_retry.save_pending_retry(&m);
+                        log::warn!(
+                            "[agent] critical memory, pending_retry saved chat_id={}",
+                            m.chat_id
+                        );
+                    }
+                    Err(std::sync::mpsc::TrySendError::Disconnected(_)) => {
+                        log::error!("[agent] inbound_tx disconnected");
                     }
                 }
-                Err(std::sync::mpsc::TrySendError::Full(m)) => {
-                    let _ = config.pending_retry.save_pending_retry(&m);
-                    log::warn!(
-                        "[agent] low memory, pending_retry saved chat_id={}",
-                        m.chat_id
-                    );
-                }
-                Err(std::sync::mpsc::TrySendError::Disconnected(_)) => {
-                    log::error!("[agent] inbound_tx disconnected");
+                std::thread::sleep(Duration::from_millis(LOW_MEM_DEFER_SLEEP_MS));
+                crate::platform::task_wdt::feed_current_task();
+                metrics::record_wdt_feed();
+                continue;
+            }
+            PressureLevel::Cautious => {
+                if msg.chat_id == "cron" {
+                    let now = Instant::now();
+                    let should_log = low_mem_defer_log
+                        .as_ref()
+                        .map(|(id, t)| id != "cron" || t.elapsed() >= LOW_MEM_DEFER_LOG_INTERVAL)
+                        .unwrap_or(true);
+                    if should_log {
+                        log::warn!("[agent] cautious memory, drop cron (no requeue)");
+                        low_mem_defer_log = Some(("cron".to_string(), now));
+                    }
+                    continue;
                 }
             }
-            std::thread::sleep(Duration::from_millis(LOW_MEM_DEFER_SLEEP_MS));
-            crate::platform::task_wdt::feed_current_task();
-            metrics::record_wdt_feed();
-            continue;
+            PressureLevel::Normal => {}
         }
         if let Some(ref mut f) = typing_notifier {
             f(&msg.channel, &msg.chat_id, http);
@@ -405,6 +423,7 @@ fn run_worker_path<H: PlatformHttpClient>(
         });
     let summary_opt = config.session_summary_store.get(&msg.chat_id).ok().flatten();
     let summary_text = summary_opt.as_deref();
+    let budget = crate::resource::current_budget();
     let (system, mut messages) = build_context(
         msg,
         config.memory_store,
@@ -412,8 +431,8 @@ fn run_worker_path<H: PlatformHttpClient>(
         config.important_message_store,
         tool_descriptions,
         &skill_descriptions,
-        DEFAULT_SYSTEM_MAX_LEN,
-        DEFAULT_MESSAGES_MAX_LEN,
+        budget.system_prompt_max,
+        budget.messages_max,
         config.session_max_messages,
         config.tg_group_activation,
         suffix.as_deref(),

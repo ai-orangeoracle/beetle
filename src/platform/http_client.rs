@@ -2,7 +2,6 @@
 //! HTTP(S) client: GET/POST, timeout, response size limit; optional proxy.
 
 use crate::config::{parse_proxy_url_to_host_port, AppConfig};
-use crate::constants::MAX_RESPONSE_BODY_LEN;
 use crate::error::{Error, Result};
 use crate::platform::heap::{alloc_spiram_buffer, is_low_memory_no_spiram};
 use crate::platform::ResponseBody;
@@ -229,7 +228,7 @@ impl EspHttpClient {
         })
     }
 
-    /// GET 请求；返回 (status_code, body)，body 不超过 MAX_RESPONSE_BODY_LEN。若已配置 proxy 且 CONNECT 未实现则返回错误。
+    /// GET 请求；返回 (status_code, body)，body 不超过当前 resource budget 的 response_body_max。若已配置 proxy 且 CONNECT 未实现则返回错误。
     pub fn get(&mut self, url: &str) -> Result<(u16, ResponseBody)> {
         self.check_proxy_and_watchdog()?;
         self.do_get(url, &[])
@@ -265,7 +264,7 @@ impl EspHttpClient {
     }
 }
 
-/// 首次分配块大小，避免无 PSRAM 时单次分配过大；后续按 read 循环 grow 至 MAX_RESPONSE_BODY_LEN。
+/// 首次分配块大小，避免无 PSRAM 时单次分配过大；后续按 read 循环 grow 至 budget.response_body_max。
 const INITIAL_RESPONSE_BODY_CAP: usize = 8 * 1024;
 
 /// 最多 drain 的字节数，防止无限读取恶意超长响应。
@@ -290,13 +289,15 @@ fn drain_response<R: Read>(r: &mut R) {
 }
 
 /// S3 上优先从 PSRAM 分配整块读入，返回 ResponseBody（Drop 时释放 PSRAM），无堆拷贝；否则用 Vec 按块增长。
+/// 最大长度由 resource::current_budget().response_body_max 决定，压力高时自动缩减。
 fn read_response_body<R: Read>(r: &mut R) -> Result<ResponseBody> {
+    let max_len = crate::resource::current_budget().response_body_max;
     #[cfg(target_arch = "xtensa")]
-    if let Some(psram_ptr) = alloc_spiram_buffer(MAX_RESPONSE_BODY_LEN) {
-        return read_response_body_into_psram(psram_ptr, MAX_RESPONSE_BODY_LEN, r);
+    if let Some(psram_ptr) = alloc_spiram_buffer(max_len) {
+        return read_response_body_into_psram(psram_ptr, max_len, r);
     }
 
-    let mut out = Vec::with_capacity(INITIAL_RESPONSE_BODY_CAP.min(MAX_RESPONSE_BODY_LEN));
+    let mut out = Vec::with_capacity(INITIAL_RESPONSE_BODY_CAP.min(max_len));
     let mut buf = [0u8; RESPONSE_READ_CHUNK];
     loop {
         let n = r.read(&mut buf).map_err(|e| Error::Other {
@@ -306,9 +307,9 @@ fn read_response_body<R: Read>(r: &mut R) -> Result<ResponseBody> {
         if n == 0 {
             break;
         }
-        let remain = MAX_RESPONSE_BODY_LEN.saturating_sub(out.len());
+        let remain = max_len.saturating_sub(out.len());
         if remain == 0 {
-            log::warn!("[{}] response body truncated at {} bytes", TAG, MAX_RESPONSE_BODY_LEN);
+            log::warn!("[{}] response body truncated at {} bytes", TAG, max_len);
             drain_response(r);
             break;
         }
@@ -381,7 +382,19 @@ impl crate::platform::PlatformHttpClient for EspHttpClient {
         headers: &[(&str, &str)],
         body: &[u8],
     ) -> Result<(u16, ResponseBody)> {
-        self.post_with_headers(url, headers, body)
+        if headers.is_empty() {
+            // 调用方未传 headers 时补上默认 JSON headers（content-type + content-length），
+            // 与 EspHttpClient::post() 行为一致。
+            let mut cl_buf = [0u8; 20];
+            let content_length = crate::util::usize_to_decimal_buf(&mut cl_buf, body.len());
+            let default_headers = [
+                ("content-type", "application/json"),
+                ("content-length", content_length),
+            ];
+            self.do_post_inner(url, &default_headers, body)
+        } else {
+            self.post_with_headers(url, headers, body)
+        }
     }
     fn reset_connection_for_retry(&mut self) {
         let _ = self.replace_connection();

@@ -57,6 +57,7 @@ fn collect_esp() -> String {
     };
 
     let idf_version = option_env!("IDF_VERSION").unwrap_or("unknown");
+    let budget = crate::resource::current_budget();
 
     let out = json!({
         "chip_model": chip_model,
@@ -67,12 +68,15 @@ fn collect_esp() -> String {
         "psram_free": psram_free,
         "uptime_secs": uptime_secs,
         "idf_version": idf_version,
+        "pressure_level": format!("{:?}", budget.level),
+        "hint": budget.llm_hint,
     });
     out.to_string()
 }
 
 #[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
 fn collect_host() -> String {
+    let budget = crate::resource::current_budget();
     let out = json!({
         "chip_model": "host",
         "chip_revision": 0,
@@ -82,6 +86,8 @@ fn collect_host() -> String {
         "psram_free": 0,
         "uptime_secs": 0,
         "idf_version": "n/a",
+        "pressure_level": format!("{:?}", budget.level),
+        "hint": budget.llm_hint,
     });
     out.to_string()
 }
@@ -91,7 +97,7 @@ impl Tool for BoardInfoTool {
         "board_info"
     }
     fn description(&self) -> &str {
-        "Return board and system info: chip model, heap, uptime, IDF version. Use for debugging or capacity checks."
+        "Return board info: chip, heap, uptime, IDF version, and current resource pressure level. Use for debugging or when user asks about device status."
     }
     fn schema(&self) -> serde_json::Value {
         json!({ "type": "object", "properties": {} })

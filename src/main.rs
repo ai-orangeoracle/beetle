@@ -431,6 +431,7 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
     if let Ok(mut http_client) = platform.create_http_client(config.as_ref()) {
         #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
         beetle::platform::task_wdt::register_current_task_to_task_wdt();
+        beetle::resource::update();
         let outbound_rx_for_dispatch = outbound_rx;
         let sinks_clone = Arc::clone(&sinks);
         std::thread::spawn(move || run_dispatch(outbound_rx_for_dispatch, sinks_clone));
@@ -591,7 +592,6 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
         });
         let session_max = config.session_max_messages.clamp(1, 128) as usize;
         let agent_inbound_tx = inbound_tx;
-        let heap_ok = || beetle::platform::heap::is_heap_ok_for_agent_round();
         let mut on_typing = |ch: &str, cid: &str, http: &mut _| {
             if ch == "telegram" {
                 let _ = send_chat_action(http, &config.tg_token, cid, "typing");
@@ -603,7 +603,6 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
             session_summary_store: session_summary_store.as_ref(),
             tool_specs: &tool_specs,
             get_skill_descriptions: &*get_skill_descriptions,
-            heap_ok: &heap_ok,
             session_max_messages: session_max,
             tg_group_activation: &config.tg_group_activation,
             task_continuation: task_continuation_store.as_ref(),
