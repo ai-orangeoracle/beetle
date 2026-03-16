@@ -191,7 +191,7 @@ fn cmd_restart() -> String {
 
 fn cmd_config_show(ctx: &CliContext) -> String {
     ctx.config
-        .to_masked_json()
+        .to_full_json()
         .map(|s| s + "\n")
         .unwrap_or_else(|e| format!("config_show error: {}\n", state::sanitize_error_for_log(&e)))
 }

@@ -43,6 +43,8 @@ pub struct AnthropicRequest {
     pub messages: Vec<AnthropicRequestMessage>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tools: Option<Vec<AnthropicTool>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stream: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]

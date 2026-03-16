@@ -69,9 +69,10 @@ fn main() {
     let _ = std::fs::create_dir_all(&min_dir);
     let manifest = std::path::PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
     let src_dir = manifest.join("src/platform/config_page");
-    // common.js 内翻译字符串含 "http://" 等，若剥离行注释会误删导致语法错误，故仅剥离块注释
+    // common.js 内翻译字符串含 "http://" 等，若剥离行注释会误删导致语法错误，故不剥离行注释；
+    // 块注释同理，字符串内可能含 /* 序列，也不剥离，保证功能正确优先。
     let files = [
-        ("common.js", false, true),
+        ("common.js", false, false),
         ("common.css", false, true),
         ("wifi_config_page.html", false, false),
         ("pairing_page.html", false, false),

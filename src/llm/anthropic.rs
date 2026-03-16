@@ -34,6 +34,7 @@ impl AnthropicClient {
             model: config.model.clone(),
             api_url: config.api_url.clone(),
             stream: false,
+            max_tokens: None,
         })
     }
 
@@ -47,7 +48,7 @@ impl AnthropicClient {
         Self {
             model: source.model.clone(),
             api_key: source.api_key.clone(),
-            max_tokens: DEFAULT_MAX_TOKENS,
+            max_tokens: source.max_tokens.unwrap_or(DEFAULT_MAX_TOKENS),
             api_base,
             stream: source.stream,
         }
@@ -93,25 +94,13 @@ impl LlmClient for AnthropicClient {
                 })
                 .collect(),
             tools: tools_api,
+            stream: if self.stream { Some(true) } else { None },
         };
 
-        // 流式模式在请求体中加 "stream": true。
-        let body = if self.stream {
-            let mut val = serde_json::to_value(&req).map_err(|e| Error::Other {
-                source: Box::new(e),
-                stage: "llm_parse",
-            })?;
-            val.as_object_mut().unwrap().insert("stream".to_string(), serde_json::Value::Bool(true));
-            serde_json::to_vec(&val).map_err(|e| Error::Other {
-                source: Box::new(e),
-                stage: "llm_parse",
-            })?
-        } else {
-            serde_json::to_vec(&req).map_err(|e| Error::Other {
-                source: Box::new(e),
-                stage: "llm_parse",
-            })?
-        };
+        let body = serde_json::to_vec(&req).map_err(|e| Error::Other {
+            source: Box::new(e),
+            stage: "llm_parse",
+        })?;
 
         if body.len() > MAX_REQUEST_BODY_LEN {
             return Err(Error::config(

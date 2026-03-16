@@ -65,6 +65,9 @@ pub struct LlmSource {
     /// SSE 流式模式；true 时 LLM 客户端使用 SSE 逐块读取响应，降低峰值内存。默认 false（整包读取）。
     #[serde(default)]
     pub stream: bool,
+    /// 单次响应最大 token 数；None 时由各客户端使用内置默认值（1024）。
+    #[serde(default)]
+    pub max_tokens: Option<u32>,
 }
 
 /// NVS 仅存 6 个小键；LLM/通道存 SPIFFS config/llm.json、config/channels.json，减少 4361。
@@ -309,8 +312,11 @@ impl AppConfig {
                     let s = String::from_utf8_lossy(&b);
                     c.merge_llm_from_json(&s, &mut load_errors);
                 }
-                Ok(None) | Err(_) => {
-                    load_errors.push("spiffs_llm_unavailable".into());
+                Ok(None) => {
+                    // 文件不存在属首次启动正常情况，不记为错误。
+                }
+                Err(_) => {
+                    load_errors.push("spiffs_llm_read_error".into());
                 }
             }
             match r.read_config_file("config/channels.json") {
@@ -318,8 +324,11 @@ impl AppConfig {
                     let s = String::from_utf8_lossy(&b);
                     c.merge_channels_from_json(&s, &mut load_errors);
                 }
-                Ok(None) | Err(_) => {
-                    load_errors.push("spiffs_channels_unavailable".into());
+                Ok(None) => {
+                    // 文件不存在属首次启动正常情况，不记为错误。
+                }
+                Err(_) => {
+                    load_errors.push("spiffs_channels_read_error".into());
                 }
             }
         }
@@ -330,6 +339,7 @@ impl AppConfig {
                 model: c.model.clone(),
                 api_url: c.api_url.clone(),
                 stream: false,
+                max_tokens: None,
             }];
         }
         c.load_errors = if load_errors.is_empty() {
@@ -548,7 +558,9 @@ pub fn parse_proxy_url_to_host_port(url: &str) -> Option<(String, String)> {
 // 以下仍属 impl AppConfig（与 parse_proxy_url_to_host_port 并列的 impl 块继续）
 impl AppConfig {
     /// 序列化为 JSON，供 GET /api/config 与 CLI 使用。
-    pub fn to_masked_json(&self) -> Result<String> {
+    /// NOTE: 含明文密钥，仅限本地 UI 使用，不得用于日志或公开接口。
+    /// For local UI only; contains plaintext secrets.
+    pub fn to_full_json(&self) -> Result<String> {
         serde_json::to_string_pretty(self).map_err(|e| Error::config("serialize", e.to_string()))
     }
 
@@ -559,6 +571,7 @@ impl AppConfig {
         validate_field_len(&c.wifi_ssid, CONFIG_FIELD_MAX_LEN, "wifi_ssid")?;
         validate_field_len(&c.wifi_pass, CONFIG_FIELD_MAX_LEN, "wifi_pass")?;
         validate_field_len(&c.tg_token, CONFIG_FIELD_MAX_LEN, "tg_token")?;
+        validate_field_len(&c.feishu_app_id, CONFIG_FIELD_MAX_LEN, "feishu_app_id")?;
         validate_field_len(&c.feishu_app_secret, CONFIG_FIELD_MAX_LEN, "feishu_app_secret")?;
         validate_field_len(&c.api_key, CONFIG_FIELD_MAX_LEN, "api_key")?;
         validate_field_len(&c.search_key, CONFIG_FIELD_MAX_LEN, "search_key")?;
@@ -578,6 +591,7 @@ impl AppConfig {
                 model: c.model.clone(),
                 api_url: c.api_url.clone(),
                 stream: false,
+                max_tokens: None,
             }];
         }
         validate_llm_sources(
@@ -602,7 +616,9 @@ impl AppConfig {
                 ),
             ));
         }
-        c.validate_for_wifi()?;
+        if !c.wifi_ssid.is_empty() {
+            c.validate_for_wifi()?;
+        }
         c.validate_proxy()?;
         Ok(c)
     }

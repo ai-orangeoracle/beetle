@@ -286,7 +286,19 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
                 *counter = counter.saturating_add(1);
 
                 if *counter < 3 {
-                    let _ = inbound_tx.try_send(msg.clone());
+                    match inbound_tx.try_send(msg.clone()) {
+                        Ok(()) => {}
+                        Err(std::sync::mpsc::TrySendError::Full(_)) => {
+                            let _ = config.pending_retry.save_pending_retry(&msg);
+                            log::warn!(
+                                "[agent] llm retry: inbound full, pending_retry saved chat_id={}",
+                                msg.chat_id
+                            );
+                        }
+                        Err(std::sync::mpsc::TrySendError::Disconnected(_)) => {
+                            log::error!("[agent] inbound_tx disconnected during llm retry");
+                        }
+                    }
                     let delay_ms = (AGENT_RETRY_BASE_MS * (1 << (*counter as u64).min(4))).min(AGENT_RETRY_MAX_MS);
                     std::thread::sleep(std::time::Duration::from_millis(delay_ms));
                     continue;
@@ -350,6 +362,15 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
             }
         }
 
+        // SILENT 或 cron 空回复不写 session，直接跳过。
+        if reply_content.trim() == "SILENT" || (msg.channel == "cron" && reply_content.is_empty()) {
+            llm_failure_count.remove(&msg_key);
+            if llm_failure_count.len() > 64 {
+                llm_failure_count.retain(|_, v| *v > 0);
+            }
+            continue;
+        }
+
         if let Err(e) = config.session_store.append(&msg.chat_id, "user", &msg.content) {
             log::warn!("[agent_session] append user failed: {}", e);
             metrics::record_error_by_stage("session_append");
@@ -366,9 +387,6 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
             llm_failure_count.retain(|_, v| *v > 0);
         }
 
-        if reply_content.trim() == "SILENT" || (msg.channel == "cron" && reply_content.is_empty()) {
-            continue;
-        }
         let out = PcMsg {
             channel: msg.channel.clone(),
             chat_id: msg.chat_id.clone(),
@@ -486,7 +504,12 @@ fn run_worker_path<H: PlatformHttpClient>(
             }
             messages.push(Message {
                 role: "assistant".to_string(),
-                content: response.content,
+                // Anthropic API 要求 tool_use 轮的 assistant content 非空；空时用占位符。
+                content: if response.content.is_empty() {
+                    "[tool_use]".to_string()
+                } else {
+                    response.content
+                },
             });
             let mut user_content_raw = String::with_capacity(MAX_TOOL_RESULTS_USER_MESSAGE_LEN.min(
                 tool_calls.len() * 256,

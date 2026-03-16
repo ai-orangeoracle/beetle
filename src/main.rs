@@ -190,9 +190,9 @@ fn main() {
     let platform: Arc<dyn Platform> = Arc::new(Esp32Platform::new());
     if let Err(e) = platform.init_nvs() {
         log::error!("[{}] nvs init failed: {}", TAG, e);
-    } else {
-        log::info!("[{}] NVS init ok", TAG);
+        return;
     }
+    log::info!("[{}] NVS init ok", TAG);
 
     let config_store = platform.config_store();
     let config_file_store = config::PlatformConfigFileStore(Arc::clone(&platform));
