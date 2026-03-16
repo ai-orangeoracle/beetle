@@ -433,6 +433,8 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
     if let Ok(mut http_client) = platform.create_http_client(config.as_ref()) {
         #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
         beetle::platform::task_wdt::register_current_task_to_task_wdt();
+        // 总控唯一入口：出站网络未就绪时不启动 WSS/通道/Agent 等对外请求，阻塞直到 STA 就绪（轮询+喂狗）
+        beetle::platform::wait_for_network_ready();
         beetle::resource::update();
         let outbound_rx_for_dispatch = outbound_rx;
         let sinks_clone = Arc::clone(&sinks);
@@ -449,7 +451,7 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
             let tg_allowed = parse_allowed_chat_ids(&config.tg_allowed_chat_ids);
             let tg_group_activation = config.tg_group_activation.clone();
             let tg_config_store = Arc::clone(&config_store);
-            std::thread::spawn(move || {
+                std::thread::spawn(move || {
                 const TAG_TG: &str = "telegram_poll";
                 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
                 beetle::platform::task_wdt::register_current_task_to_task_wdt();

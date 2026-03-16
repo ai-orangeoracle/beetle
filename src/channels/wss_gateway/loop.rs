@@ -17,11 +17,10 @@ const DEFAULT_HEARTBEAT_INTERVAL_MS: u64 = 120_000;
 /// recv_timeout 单次上限（秒）；须小于 TWDT 超时（sdkconfig 60s），
 /// 避免长心跳间隔通道（如飞书 120s）在空闲时触发看门狗。
 const WDT_RECV_CHUNK_SECS: u64 = 25;
-/// WiFi 就绪等待上限（秒）；超出后仍尝试连接（WiFi 可能随时恢复）。
+/// WiFi 就绪等待上限（秒）；运行中网络断开后重连时，超出后仍尝试连接。
 const WIFI_WAIT_MAX_SECS: u64 = 60;
 
-/// 阻塞等待 WiFi STA 就绪，每 2s 轮询，最多 `WIFI_WAIT_MAX_SECS`。
-/// 返回 true 表示 WiFi 已就绪，false 表示超时（但调用方仍可继续尝试）。
+/// 阻塞等待 WiFi STA 就绪，每 2s 轮询，最多 `WIFI_WAIT_MAX_SECS`。返回 true 表示已就绪，false 表示超时仍继续尝试。
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 fn wait_for_wifi(tag: &str) -> bool {
     if crate::platform::is_wifi_sta_connected() {
@@ -63,7 +62,6 @@ pub fn run_wss_gateway_loop<D, H, C, CreateHttp, Conn>(
     crate::platform::task_wdt::register_current_task_to_task_wdt();
     let mut backoff_secs = crate::resource::current_budget().reconnect_backoff_secs;
     loop {
-        // 每轮开始前确认 WiFi 就绪
         wait_for_wifi(tag);
 
         let mut http = match create_http() {

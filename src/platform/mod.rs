@@ -41,5 +41,8 @@ pub use spiffs::{
     default_skill_storage_arc, init_spiffs, spiffs_usage, SpiffsMemoryStore, SpiffsSessionStore,
     SpiffsSkillMetaStore, SpiffsSkillStorage, SPIFFS_BASE,
 };
-pub use wifi::{connect as connect_wifi, is_wifi_sta_connected, WifiApEntry, WifiScan, WifiScanHandle};
+pub use wifi::{
+    connect as connect_wifi, is_wifi_sta_connected, wait_for_network_ready, WifiApEntry, WifiScan,
+    WifiScanHandle,
+};
 pub use sntp::init_sntp;

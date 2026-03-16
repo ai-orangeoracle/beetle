@@ -49,6 +49,39 @@ pub fn percent_encode_query(s: &str) -> String {
     out
 }
 
+/// URL query percent-decode：`%XX` → 单字节，`+` → 空格，其余保留。与 `percent_encode_query` 对称。
+pub fn percent_decode_query(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let len = bytes.len();
+    let mut out = Vec::with_capacity(len);
+    let mut i = 0;
+    while i < len {
+        if bytes[i] == b'%' && i + 2 < len {
+            if let (Some(hi), Some(lo)) = (hex_val(bytes[i + 1]), hex_val(bytes[i + 2])) {
+                out.push(hi << 4 | lo);
+                i += 3;
+                continue;
+            }
+        }
+        if bytes[i] == b'+' {
+            out.push(b' ');
+        } else {
+            out.push(bytes[i]);
+        }
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+fn hex_val(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        _ => None,
+    }
+}
+
 // ---------- 时间/日期（与 cron、remind_at、get_time 共用） ----------
 
 /// 闰年判定。

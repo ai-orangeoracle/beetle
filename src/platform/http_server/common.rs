@@ -151,7 +151,10 @@ pub fn name_from_uri(uri: &str) -> Option<String> {
     for pair in query.split('&') {
         let mut it = pair.splitn(2, '=');
         if it.next()?.eq_ignore_ascii_case("name") {
-            return it.next().filter(|s| !s.is_empty()).map(|s| s.to_string());
+            return it
+                .next()
+                .filter(|s| !s.is_empty())
+                .map(|s| crate::util::percent_decode_query(s));
         }
     }
     None

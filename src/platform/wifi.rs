@@ -32,6 +32,19 @@ pub fn is_wifi_sta_connected() -> bool {
     WIFI_STA_CONNECTED.load(Ordering::Relaxed)
 }
 
+/// 阻塞直到出站网络就绪（STA 已连接）；轮询 2s 并喂狗。仅 ESP 生效，host 立即返回。
+/// 供 WSS、通道发送、Agent 等对外请求入口在发起请求前调用，避免无网时无意义请求与资源耗尽。
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+pub fn wait_for_network_ready() {
+    while !is_wifi_sta_connected() {
+        crate::platform::task_wdt::feed_current_task();
+        std::thread::sleep(Duration::from_secs(2));
+    }
+}
+
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+pub fn wait_for_network_ready() {}
+
 /// GET /api/wifi/scan 返回的单个 AP；按信号强度排序后供前端下拉选择。
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct WifiApEntry {

@@ -19,7 +19,8 @@ pub enum SkillsGetResult {
 pub fn get(ctx: &HandlerContext, name: Option<String>) -> Result<SkillsGetResult, ApiResponse> {
     let locale = config::get_locale(ctx.config_store.as_ref());
     if let Some(n) = name {
-        return match skills::get_skill_content(ctx.skill_storage.as_ref(), &n) {
+        let n = n.strip_suffix(".md").unwrap_or(&n);
+        return match skills::get_skill_content(ctx.skill_storage.as_ref(), n) {
             Some(content) => Ok(SkillsGetResult::TextPlain(content)),
             None => Err(ApiResponse::err_404(&user_message::from_api_key("skill_not_found", &locale))),
         };
@@ -60,6 +61,7 @@ pub fn post(ctx: &HandlerContext, body: &str) -> ApiResponse {
     }
     if let Some(content) = v.get("content").and_then(|c| c.as_str()) {
         if let Some(ref name) = name {
+            let name = name.strip_suffix(".md").unwrap_or(name);
             return match skills::write_skill(ctx.skill_storage.as_ref(), name, content) {
                 Ok(()) => ApiResponse::ok_200_json("{\"ok\":true}"),
                 Err(e) => ApiResponse::err_400(&user_message::from_error(&e, &locale)),
@@ -82,6 +84,7 @@ pub fn post(ctx: &HandlerContext, body: &str) -> ApiResponse {
 /// DELETE /api/skills?name=：name 由 mod 从 query 解析后传入（必填）。
 pub fn delete(ctx: &HandlerContext, name: &str) -> ApiResponse {
     let locale = config::get_locale(ctx.config_store.as_ref());
+    let name = name.strip_suffix(".md").unwrap_or(name);
     match skills::delete_skill(ctx.skill_storage.as_ref(), name) {
         Ok(()) => ApiResponse::ok_200_json("{\"ok\":true}"),
         Err(e) => {
@@ -115,7 +118,7 @@ pub fn import(ctx: &HandlerContext, body: &str) -> Result<ApiResponse, std::io::
         None => return Ok(ApiResponse::err_400(&user_message::from_api_key("missing_url", &locale))),
     };
     let name = match name {
-        Some(n) => n,
+        Some(n) => n.strip_suffix(".md").unwrap_or(&n).to_string(),
         None => return Ok(ApiResponse::err_400(&user_message::from_api_key("missing_name", &locale))),
     };
     if !(url.starts_with("http://") || url.starts_with("https://")) || url.len() <= 8 {
