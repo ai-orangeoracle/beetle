@@ -78,8 +78,8 @@ export function Sidebar({ drawer }: SidebarProps) {
   const { deviceConnected, connectionChecking, needDeviceHint, deviceHintReason } = useDeviceApi();
   const { showToast } = useToast();
   const pathname = location.pathname;
-  /** 仅在「无需设备提示」或当前为设备页时允许跳转；否则仅设备页可点，其他菜单点击弹出对应提示 */
-  const canNavigate = (path: string) => path === "/device" || !needDeviceHint;
+  /** 仅在设备已连接且无需提示时允许跳转；设备页始终可点。checking/unreachable/未激活/无配对码均禁用 */
+  const canNavigate = (path: string) => path === "/device" || (deviceConnected && !needDeviceHint);
   const width = drawer ? "100%" : SIDEBAR_WIDTH_EXPANDED;
 
   return (
@@ -267,7 +267,7 @@ export function Sidebar({ drawer }: SidebarProps) {
               e.preventDefault();
               showToast(t(getNavBlockedMessageKey(deviceHintReason)), {
                 variant: "warning",
-                position: "top-right",
+                position: "top-left",
               });
               return;
             }
@@ -284,7 +284,7 @@ export function Sidebar({ drawer }: SidebarProps) {
               to={allowNav && !navBlocker?.attemptNavigate ? path : undefined}
               selected={active && allowNav}
               role={allowNav ? "link" : "button"}
-              tabIndex={0}
+              tabIndex={!allowNav ? -1 : 0}
               aria-disabled={!allowNav ? true : undefined}
               onClick={handleNavClick}
               sx={listItemSx}

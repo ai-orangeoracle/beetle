@@ -10,7 +10,10 @@ pub mod files;
 pub mod get_time;
 #[cfg(feature = "gpio")]
 pub mod gpio;
+pub mod http_post;
+pub mod kv_store;
 pub mod remind_at;
+pub mod system_stats;
 pub mod update_session_summary;
 pub mod web_search;
 
@@ -21,8 +24,11 @@ pub use files::FilesTool;
 pub use get_time::GetTimeTool;
 #[cfg(feature = "gpio")]
 pub use gpio::{GpioReadTool, GpioWriteTool};
+pub use http_post::HttpPostTool;
+pub use kv_store::KvStoreTool;
 pub use registry::ToolRegistry;
 pub use remind_at::RemindAtTool;
+pub use system_stats::SystemStatsTool;
 pub use update_session_summary::UpdateSessionSummaryTool;
 pub use web_search::WebSearchTool;
 

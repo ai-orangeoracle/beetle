@@ -187,7 +187,10 @@ export function ChannelsConfigPage() {
             </option>
           ))}
         </TextField>
-        <FormSectionSubCollapsible title="Telegram" defaultOpen>
+        <FormSectionSubCollapsible
+          title="Telegram"
+          defaultOpen={!form.enabled_channel || form.enabled_channel === "telegram"}
+        >
           <TextField
             label={t("config.tgToken")}
             value={form.tg_token}
@@ -234,7 +237,7 @@ export function ChannelsConfigPage() {
 
         <FormSectionSubCollapsible
           title={t("config.feishu")}
-          defaultOpen={false}
+          defaultOpen={form.enabled_channel === "feishu"}
         >
           <TextField
             label={t("config.feishuAppId")}
@@ -270,7 +273,7 @@ export function ChannelsConfigPage() {
 
         <FormSectionSubCollapsible
           title={t("config.dingtalk")}
-          defaultOpen={false}
+          defaultOpen={form.enabled_channel === "dingtalk"}
         >
           <TextField
             label={t("config.dingtalkWebhookUrl")}
@@ -291,7 +294,7 @@ export function ChannelsConfigPage() {
 
         <FormSectionSubCollapsible
           title={t("config.wecom")}
-          defaultOpen={false}
+          defaultOpen={form.enabled_channel === "wecom"}
         >
           <TextField
             label={t("config.wecomCorpId")}
@@ -336,7 +339,7 @@ export function ChannelsConfigPage() {
 
         <FormSectionSubCollapsible
           title={t("config.qqChannel")}
-          defaultOpen={false}
+          defaultOpen={form.enabled_channel === "qq_channel"}
         >
           <TextField
             label={t("config.qqChannelAppId")}
@@ -362,7 +365,7 @@ export function ChannelsConfigPage() {
           />
         </FormSectionSubCollapsible>
 
-        <FormSectionSubCollapsible title="Webhook" defaultOpen={false}>
+        <FormSectionSubCollapsible title="Webhook" defaultOpen={form.webhook_enabled}>
           <FormControlLabel
             control={
               <Switch

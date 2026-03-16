@@ -78,3 +78,10 @@ pub const CHANNEL_FAIL_THRESHOLD: u32 = 3;
 
 /// SSE 流式响应行缓冲区大小（字节）；单行 SSE data 不应超此值。
 pub const SSE_LINE_BUF_SIZE: usize = 4096;
+
+/// kv_store 工具：最多允许存储的条目数。
+pub const KV_STORE_MAX_ENTRIES: usize = 64;
+/// kv_store 工具：key 最大字节数；只允许 [a-zA-Z0-9_\-.] 字符。
+pub const KV_STORE_MAX_KEY_LEN: usize = 64;
+/// kv_store 工具：value 最大字节数；适合偏好/状态等小型数据。
+pub const KV_STORE_MAX_VALUE_LEN: usize = 512;

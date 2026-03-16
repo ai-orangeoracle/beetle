@@ -60,8 +60,8 @@ pub use platform::{ConfigStore, Platform, PlatformHttpClient, SkillStorage};
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 pub use platform::Esp32Platform;
 pub use tools::{
-    CronTool, FetchUrlTool, FilesTool, GetTimeTool, RemindAtTool, Tool, ToolContext, ToolRegistry,
-    UpdateSessionSummaryTool, WebSearchTool,
+    CronTool, FetchUrlTool, FilesTool, GetTimeTool, HttpPostTool, KvStoreTool, RemindAtTool,
+    SystemStatsTool, Tool, ToolContext, ToolRegistry, UpdateSessionSummaryTool, WebSearchTool,
 };
 
 /// 任何 PlatformHttpClient 均可作为 LlmHttpClient、ToolContext、ChannelHttpClient 使用。

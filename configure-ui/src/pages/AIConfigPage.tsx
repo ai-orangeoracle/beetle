@@ -253,7 +253,11 @@ export function AIConfigPage() {
             <FormSectionSubCollapsible
               key={i}
               title={`${t("config.llmSource")} ${i + 1}`}
-              defaultOpen={i === 0}
+              defaultOpen={
+                routerIndex !== null && workerIndex !== null
+                  ? i === routerIndex || i === workerIndex
+                  : i === 0
+              }
               action={
                 <Box
                   component="span"

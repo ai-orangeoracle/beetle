@@ -17,7 +17,8 @@ use beetle::{
     run_telegram_sender_loop, run_wecom_sender_loop, send_chat_action, AnthropicClient, AppConfig,
     ChannelSinks, CronTool, Esp32Platform, EspHttpClient, FallbackLlmClient, FetchUrlTool,
     FilesTool, GetTimeTool, MessageBus, OpenAiCompatibleClient, PcMsg, QueuedSink, RemindAtTool,
-    ToolRegistry, UpdateSessionSummaryTool, WebSearchTool, WebSocketSink, DEFAULT_CAPACITY,
+    HttpPostTool, KvStoreTool, SystemStatsTool, ToolRegistry, UpdateSessionSummaryTool,
+    WebSearchTool, WebSocketSink, DEFAULT_CAPACITY,
 };
 
 use std::collections::HashMap;
@@ -576,6 +577,9 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
             &session_summary_store,
         ))));
         registry.register(Box::new(beetle::tools::BoardInfoTool));
+        registry.register(Box::new(HttpPostTool));
+        registry.register(Box::new(KvStoreTool));
+        registry.register(Box::new(SystemStatsTool));
         #[cfg(feature = "gpio")]
         {
             registry.register(Box::new(beetle::tools::GpioReadTool));
