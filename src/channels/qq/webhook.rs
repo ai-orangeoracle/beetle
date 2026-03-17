@@ -1,4 +1,4 @@
-//! QQ 频道入站 HTTP 回调：op=13 验址、op=0 Ed25519 验签，AT_MESSAGE_CREATE 入队。
+//! QQ 入站 HTTP 回调：op=13 验址、op=0 Ed25519 验签，支持 AT_MESSAGE_CREATE / GROUP_AT_MESSAGE_CREATE / C2C_MESSAGE_CREATE 入队。
 
 use crate::bus::{InboundTx, PcMsg};
 use crate::error::{Error, Result};
@@ -63,34 +63,53 @@ pub fn handle_webhook(
         verify_qq_signature(secret, ts, body, sig)?;
 
         let t = value.get("t").and_then(|v| v.as_str()).unwrap_or("");
-        if t == "AT_MESSAGE_CREATE" {
-            let d = value.get("d").and_then(|v| v.as_object());
-            if let Some(d) = d {
-                let msg_id = d.get("id").and_then(|v| v.as_str()).map(|s| s.to_string());
-                let channel_id = d.get("channel_id").and_then(|v| v.as_str()).map(|s| s.to_string());
-                let content = d.get("content").and_then(|v| v.as_str()).map(|s| s.to_string());
-                if let (Some(id), Some(ch), Some(content)) = (msg_id, channel_id, content) {
-                    if !ch.is_empty() && !content.is_empty() {
-                        let now = std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap_or_default()
-                            .as_secs();
-                        {
-                            let mut cache = msg_id_cache.lock().map_err(|e| Error::Other {
-                                source: Box::new(std::io::Error::new(
-                                    std::io::ErrorKind::Other,
-                                    e.to_string(),
-                                )),
-                                stage: "qq_msg_id_cache_lock",
-                            })?;
-                            cache.insert(ch.clone(), (id, now));
-                        }
-                        let msg = PcMsg::new("qq_channel", ch, content)?;
-                        inbound_tx.send(msg).map_err(|e| Error::Other {
-                            source: Box::new(e),
-                            stage: "qq_inbound_send",
+        let d = value.get("d").and_then(|v| v.as_object());
+        if let Some(d) = d {
+            let (chat_id, content, msg_id) = match t {
+                "AT_MESSAGE_CREATE" => {
+                    // 频道消息：chat_id = channel_id
+                    let ch = d.get("channel_id").and_then(|v| v.as_str()).map(|s| s.to_string());
+                    let ct = d.get("content").and_then(|v| v.as_str()).map(|s| s.to_string());
+                    let mid = d.get("id").and_then(|v| v.as_str()).map(|s| s.to_string());
+                    (ch, ct, mid)
+                }
+                "GROUP_AT_MESSAGE_CREATE" => {
+                    // 群聊 @ 消息：chat_id = "group:{group_openid}"
+                    let gid = d.get("group_openid").and_then(|v| v.as_str()).map(|s| format!("group:{}", s));
+                    let ct = d.get("content").and_then(|v| v.as_str()).map(|s| s.to_string());
+                    let mid = d.get("id").and_then(|v| v.as_str()).map(|s| s.to_string());
+                    (gid, ct, mid)
+                }
+                "C2C_MESSAGE_CREATE" => {
+                    // 私聊消息：chat_id = "c2c:{guild_id}"（私信频道 ID，发消息用 /dms/{guild_id}/messages）
+                    let gid = d.get("guild_id").and_then(|v| v.as_str()).map(|s| format!("c2c:{}", s));
+                    let ct = d.get("content").and_then(|v| v.as_str()).map(|s| s.to_string());
+                    let mid = d.get("id").and_then(|v| v.as_str()).map(|s| s.to_string());
+                    (gid, ct, mid)
+                }
+                _ => (None, None, None),
+            };
+            if let (Some(id), Some(ch), Some(content)) = (msg_id, chat_id, content) {
+                if !ch.is_empty() && !content.is_empty() {
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs();
+                    {
+                        let mut cache = msg_id_cache.lock().map_err(|e| Error::Other {
+                            source: Box::new(std::io::Error::new(
+                                std::io::ErrorKind::Other,
+                                e.to_string(),
+                            )),
+                            stage: "qq_msg_id_cache_lock",
                         })?;
+                        cache.insert(ch.clone(), (id, now));
                     }
+                    let msg = PcMsg::new("qq_channel", ch, content)?;
+                    inbound_tx.send(msg).map_err(|e| Error::Other {
+                        source: Box::new(e),
+                        stage: "qq_inbound_send",
+                    })?;
                 }
             }
         }

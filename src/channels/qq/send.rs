@@ -63,6 +63,7 @@ pub type QqMsgIdCache = Arc<Mutex<HashMap<String, (String, u64)>>>;
 
 pub const QQ_GET_APP_ACCESS_TOKEN_URL: &str = "https://bots.qq.com/app/getAppAccessToken";
 const QQ_MESSAGES_BASE: &str = "https://api.sgroup.qq.com/channels";
+const QQ_V2_BASE: &str = "https://api.sgroup.qq.com/v2";
 
 #[derive(serde::Serialize)]
 pub struct QqTokenRequest {
@@ -75,9 +76,27 @@ pub struct QqTokenRequest {
 #[derive(serde::Deserialize)]
 pub struct QqTokenResponse {
     pub access_token: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_u64_or_string")]
     #[allow(dead_code)]
     pub expires_in: u64,
+}
+
+/// QQ API 的 expires_in 可能返回数字或字符串，兼容两种格式。
+fn deserialize_u64_or_string<'de, D>(deserializer: D) -> std::result::Result<u64, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::Deserialize;
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum U64OrString {
+        U64(u64),
+        Str(String),
+    }
+    match U64OrString::deserialize(deserializer)? {
+        U64OrString::U64(v) => Ok(v),
+        U64OrString::Str(s) => s.parse::<u64>().map_err(serde::de::Error::custom),
+    }
 }
 
 /// 连通性检查：供 GET /api/channel_connectivity 使用。
@@ -161,6 +180,25 @@ fn acquire_qq_token<H: ChannelHttpClient>(
     }
 }
 
+/// 根据 chat_id 前缀确定 API 端点：
+/// - "group:{group_openid}" → /v2/groups/{group_openid}/messages（群聊）
+/// - "c2c:{user_openid}"   → /v2/users/{user_openid}/messages（C2C 单聊）
+/// - 其他                   → /channels/{channel_id}/messages（频道）
+fn build_qq_message_url(chat_id: &str) -> String {
+    if let Some(group_openid) = chat_id.strip_prefix("group:") {
+        format!("{}/groups/{}/messages", QQ_V2_BASE, group_openid)
+    } else if let Some(user_openid) = chat_id.strip_prefix("c2c:") {
+        format!("{}/users/{}/messages", QQ_V2_BASE, user_openid)
+    } else {
+        format!("{}/{}/messages", QQ_MESSAGES_BASE, chat_id)
+    }
+}
+
+/// 群聊和私聊（v2 API）需要 msg_type 字段；频道 API 不需要。
+fn is_v2_chat(chat_id: &str) -> bool {
+    chat_id.starts_with("group:") || chat_id.starts_with("c2c:")
+}
+
 fn send_one_qq<H: ChannelHttpClient>(
     http: &mut H,
     token: &str,
@@ -169,9 +207,16 @@ fn send_one_qq<H: ChannelHttpClient>(
     msg_id: Option<&str>,
 ) {
     const TAG: &str = "qq_send";
+    let url = build_qq_message_url(chat_id);
+    let v2 = is_v2_chat(chat_id);
     let chunks = crate::channels::chunk::chunk_str_by_char_count(content, QQ_MAX_MESSAGE_LEN);
     for (i, chunk) in chunks.iter().enumerate() {
         let mut body_obj = serde_json::json!({ "content": chunk });
+        if v2 {
+            body_obj["msg_type"] = serde_json::json!(0); // 0 = 文本
+            // v2 API（群聊/C2C）需要 msg_seq 去重；每个分片递增
+            body_obj["msg_seq"] = serde_json::json!(i + 1);
+        }
         if i == 0 {
             if let Some(id) = msg_id {
                 body_obj["msg_id"] = serde_json::json!(id);
@@ -184,12 +229,28 @@ fn send_one_qq<H: ChannelHttpClient>(
                 continue;
             }
         };
-        let url = format!("{}/{}/messages", QQ_MESSAGES_BASE, chat_id);
         let auth_header = format!("QQBot {}", token);
-        let headers = [("Authorization", auth_header.as_str())];
-        let _ = crate::channels::send::send_post_with_headers(
+        let mut cl_buf = [0u8; 20];
+        let content_length = crate::util::usize_to_decimal_buf(&mut cl_buf, body_bytes.len());
+        let headers = [
+            ("Authorization", auth_header.as_str()),
+            ("content-type", "application/json"),
+            ("content-length", content_length),
+        ];
+        match crate::channels::send::send_post_with_headers(
             TAG, http, &url, &headers, &body_bytes,
-        );
+        ) {
+            Ok((status, ref body)) if status >= 400 => {
+                let preview = String::from_utf8_lossy(
+                    &body.as_ref()[..body.as_ref().len().min(256)],
+                );
+                log::warn!("[{}] send status={} body={}", TAG, status, preview);
+            }
+            Err(ref e) => {
+                log::warn!("[{}] send error: {}", TAG, e);
+            }
+            _ => {}
+        }
     }
 }
 

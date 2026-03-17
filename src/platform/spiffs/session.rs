@@ -34,7 +34,7 @@ fn session_path(chat_id: &str) -> Result<(PathBuf, bool)> {
     }
     if !chat_id
         .chars()
-        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.')
+        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.' || c == ':')
     {
         return Err(Error::config("session_path", "chat_id contains invalid chars"));
     }

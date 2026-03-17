@@ -1,4 +1,5 @@
-//! QQ 频道：入站 HTTP 回调（op=13/op=0 验签，AT_MESSAGE_CREATE 入队）与 WSS 入站；出站 Sink/flush、msg_id 被动回复，连通性检查。
+//! QQ 频道/群聊/私聊：入站 HTTP 回调（验签）与 WSS 入站；出站 Sink/flush、msg_id 被动回复，连通性检查。
+//! 支持 AT_MESSAGE_CREATE（频道）、GROUP_AT_MESSAGE_CREATE（群聊）、C2C_MESSAGE_CREATE（私聊）。
 
 mod send;
 mod webhook;

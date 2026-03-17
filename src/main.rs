@@ -267,7 +267,8 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
                 let qq_tx = inbound_tx.clone();
                 let qq_id = c.app_id.clone();
                 let qq_sec = c.app_secret.clone();
-                std::thread::spawn(move || beetle::run_qq_ws_loop(qq_id, qq_sec, qq_tx));
+                let qq_cache_ws = std::sync::Arc::clone(&qq_msg_id_cache);
+                std::thread::spawn(move || beetle::run_qq_ws_loop(qq_id, qq_sec, qq_tx, qq_cache_ws));
                 log::info!("[{}] QQ WS loop started", TAG);
             }
         }

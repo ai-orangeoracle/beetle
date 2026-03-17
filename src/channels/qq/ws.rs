@@ -1,4 +1,5 @@
-//! QQ 频道 WSS 入站：取 gateway URL → Hello/Identify → 心跳 → Dispatch(AT_MESSAGE_CREATE) 入队。
+//! QQ WSS 入站：取 gateway URL → Hello/Identify → 心跳 → Dispatch 入队。
+//! 支持频道 AT_MESSAGE_CREATE、群聊 GROUP_AT_MESSAGE_CREATE、私聊 C2C_MESSAGE_CREATE。
 //! 仅 ESP 编译；与 HTTP webhook 可并存，由 main 按配置决定是否 spawn。
 
 #![cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
@@ -11,7 +12,7 @@ use crate::channels::wss_gateway::{
 use crate::error::{Error, Result};
 use crate::platform::EspHttpClient;
 
-use super::send::{QqTokenRequest, QqTokenResponse, QQ_GET_APP_ACCESS_TOKEN_URL};
+use super::send::{QqMsgIdCache, QqTokenRequest, QqTokenResponse, QQ_GET_APP_ACCESS_TOKEN_URL};
 
 const TAG: &str = "qq_ws";
 const QQ_GATEWAY_URL: &str = "https://api.sgroup.qq.com/gateway";
@@ -23,7 +24,12 @@ const QQ_OP_HEARTBEAT_ACK: u64 = 11;
 const QQ_OP_RECONNECT: u64 = 7;
 const QQ_OP_INVALID_SESSION: u64 = 9;
 const AT_MESSAGE_CREATE: &str = "AT_MESSAGE_CREATE";
+const GROUP_AT_MESSAGE_CREATE: &str = "GROUP_AT_MESSAGE_CREATE";
+const C2C_MESSAGE_CREATE: &str = "C2C_MESSAGE_CREATE";
+/// 频道公域消息 intent（频道 @ 消息）
 const PUBLIC_GUILD_MESSAGES_INTENT: u64 = 1 << 30;
+/// 群聊与私聊 intent（GROUP_AT_MESSAGE_CREATE + C2C_MESSAGE_CREATE）
+const GROUP_AND_C2C_INTENT: u64 = 1 << 25;
 
 fn get_qq_access_token<H: ChannelHttpClient + ?Sized>(http: &mut H, app_id: &str, client_secret: &str) -> Result<String> {
     let body = QqTokenRequest {
@@ -50,12 +56,19 @@ fn get_qq_access_token<H: ChannelHttpClient + ?Sized>(http: &mut H, app_id: &str
     })?;
     r.access_token
         .filter(|t| !t.is_empty())
-        .ok_or_else(|| Error::Other {
-            source: Box::new(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "qq_ws no access_token",
-            )),
-            stage: "qq_ws_token",
+        .ok_or_else(|| {
+            // 打印响应体帮助诊断 QQ API 返回的错误信息
+            let body_preview = String::from_utf8_lossy(
+                &resp_body.as_ref()[..resp_body.as_ref().len().min(256)],
+            );
+            log::warn!("[qq_ws] token response has no access_token, body: {}", body_preview);
+            Error::Other {
+                source: Box::new(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "qq_ws no access_token",
+                )),
+                stage: "qq_ws_token",
+            }
         })
 }
 
@@ -99,15 +112,28 @@ struct QqWssDriver {
     client_secret: String,
     cached_token: Option<String>,
     last_seq: Option<u64>,
+    msg_id_cache: QqMsgIdCache,
 }
 
 impl QqWssDriver {
-    fn new(app_id: String, client_secret: String) -> Self {
+    fn new(app_id: String, client_secret: String, msg_id_cache: QqMsgIdCache) -> Self {
         Self {
             app_id,
             client_secret,
             cached_token: None,
             last_seq: None,
+            msg_id_cache,
+        }
+    }
+
+    /// 将 msg_id 存入缓存，供发送时被动回复使用。
+    fn cache_msg_id(&self, chat_id: &str, msg_id: &str) {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        if let Ok(mut cache) = self.msg_id_cache.lock() {
+            cache.insert(chat_id.to_string(), (msg_id.to_string(), now));
         }
     }
 }
@@ -149,7 +175,7 @@ impl WssGatewayDriver for QqWssDriver {
             .and_then(|token| {
                 let d = serde_json::json!({
                     "token": format!("QQBot {}", token),
-                    "intents": PUBLIC_GUILD_MESSAGES_INTENT,
+                    "intents": PUBLIC_GUILD_MESSAGES_INTENT | GROUP_AND_C2C_INTENT,
                     "shard": [0u64, 1u64],
                     "properties": { "$os": "linux", "$browser": "my_library", "$device": "my_library" }
                 });
@@ -180,19 +206,67 @@ impl WssGatewayDriver for QqWssDriver {
             QQ_OP_DISPATCH => {
                 let t = value.get("t").and_then(|v| v.as_str()).unwrap_or("");
                 log::debug!("[{}] dispatch t={}", TAG, t);
-                if t == AT_MESSAGE_CREATE {
-                    let d = value.get("d").and_then(|v| v.as_object());
-                    if let Some(d) = d {
-                        let channel_id = d.get("channel_id").and_then(|v| v.as_str()).map(|s| s.to_string());
-                        let content = d.get("content").and_then(|v| v.as_str()).map(|s| s.to_string());
-                        if let (Some(ch), Some(content)) = (channel_id, content) {
-                            if !ch.is_empty() && !content.is_empty() {
-                                if let Ok(msg) = PcMsg::new("qq_channel", ch, content) {
-                                    return Ok(WssRecvAction::Dispatch(Some(msg)));
+                let d = value.get("d").and_then(|v| v.as_object());
+                match t {
+                    AT_MESSAGE_CREATE => {
+                        // 频道消息：chat_id = channel_id
+                        if let Some(d) = d {
+                            let channel_id = d.get("channel_id").and_then(|v| v.as_str());
+                            let content = d.get("content").and_then(|v| v.as_str());
+                            let msg_id = d.get("id").and_then(|v| v.as_str());
+                            if let (Some(ch), Some(content)) = (channel_id, content) {
+                                if !ch.is_empty() && !content.is_empty() {
+                                    if let Some(mid) = msg_id {
+                                        self.cache_msg_id(ch, mid);
+                                    }
+                                    if let Ok(msg) = PcMsg::new("qq_channel", ch, content) {
+                                        return Ok(WssRecvAction::Dispatch(Some(msg)));
+                                    }
                                 }
                             }
                         }
                     }
+                    GROUP_AT_MESSAGE_CREATE => {
+                        // 群聊 @ 消息：chat_id = "group:{group_openid}"
+                        if let Some(d) = d {
+                            let group_openid = d.get("group_openid").and_then(|v| v.as_str());
+                            let content = d.get("content").and_then(|v| v.as_str());
+                            let msg_id = d.get("id").and_then(|v| v.as_str());
+                            if let (Some(gid), Some(content)) = (group_openid, content) {
+                                if !gid.is_empty() && !content.is_empty() {
+                                    let chat_id = format!("group:{}", gid);
+                                    if let Some(mid) = msg_id {
+                                        self.cache_msg_id(&chat_id, mid);
+                                    }
+                                    if let Ok(msg) = PcMsg::new("qq_channel", &chat_id, content) {
+                                        return Ok(WssRecvAction::Dispatch(Some(msg)));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    C2C_MESSAGE_CREATE => {
+                        // C2C 单聊：用 author.user_openid 标识对方，chat_id = "c2c:{user_openid}"
+                        if let Some(d) = d {
+                            let user_openid = d.get("author")
+                                .and_then(|a| a.get("user_openid"))
+                                .and_then(|v| v.as_str());
+                            let content = d.get("content").and_then(|v| v.as_str());
+                            let msg_id = d.get("id").and_then(|v| v.as_str());
+                            if let (Some(uid), Some(content)) = (user_openid, content) {
+                                if !uid.is_empty() && !content.is_empty() {
+                                    let chat_id = format!("c2c:{}", uid);
+                                    if let Some(mid) = msg_id {
+                                        self.cache_msg_id(&chat_id, mid);
+                                    }
+                                    if let Ok(msg) = PcMsg::new("qq_channel", &chat_id, content) {
+                                        return Ok(WssRecvAction::Dispatch(Some(msg)));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
                 }
                 Ok(WssRecvAction::Dispatch(None))
             }
@@ -220,8 +294,13 @@ impl WssGatewayDriver for QqWssDriver {
 }
 
 /// 长连接循环：委托 run_wss_gateway_loop，使用 QqWssDriver 与 ESP 连接。
-pub fn run_qq_ws_loop(app_id: String, client_secret: String, inbound_tx: crate::bus::InboundTx) {
-    let driver = QqWssDriver::new(app_id, client_secret);
+pub fn run_qq_ws_loop(
+    app_id: String,
+    client_secret: String,
+    inbound_tx: crate::bus::InboundTx,
+    msg_id_cache: QqMsgIdCache,
+) {
+    let driver = QqWssDriver::new(app_id, client_secret, msg_id_cache);
     let create_http = || EspHttpClient::new();
     let connect = |url: &str| connect_esp_wss(url);
     run_wss_gateway_loop(TAG, driver, inbound_tx, create_http, connect);

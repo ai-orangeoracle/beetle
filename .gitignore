@@ -15,6 +15,7 @@ configure-ui/dist/
 # IDE / OS
 .idea/
 .vscode/
+.claude/
 .DS_Store
 *.swp
 *.swo
