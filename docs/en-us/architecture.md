@@ -13,12 +13,13 @@ This doc is for external readers: module layout, data flow, and how to extend. N
 | **config** | Build-time / env and NVS, SPIFFS config load and validation; secrets not logged or written to disk. |
 | **error** | Unified error type (stage is `&'static str`); public APIs return `Result<T, Error>`. |
 | **bus** | Inbound/outbound message queues (fixed capacity, backpressure); decouples channels from Agent. |
+| **orchestrator** | Unified resource orchestrator: atomic state aggregation (heap, connections, pressure, channel health), HTTP admission with priority and TLS single-concurrency, four-dimensional gating (inbound/outbound/LLM/tool), channel circuit breaker. Zero heap alloc, lock-free (except TLS Mutex), xtensa compatible. |
 | **memory** | Long-term memory and session storage; system prompt aggregation. |
 | **platform** | Platform abstraction (config store, skill store, HTTP client, etc.) and ESP32 implementation; only module that directly depends on esp-idf-svc. |
 | **llm** | LLM client abstraction; supports Anthropic, OpenAI-compatible (e.g. Ollama), etc. |
 | **tools** | Tool registry; GetTime, Cron, FetchUrl, WebSearch, RemindAt, Files, etc.; new tools implement `Tool` trait and register. |
 | **agent** | Context build, ReAct loop; depends on LlmClient, ToolRegistry, Memory, Session. |
-| **channels** | Channel abstraction and dispatch; Telegram, Feishu, DingTalk, WeCom, QQ Channel, WebSocket; inbound pushes to bus, outbound dispatched by channel; single-channel consecutive failures trigger cooldown to avoid dragging down the system. |
+| **channels** | Channel abstraction and dispatch; Telegram, Feishu, DingTalk, WeCom, QQ Channel, WebSocket; inbound pushes to bus, outbound dispatched by channel; channel health tracking delegated to orchestrator. |
 | **metrics** | Runtime metrics and error profile: messages in/out, LLM/tool calls and errors, WDT feed, dispatch success/fail, per-stage error aggregation (incl. session write failures); exposed via health API and heartbeat baseline logs. |
 | **cli** (optional) | Serial commands: wifi_status, heap_info, session_list, restart, ota, etc. |
 | **ota** (optional) | Fetch firmware from URL, write to OTA partition; failure does not corrupt current partition. |
@@ -42,7 +43,7 @@ This doc is for external readers: module layout, data flow, and how to extend. N
 
 - **Inbound**: Channels (or cron) push user/system messages into Inbound; Agent consumes from Inbound.
 - **Agent**: Aggregates system prompt and history from Memory/Session, calls LLM; on tool_use runs tools and appends results, loops until end_turn; writes session and pushes reply to Outbound.
-- **Outbound**: Dispatch takes from Outbound and calls each channel's send; after consecutive failures per channel exceed a threshold, that channel enters cooldown and is not sent to until cooldown ends.
+- **Outbound**: Dispatch takes from Outbound and calls each channel's send; channel health (consecutive failures and cooldown) is tracked by the orchestrator module.
 
 **Observability and health**: `GET /api/health` returns WiFi, inbound/outbound queue depth, recent error summary, and a **metrics** snapshot (messages in/out, LLM/tool calls and errors, WDT feed, per-stage error counts, etc.; no sensitive data). Heartbeat logs a metrics baseline every 30 seconds for before/after comparison.
 

@@ -4,15 +4,12 @@
 use crate::bus::{OutboundRx, MAX_CONTENT_LEN};
 use crate::config::AppConfig;
 use crate::util::truncate_content_to_max;
-use crate::constants::{CHANNEL_FAIL_COOLDOWN_SECS, CHANNEL_FAIL_THRESHOLD};
 use crate::error::Result;
 use crate::metrics;
 use std::collections::HashMap;
 use std::sync::mpsc;
-use std::sync::Mutex;
-use std::sync::OnceLock;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 /// 出站发送抽象；各通道实现此 trait，由 main 注册到 ChannelSinks。
 pub trait MessageSink: Send + Sync {
@@ -72,38 +69,16 @@ impl Default for ChannelSinks {
 const SEND_RETRY: u32 = 2;
 const SEND_RETRY_DELAY_MS: u64 = 500;
 
-static CHANNEL_FAIL_STATE: OnceLock<Mutex<HashMap<String, (u32, Instant)>>> = OnceLock::new();
-
-fn channel_fail_state() -> &'static Mutex<HashMap<String, (u32, Instant)>> {
-    CHANNEL_FAIL_STATE.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
 fn is_channel_in_cooldown(channel: &str) -> bool {
-    let guard = match channel_fail_state().lock() {
-        Ok(g) => g,
-        Err(_) => return false,
-    };
-    if let Some((count, last)) = guard.get(channel) {
-        *count >= CHANNEL_FAIL_THRESHOLD
-            && last.elapsed() < Duration::from_secs(CHANNEL_FAIL_COOLDOWN_SECS)
-    } else {
-        false
-    }
+    !crate::orchestrator::is_channel_healthy_pub(channel)
 }
 
 fn record_channel_fail(channel: &str) {
-    let now = Instant::now();
-    if let Ok(mut guard) = channel_fail_state().lock() {
-        let entry = guard.entry(channel.to_string()).or_insert((0, now));
-        entry.0 = entry.0.saturating_add(1);
-        entry.1 = now;
-    }
+    crate::orchestrator::record_channel_result_pub(channel, false);
 }
 
 fn record_channel_ok(channel: &str) {
-    if let Ok(mut guard) = channel_fail_state().lock() {
-        guard.remove(channel);
-    }
+    crate::orchestrator::record_channel_result_pub(channel, true);
 }
 
 /// 熔断冷却期暂存的消息上限，防止无限积累。

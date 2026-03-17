@@ -6,8 +6,6 @@ pub mod response_body;
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 pub mod task_wdt;
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
-pub mod tls_admission;
-#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 pub mod esp32;
 pub mod fetch_url;
 pub mod heap;

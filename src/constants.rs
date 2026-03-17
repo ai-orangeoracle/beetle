@@ -19,14 +19,6 @@ pub const DEFAULT_SYSTEM_MAX_LEN: usize = 32 * 1024;
 /// 会话 messages 总长度上界（字符）。
 pub const DEFAULT_MESSAGES_MAX_LEN: usize = 24 * 1024;
 
-/// 进 agent 轮前要求的最小空闲堆（字节）。仅无 PSRAM 时使用（当前仅 S3 支持，恒有 PSRAM，此常量作防御保留）。
-pub const MIN_FREE_HEAP_FOR_AGENT_ROUND: usize = 96 * 1024;
-
-/// 有 PSRAM 时进 agent 轮前要求的最小 internal 堆（字节）。
-/// TLS 操作已由 tls_admission 独立准入（56KB + 连续块检查），agent 门槛只需保证自身逻辑不 OOM。
-/// S3 稳态 internal ~85KB；设 48KB 留足余量，不再替 TLS 站岗。
-pub const MIN_FREE_INTERNAL_WHEN_PSRAM: usize = 48 * 1024;
-
 /// TLS 准入：有 PSRAM 时允许发起单次 TLS（HTTP/WSS）要求的最小 internal 空闲（字节）。
 /// 有 PSRAM 时 mbedTLS 大部分分配走 SPIRAM，internal 仅需 ~15KB 给硬件加密/DMA。
 /// 实测 WSS 常驻后稳态 internal ~50KB，45KB 阈值留 30KB 安全余量且不频繁误拒。
@@ -78,6 +70,9 @@ pub const CHANNEL_FAIL_THRESHOLD: u32 = 3;
 
 /// SSE 流式响应行缓冲区大小（字节）；单行 SSE data 不应超此值。
 pub const SSE_LINE_BUF_SIZE: usize = 4096;
+
+/// HTTP 最大并发连接数（含 TLS）。lwIP ~10 socket，预留给 WSS/HTTP 服务器后可用 ~6，但 TLS 内存限制更紧。
+pub const MAX_CONCURRENT_HTTP: usize = 3;
 
 /// kv_store 工具：最多允许存储的条目数。
 pub const KV_STORE_MAX_ENTRIES: usize = 64;

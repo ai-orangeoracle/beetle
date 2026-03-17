@@ -1,0 +1,94 @@
+//! 通道健康追踪：全原子无锁设计，吸收 dispatch.rs 的熔断逻辑。
+//! Channel health tracking: fully atomic lock-free, absorbs dispatch.rs circuit breaker.
+
+use crate::constants::{CHANNEL_FAIL_COOLDOWN_SECS, CHANNEL_FAIL_THRESHOLD};
+use std::sync::atomic::{AtomicU32, Ordering};
+
+use super::state::{channel_to_index, OrchestratorState};
+
+/// 每通道健康状态——全部原子，无锁。
+/// Per-channel health state — all atomic, no locks.
+pub struct ChannelHealthSlot {
+    pub consecutive_failures: AtomicU32,
+    pub last_failure_epoch_secs: AtomicU32, // 系统启动后秒数
+    pub total_failures: AtomicU32,
+    pub total_successes: AtomicU32,
+}
+
+impl Default for ChannelHealthSlot {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ChannelHealthSlot {
+    pub const fn new() -> Self {
+        Self {
+            consecutive_failures: AtomicU32::new(0),
+            last_failure_epoch_secs: AtomicU32::new(0),
+            total_failures: AtomicU32::new(0),
+            total_successes: AtomicU32::new(0),
+        }
+    }
+}
+
+/// 系统启动后经过的秒数（单调递增）。
+/// Seconds since system boot (monotonically increasing).
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+fn uptime_secs() -> u32 {
+    let us = unsafe { esp_idf_svc::sys::esp_timer_get_time() };
+    if us >= 0 {
+        (us as u64 / 1_000_000) as u32
+    } else {
+        0
+    }
+}
+
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+fn uptime_secs() -> u32 {
+    use std::sync::OnceLock;
+    use std::time::Instant;
+    static BOOT: OnceLock<Instant> = OnceLock::new();
+    BOOT.get_or_init(Instant::now).elapsed().as_secs() as u32
+}
+
+/// 记录通道发送结果（成功/失败）。
+/// Record channel send result (success/failure).
+pub fn record_channel_result(state: &OrchestratorState, channel: &str, success: bool) {
+    let idx = match channel_to_index(channel) {
+        Some(i) => i as usize,
+        None => return,
+    };
+    let slot = &state.channel_health[idx];
+    if success {
+        slot.consecutive_failures.store(0, Ordering::Relaxed);
+        slot.total_successes.fetch_add(1, Ordering::Relaxed);
+    } else {
+        slot.consecutive_failures.fetch_add(1, Ordering::Relaxed);
+        slot.last_failure_epoch_secs
+            .store(uptime_secs(), Ordering::Relaxed);
+        slot.total_failures.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+/// 通道是否健康（未处于熔断冷却中）。
+/// Whether channel is healthy (not in circuit breaker cooldown).
+pub fn is_channel_healthy(state: &OrchestratorState, channel: &str) -> bool {
+    let idx = match channel_to_index(channel) {
+        Some(i) => i as usize,
+        None => return true, // 未知通道默认健康
+    };
+    is_channel_healthy_by_index(state, idx)
+}
+
+/// 按索引查询通道健康状态。
+pub fn is_channel_healthy_by_index(state: &OrchestratorState, idx: usize) -> bool {
+    let slot = &state.channel_health[idx];
+    let failures = slot.consecutive_failures.load(Ordering::Relaxed);
+    if failures < CHANNEL_FAIL_THRESHOLD {
+        return true;
+    }
+    // 冷却期已过则恢复
+    let last = slot.last_failure_epoch_secs.load(Ordering::Relaxed);
+    uptime_secs().saturating_sub(last) >= CHANNEL_FAIL_COOLDOWN_SECS as u32
+}

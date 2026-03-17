@@ -19,7 +19,7 @@ This doc is for users and developers: supported boards, memory, and build option
 
 ## Memory and watchdog
 
-- **ESP32-S3**: Large allocations use PSRAM first; HTTP response bodies and other large buffers use PSRAM to reduce internal heap pressure. Before entering the Agent, internal heap is checked for ≥ 48KB (reserved for dual TLS).
+- **ESP32-S3**: Large allocations use PSRAM first; HTTP response bodies and other large buffers use PSRAM to reduce internal heap pressure. The orchestrator module manages resource admission: HTTP requests go through priority-based TLS permit with real-time heap checks; agent inbound messages and LLM/tool calls are gated by pressure level (Normal/Cautious/Critical).
 - **Watchdog**: Task watchdog ~60 s; LLM/HTTP long requests feed the dog before running; if request timeout is ≥60s, keep this in mind.
 
 ---

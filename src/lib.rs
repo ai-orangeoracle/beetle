@@ -27,7 +27,7 @@ pub mod ota;
 
 pub mod cron;
 pub mod heartbeat;
-pub mod resource;
+pub mod orchestrator;
 pub mod skills;
 
 pub use agent::{

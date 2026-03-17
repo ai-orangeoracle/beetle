@@ -115,7 +115,7 @@ pub fn build_context(
         system.push_str("\n\n");
         system.push_str(em);
     }
-    let hint = crate::resource::current_budget().llm_hint;
+    let hint = crate::orchestrator::current_budget().llm_hint;
     if !hint.is_empty() && system.len().saturating_add(hint.len()).saturating_add(2) <= system_max_len {
         system.push_str("\n\n");
         system.push_str(hint);

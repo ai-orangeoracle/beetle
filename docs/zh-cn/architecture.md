@@ -13,12 +13,13 @@
 | **config** | 编译时/环境变量与 NVS、SPIFFS 配置加载与校验；密钥不打印、不落盘。 |
 | **error** | 统一错误类型（stage 为 `&'static str`）；公共 API 返回 `Result<T, Error>`。 |
 | **bus** | 入站/出站消息队列（固定容量、背压）；通道与 Agent 解耦。 |
+| **orchestrator** | 统一资源编排器：原子状态聚合（堆、连接数、压力等级、通道健康），带优先级的 HTTP 准入与 TLS 单并发控制，四维门禁（入站/出站/LLM/工具），通道熔断。零堆分配、零锁（除 TLS Mutex）、xtensa 兼容。 |
 | **memory** | 长期记忆与会话存储；系统提示聚合。 |
 | **platform** | 平台抽象（配置存储、技能存储、HTTP 客户端等）与 ESP32 实现；唯一直接依赖 esp-idf-svc 的模块。 |
 | **llm** | LLM 客户端抽象；支持 Anthropic、OpenAI 兼容（含 Ollama）等。 |
 | **tools** | 工具注册表；GetTime、Cron、FetchUrl、WebSearch、RemindAt、Files 等；新工具实现 Tool trait 并注册。 |
 | **agent** | 上下文构建、ReAct 循环；依赖 LlmClient、ToolRegistry、Memory、Session。 |
-| **channels** | 通道抽象与分发；Telegram、飞书、钉钉、企微、QQ 频道、WebSocket 等；入站推 bus，出站由 dispatch 按 channel 分发；单通道连续失败会熔断冷却，避免拖垮全局。 |
+| **channels** | 通道抽象与分发；Telegram、飞书、钉钉、企微、QQ 频道、WebSocket 等；入站推 bus，出站由 dispatch 按 channel 分发；通道健康追踪委托给 orchestrator。 |
 | **metrics** | 运行指标与错误画像：消息进/出、LLM/tool 调用与错误、WDT feed、dispatch 成功/失败、按 stage 聚合错误（含 session 写入失败）；供 health API 与 heartbeat 基线日志暴露。 |
 | **cli** (可选) | 串口命令：wifi_status、heap_info、session_list、restart、ota 等。 |
 | **ota** (可选) | 从 URL 拉取固件、写 OTA 分区；失败不破坏当前分区。 |
@@ -42,7 +43,7 @@
 
 - **入站**：各通道（或 cron）将用户/系统消息推入 Inbound；Agent 从 Inbound 取消息处理。
 - **Agent**：从 Memory/Session 聚合系统提示与历史消息，调用 LLM；若有 tool_use 则执行工具并追加结果，循环直至 end_turn；写会话并将回复推入 Outbound。
-- **出站**：Dispatch 从 Outbound 取消息，按 channel 调用对应通道的发送接口；单通道连续失败达阈值后进入冷却期，冷却期内不再向该通道发送。
+- **出站**：Dispatch 从 Outbound 取消息，按 channel 调用对应通道的发送接口；通道健康（连续失败与冷却）由 orchestrator 模块统一追踪。
 
 **可观测与健康**：`GET /api/health` 返回 WiFi、入站/出站队列深度、最近错误摘要及 **metrics** 快照（消息进/出、LLM/tool 调用与错误、WDT feed、按 stage 的错误计数等，无敏感信息）。heartbeat 每 30 秒打一条 metrics 基线日志，便于对比优化前后。
 

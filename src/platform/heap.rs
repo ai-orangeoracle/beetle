@@ -1,7 +1,5 @@
-//! ESP 堆查询与 PSRAM 大块分配：供 OOM 前检查、HTTP 响应体与可观测性复用。
+//! ESP 堆查询与 PSRAM 大块分配：供 orchestrator、HTTP 响应体与可观测性复用。
 //! Heap query and PSRAM allocation for ESP.
-
-use crate::constants::{MIN_FREE_HEAP_FOR_AGENT_ROUND, MIN_FREE_INTERNAL_WHEN_PSRAM};
 
 /// 返回当前内部堆空闲字节数。仅 ESP 目标有效；非 ESP 返回 u32::MAX（视为充足）。
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
@@ -41,38 +39,6 @@ pub fn heap_free_spiram() -> usize {
 #[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
 pub fn heap_largest_free_block_internal() -> usize {
     usize::MAX
-}
-
-/// 无 PSRAM 且内部堆低于阈值时返回 true，调用方应拒绝或降级大分配（当前仅 S3 支持，恒有 PSRAM，此分支作防御保留）。
-/// 阈值与 MIN_FREE_HEAP_FOR_AGENT_ROUND 一致，避免在无法容纳大响应体时仍尝试读入。
-#[inline]
-pub fn is_low_memory_no_spiram() -> bool {
-    #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
-    {
-        heap_free_internal() < MIN_FREE_HEAP_FOR_AGENT_ROUND && heap_free_spiram() == 0
-    }
-    #[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
-    {
-        false
-    }
-}
-
-/// 当前堆是否足以跑一轮 agent。有 PSRAM（S3）时要求 internal >= MIN_FREE_INTERNAL_WHEN_PSRAM（双 TLS 预留）；
-/// 无 PSRAM 时要求 internal >= MIN_FREE_HEAP_FOR_AGENT_ROUND（96K，当前未使用）。非 ESP 返回 true。
-#[inline]
-pub fn is_heap_ok_for_agent_round() -> bool {
-    #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
-    {
-        if heap_free_spiram() > 0 {
-            heap_free_internal() >= MIN_FREE_INTERNAL_WHEN_PSRAM
-        } else {
-            heap_free_internal() >= MIN_FREE_HEAP_FOR_AGENT_ROUND
-        }
-    }
-    #[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
-    {
-        true
-    }
 }
 
 /// S3 上从 PSRAM 分配大块缓冲区；无 PSRAM 或失败返回 None。调用方负责 heap_caps_free。

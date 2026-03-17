@@ -19,7 +19,7 @@
 
 ## 内存与看门狗
 
-- **ESP32-S3**：大块分配优先 PSRAM，HTTP 响应体等大 buffer 走 PSRAM，减轻内部堆压力；进 Agent 前检查 internal 堆 ≥ 48KB（双 TLS 预留）。
+- **ESP32-S3**：大块分配优先 PSRAM，HTTP 响应体等大 buffer 走 PSRAM，减轻内部堆压力。orchestrator 模块统一管理资源准入：HTTP 请求经过带优先级的 TLS 令牌与实时堆检查；agent 入站消息与 LLM/工具调用受压力等级（Normal/Cautious/Critical）门控。
 - **看门狗**：任务看门狗约 60 秒；LLM/HTTP 长请求前会喂狗，建议请求超时 ≥60s 时留意配置。
 
 ---

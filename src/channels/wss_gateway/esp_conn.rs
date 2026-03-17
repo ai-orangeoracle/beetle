@@ -114,10 +114,10 @@ impl WssConnection for EspWssConnection {
 const WSS_TLS_ADMISSION_TIMEOUT_SECS: u64 = 10;
 
 pub fn connect_esp_wss(url: &str) -> Result<EspWssConnection> {
-    let _tls_guard = crate::platform::tls_admission::acquire_tls_permit(Duration::from_secs(
-        WSS_TLS_ADMISSION_TIMEOUT_SECS,
-    ))?;
-    crate::platform::tls_admission::check_internal_heap_for_tls()?;
+    let _permit = crate::orchestrator::request_http_permit(
+        crate::orchestrator::Priority::Normal,
+        Duration::from_secs(WSS_TLS_ADMISSION_TIMEOUT_SECS),
+    )?;
 
     let config = esp_idf_svc::ws::client::EspWebSocketClientConfig {
         buffer_size: DEFAULT_BUFFER_SIZE,

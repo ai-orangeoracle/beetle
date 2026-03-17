@@ -3,8 +3,9 @@
 
 use crate::config::{parse_proxy_url_to_host_port, AppConfig};
 use crate::error::{Error, Result};
-use crate::platform::heap::{alloc_spiram_buffer, is_low_memory_no_spiram};
+use crate::platform::heap::alloc_spiram_buffer;
 use crate::platform::ResponseBody;
+use crate::orchestrator::Priority;
 use embedded_svc::http::client::Client as HttpClient;
 use embedded_svc::http::Method;
 use embedded_svc::io::{Read, Write};
@@ -51,18 +52,25 @@ pub struct EspHttpClient {
     proxy_host: Option<String>,
     #[allow(dead_code)]
     proxy_port: Option<String>,
+    /// HTTP 请求优先级，用于 orchestrator 准入控制。
+    priority: Priority,
 }
 
 impl EspHttpClient {
-    /// 新建 HTTPS 客户端（无 proxy）；直连。
+    /// 新建 HTTPS 客户端（无 proxy）；直连。默认 Normal 优先级。
     pub fn new() -> Result<Self> {
-        Self::new_optional_proxy(None)
+        Self::new_optional_proxy(None, Priority::Normal)
+    }
+
+    /// 新建客户端，指定优先级。
+    pub fn new_with_priority(priority: Priority) -> Result<Self> {
+        Self::new_optional_proxy(None, priority)
     }
 
     /// 新建客户端；若 config.proxy_url 非空则解析为 host:port 并标记使用 proxy（CONNECT 隧道未实现时请求会失败）。
     pub fn new_with_config(config: &AppConfig) -> Result<Self> {
         let proxy = parse_proxy_url_to_host_port(config.proxy_url.trim()).map(|(h, p)| (h, p));
-        Self::new_optional_proxy(proxy)
+        Self::new_optional_proxy(proxy, Priority::Normal)
     }
 
     fn default_http_config() -> HttpConfig {
@@ -73,7 +81,7 @@ impl EspHttpClient {
         }
     }
 
-    fn new_optional_proxy(proxy: Option<(String, String)>) -> Result<Self> {
+    fn new_optional_proxy(proxy: Option<(String, String)>, priority: Priority) -> Result<Self> {
         if proxy.is_some() {
             log::warn!("[{}] proxy CONNECT tunnel not implemented, request will fail", TAG);
         }
@@ -90,6 +98,7 @@ impl EspHttpClient {
             conn,
             proxy_host,
             proxy_port,
+            priority,
         })
     }
 
@@ -119,18 +128,14 @@ impl EspHttpClient {
     where
         F: FnOnce(&mut EspHttpConnection) -> Result<T>,
     {
-        #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
-        let _tls_guard = crate::platform::tls_admission::acquire_tls_permit(
+        let _permit = crate::orchestrator::request_http_permit(
+            self.priority,
             std::time::Duration::from_secs(TLS_ADMISSION_TIMEOUT_SECS),
         )?;
-        #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
-        crate::platform::tls_admission::check_internal_heap_for_tls()?;
 
         self.prepare_connection()?;
 
-        let result = action(&mut self.conn);
-
-        result
+        action(&mut self.conn)
     }
 
     /// 替换为新建连接，用于重试前恢复 "initial" 状态（submit 失败后底层连接不可复用）。
@@ -155,16 +160,6 @@ impl EspHttpClient {
                 stage: "http_get_submit",
             })?;
             let status = response.status();
-            if is_low_memory_no_spiram() {
-                drain_response(&mut response);
-                return Err(Error::Other {
-                    source: Box::new(std::io::Error::new(
-                        std::io::ErrorKind::OutOfMemory,
-                        "low heap, skip large response",
-                    )),
-                    stage: "http_get_submit",
-                });
-            }
             match read_response_body(&mut response) {
                 Ok(body) => Ok((status, body)),
                 Err(e) => {
@@ -200,16 +195,6 @@ impl EspHttpClient {
                 stage: "http_post_submit",
             })?;
             let status = response.status();
-            if is_low_memory_no_spiram() {
-                drain_response(&mut response);
-                return Err(Error::Other {
-                    source: Box::new(std::io::Error::new(
-                        std::io::ErrorKind::OutOfMemory,
-                        "low heap, skip large response",
-                    )),
-                    stage: "http_post_submit",
-                });
-            }
             match read_response_body(&mut response) {
                 Ok(resp_body) => Ok((status, resp_body)),
                 Err(e) => {
@@ -285,7 +270,7 @@ impl EspHttpClient {
             })?;
             let status = response.status();
 
-            let max_len = crate::resource::current_budget().response_body_max;
+            let max_len = crate::orchestrator::current_budget().response_body_max;
             let mut total = 0usize;
             let mut buf = [0u8; RESPONSE_READ_CHUNK];
             loop {
@@ -339,9 +324,9 @@ fn drain_response<R: Read>(r: &mut R) {
 }
 
 /// S3 上优先从 PSRAM 分配整块读入，返回 ResponseBody（Drop 时释放 PSRAM），无堆拷贝；否则用 Vec 按块增长。
-/// 最大长度由 resource::current_budget().response_body_max 决定，压力高时自动缩减。
+/// 最大长度由 orchestrator::current_budget().response_body_max 决定，压力高时自动缩减。
 fn read_response_body<R: Read>(r: &mut R) -> Result<ResponseBody> {
-    let max_len = crate::resource::current_budget().response_body_max;
+    let max_len = crate::orchestrator::current_budget().response_body_max;
     #[cfg(target_arch = "xtensa")]
     if let Some(psram_ptr) = alloc_spiram_buffer(max_len) {
         return read_response_body_into_psram(psram_ptr, max_len, r);

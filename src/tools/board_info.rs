@@ -57,7 +57,7 @@ fn collect_esp() -> String {
     };
 
     let idf_version = option_env!("IDF_VERSION").unwrap_or("unknown");
-    let budget = crate::resource::current_budget();
+    let budget = crate::orchestrator::current_budget();
 
     let out = json!({
         "chip_model": chip_model,
@@ -76,7 +76,7 @@ fn collect_esp() -> String {
 
 #[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
 fn collect_host() -> String {
-    let budget = crate::resource::current_budget();
+    let budget = crate::orchestrator::current_budget();
     let out = json!({
         "chip_model": "host",
         "chip_revision": 0,

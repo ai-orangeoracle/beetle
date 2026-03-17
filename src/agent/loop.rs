@@ -2,13 +2,13 @@
 //! 仅依赖 trait；HTTP/Tool 由 main 注入同一实现（如 EspHttpClient）。
 
 use crate::agent::context::build_context;
-use crate::resource::PressureLevel;
+use crate::orchestrator::admission::{AdmissionDecision, LlmDecision, ToolDecision};
 use crate::bus::{InboundTx, OutboundTx, PcMsg, MAX_CONTENT_LEN};
 use crate::util::{truncate_content_to_max, truncate_to_byte_len};
 use crate::constants::{
     AGENT_MARKER_MARK_IMPORTANT, AGENT_MARKER_SIGNAL_COMFORT, AGENT_MARKER_STOP,
     AGENT_RETRY_BASE_MS, AGENT_RETRY_MAX_MS, INBOUND_RECV_TIMEOUT_SECS,
-    LOW_MEM_DEFER_SLEEP_MS, MAX_TOOL_RESULTS_USER_MESSAGE_LEN,
+    MAX_TOOL_RESULTS_USER_MESSAGE_LEN,
     TASK_CONTINUATION_CONTINUE_THRESHOLD_LEN,
 };
 use crate::error::Result;
@@ -158,21 +158,9 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
             continue;
         }
 
-        let pressure = crate::resource::current_budget().level;
-        match pressure {
-            PressureLevel::Critical => {
-                if msg.chat_id == "cron" {
-                    let now = Instant::now();
-                    let should_log = low_mem_defer_log
-                        .as_ref()
-                        .map(|(id, t)| id != "cron" || t.elapsed() >= LOW_MEM_DEFER_LOG_INTERVAL)
-                        .unwrap_or(true);
-                    if should_log {
-                        log::warn!("[agent] critical memory, drop cron (no requeue)");
-                        low_mem_defer_log = Some(("cron".to_string(), now));
-                    }
-                    continue;
-                }
+        match crate::orchestrator::should_accept_inbound_pub(&msg.channel, &msg.chat_id) {
+            AdmissionDecision::Accept => {}
+            AdmissionDecision::Defer { delay_ms } => {
                 let defer_out = PcMsg {
                     channel: msg.channel.clone(),
                     chat_id: msg.chat_id.clone(),
@@ -190,14 +178,14 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
                             .map(|(id, t)| id != &chat_id || t.elapsed() >= LOW_MEM_DEFER_LOG_INTERVAL)
                             .unwrap_or(true);
                         if should_log {
-                            log::warn!("[agent] critical memory, defer chat_id={}", chat_id);
+                            log::warn!("[agent] admission defer chat_id={}", chat_id);
                             low_mem_defer_log = Some((chat_id, now));
                         }
                     }
                     Err(std::sync::mpsc::TrySendError::Full(m)) => {
                         let _ = config.pending_retry.save_pending_retry(&m);
                         log::warn!(
-                            "[agent] critical memory, pending_retry saved chat_id={}",
+                            "[agent] admission defer, pending_retry saved chat_id={}",
                             m.chat_id
                         );
                     }
@@ -205,29 +193,49 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
                         log::error!("[agent] inbound_tx disconnected");
                     }
                 }
-                std::thread::sleep(Duration::from_millis(LOW_MEM_DEFER_SLEEP_MS));
+                std::thread::sleep(Duration::from_millis(delay_ms));
                 crate::platform::task_wdt::feed_current_task();
                 metrics::record_wdt_feed();
                 continue;
             }
-            PressureLevel::Cautious => {
-                if msg.chat_id == "cron" {
-                    let now = Instant::now();
-                    let should_log = low_mem_defer_log
-                        .as_ref()
-                        .map(|(id, t)| id != "cron" || t.elapsed() >= LOW_MEM_DEFER_LOG_INTERVAL)
-                        .unwrap_or(true);
-                    if should_log {
-                        log::warn!("[agent] cautious memory, drop cron (no requeue)");
-                        low_mem_defer_log = Some(("cron".to_string(), now));
-                    }
-                    continue;
+            AdmissionDecision::Reject { reason } => {
+                let now = Instant::now();
+                let should_log = low_mem_defer_log
+                    .as_ref()
+                    .map(|(id, t)| id != reason || t.elapsed() >= LOW_MEM_DEFER_LOG_INTERVAL)
+                    .unwrap_or(true);
+                if should_log {
+                    log::warn!("[agent] inbound rejected: {}", reason);
+                    low_mem_defer_log = Some((reason.to_string(), now));
                 }
+                continue;
             }
-            PressureLevel::Normal => {}
         }
         if let Some(ref mut f) = typing_notifier {
             f(&msg.channel, &msg.chat_id, http);
+        }
+
+        // LLM 门控：Critical 压力下降级，Cautious 堆不足时延迟重试
+        match crate::orchestrator::can_call_llm_pub() {
+            LlmDecision::Proceed => {}
+            LlmDecision::RetryLater { delay_ms } => {
+                let _ = inbound_tx.try_send(msg);
+                std::thread::sleep(Duration::from_millis(delay_ms));
+                crate::platform::task_wdt::feed_current_task();
+                continue;
+            }
+            LlmDecision::Degrade { reason } => {
+                log::info!("[agent] LLM degraded: {}", reason);
+                let out = PcMsg {
+                    channel: msg.channel.clone(),
+                    chat_id: msg.chat_id.clone(),
+                    content: LOW_MEMORY_USER_MESSAGE.to_string(),
+                    is_group: false,
+                };
+                metrics::record_message_out();
+                let _ = outbound_tx.try_send(out);
+                continue;
+            }
         }
 
         let final_content = match router_llm {
@@ -441,7 +449,7 @@ fn run_worker_path<H: PlatformHttpClient>(
         });
     let summary_opt = config.session_summary_store.get(&msg.chat_id).ok().flatten();
     let summary_text = summary_opt.as_deref();
-    let budget = crate::resource::current_budget();
+    let budget = crate::orchestrator::current_budget();
     let (system, mut messages) = build_context(
         msg,
         config.memory_store,
@@ -515,23 +523,30 @@ fn run_worker_path<H: PlatformHttpClient>(
                 tool_calls.len() * 256,
             ));
             for (i, tc) in tool_calls.iter().enumerate() {
-                let result = match registry.execute(&tc.name, &tc.input, &mut tool_ctx) {
-                    Ok(s) => {
-                        metrics::record_tool_call(true);
-                        s
+                // 工具执行门控
+                let result = match crate::orchestrator::can_execute_tool_pub(&tc.name) {
+                    ToolDecision::Deny { reason } => {
+                        log::info!("[agent_tool] {} denied: {}", tc.name, reason);
+                        format!("{{\"error\": \"{}\"}}", reason)
                     }
-                    Err(e) => {
-                        metrics::record_tool_call(false);
-                        metrics::record_error_by_stage(e.stage());
-                        log::error!(
-                            "[agent_tool] {} execute failed: {} (stage: {})",
-                            tc.name,
-                            e,
-                            e.stage()
-                        );
-                        state::set_last_error(&e);
-                        format!("[tool error] {} (stage: {})", e, e.stage())
-                    }
+                    ToolDecision::Allow => match registry.execute(&tc.name, &tc.input, &mut tool_ctx) {
+                        Ok(s) => {
+                            metrics::record_tool_call(true);
+                            s
+                        }
+                        Err(e) => {
+                            metrics::record_tool_call(false);
+                            metrics::record_error_by_stage(e.stage());
+                            log::error!(
+                                "[agent_tool] {} execute failed: {} (stage: {})",
+                                tc.name,
+                                e,
+                                e.stage()
+                            );
+                            state::set_last_error(&e);
+                            format!("[tool error] {} (stage: {})", e, e.stage())
+                        }
+                    },
                 };
                 crate::platform::task_wdt::feed_current_task();
                 if i > 0 {

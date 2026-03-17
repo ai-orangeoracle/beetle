@@ -60,7 +60,7 @@ pub fn run_wss_gateway_loop<D, H, C, CreateHttp, Conn>(
 {
     #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
     crate::platform::task_wdt::register_current_task_to_task_wdt();
-    let mut backoff_secs = crate::resource::current_budget().reconnect_backoff_secs;
+    let mut backoff_secs = crate::orchestrator::current_budget().reconnect_backoff_secs;
     loop {
         wait_for_wifi(tag);
 
@@ -166,7 +166,7 @@ pub fn run_wss_gateway_loop<D, H, C, CreateHttp, Conn>(
                     match driver.on_recv(&data) {
                         Ok(WssRecvAction::Dispatch(Some(msg))) => {
                             let chat_id = msg.chat_id.clone();
-                            if !crate::resource::current_budget().should_accept_inbound {
+                            if crate::orchestrator::current_pressure() == crate::orchestrator::PressureLevel::Critical {
                                 log::debug!("[{}] pressure critical, drop msg chat_id={}", tag, chat_id);
                             } else if inbound_tx.try_send(msg).is_err() {
                                 log::warn!(
@@ -184,7 +184,7 @@ pub fn run_wss_gateway_loop<D, H, C, CreateHttp, Conn>(
                         Ok(WssRecvAction::DispatchAndAck(msg, ack)) => {
                             let enqueued = if let Some(msg) = msg {
                                 let chat_id = msg.chat_id.clone();
-                                if !crate::resource::current_budget().should_accept_inbound {
+                                if crate::orchestrator::current_pressure() == crate::orchestrator::PressureLevel::Critical {
                                     log::debug!("[{}] pressure critical, drop msg chat_id={}", tag, chat_id);
                                     true
                                 } else {
@@ -264,7 +264,7 @@ pub fn run_wss_gateway_loop<D, H, C, CreateHttp, Conn>(
 
         log::info!("[{}] disconnected, dropping connection before reconnect", tag);
         drop(conn);
-        backoff_secs = crate::resource::current_budget().reconnect_backoff_secs;
+        backoff_secs = crate::orchestrator::current_budget().reconnect_backoff_secs;
         log::info!("[{}] will reconnect after WiFi check + {}s backoff", tag, backoff_secs);
         sleep_with_wdt(backoff_secs);
     }

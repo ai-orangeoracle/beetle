@@ -186,7 +186,7 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
         spiffs_info
     );
     #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
-    beetle::platform::tls_admission::log_baseline();
+    beetle::orchestrator::log_baseline();
 
     #[cfg(feature = "config_api")]
     {
@@ -279,7 +279,7 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
         beetle::platform::task_wdt::register_current_task_to_task_wdt();
         // 总控唯一入口：出站网络未就绪时不启动 WSS/通道/Agent 等对外请求，阻塞直到 STA 就绪（轮询+喂狗）
         beetle::platform::wait_for_network_ready();
-        beetle::resource::update();
+        beetle::orchestrator::init();
         let outbound_rx_for_dispatch = outbound_rx;
         let sinks_clone = Arc::clone(&sinks);
         std::thread::spawn(move || run_dispatch(outbound_rx_for_dispatch, sinks_clone));
