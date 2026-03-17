@@ -146,12 +146,24 @@ pub fn ymdhms_to_epoch(year: i32, month: u32, day: u32, hour: u32, min: u32, sec
     (d as u64) * 86400 + (hour as u64) * 3600 + (min as u64) * 60 + (sec as u64)
 }
 
-/// 解析 ISO8601 简式（YYYY-MM-DDTHH:MM:SS 或带 Z）或纯数字 Unix 秒字符串。
+/// 解析 ISO8601 简式或纯数字 Unix 秒字符串。
+/// 支持格式：纯数字、YYYY-MM-DDTHH:MM:SS、带 Z、带时区偏移（+HH:MM / -HH:MM）、带小数秒。
 pub fn parse_iso8601(s: &str) -> Option<u64> {
-    let s = s.trim().trim_end_matches('Z');
+    let s = s.trim();
     if let Ok(n) = s.parse::<u64>() {
         return Some(n);
     }
+    // Strip trailing Z or timezone offset (+HH:MM / -HH:MM)
+    let s = s.trim_end_matches('Z');
+    let s = if let Some(pos) = s.rfind('+') {
+        // Ensure it's a timezone offset (after the T), not part of the date
+        if pos > 10 { &s[..pos] } else { s }
+    } else if let Some(pos) = s.rfind('-') {
+        // Only treat as tz offset if after time part (pos > 16 means after HH:MM:SS)
+        if pos > 16 { &s[..pos] } else { s }
+    } else {
+        s
+    };
     let mut parts = s.splitn(2, 'T');
     let date = parts.next()?;
     let time = parts.next()?;
@@ -162,7 +174,10 @@ pub fn parse_iso8601(s: &str) -> Option<u64> {
     let mut t = time.split(':');
     let h: u32 = t.next()?.parse().ok()?;
     let min: u32 = t.next()?.parse().ok()?;
-    let sec: u32 = t.next()?.parse().ok()?;
+    // Strip fractional seconds (e.g. "00.123")
+    let sec_str = t.next()?;
+    let sec_str = sec_str.split('.').next()?;
+    let sec: u32 = sec_str.parse().ok()?;
     if m < 1 || m > 12 || day < 1 || day > 31 || h > 23 || min > 59 || sec > 59 {
         return None;
     }

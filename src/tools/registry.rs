@@ -102,6 +102,7 @@ pub fn build_default_registry(
     registry.register(Box::new(super::CronTool));
     registry.register(Box::new(super::FilesTool));
     registry.register(Box::new(super::WebSearchTool::new(config)));
+    registry.register(Box::new(super::AnalyzeImageTool::new(config)));
     registry.register(Box::new(super::FetchUrlTool));
     registry.register(Box::new(super::RemindAtTool::new(remind_at_store)));
     registry.register(Box::new(super::UpdateSessionSummaryTool::new(

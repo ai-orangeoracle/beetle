@@ -3,6 +3,7 @@
 
 mod registry;
 
+pub mod analyze_image;
 pub mod board_info;
 pub mod cron;
 pub mod fetch_url;
@@ -17,6 +18,7 @@ pub mod system_stats;
 pub mod update_session_summary;
 pub mod web_search;
 
+pub use analyze_image::AnalyzeImageTool;
 pub use board_info::BoardInfoTool;
 pub use cron::CronTool;
 pub use fetch_url::FetchUrlTool;
