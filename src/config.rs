@@ -62,9 +62,6 @@ pub struct LlmSource {
     pub api_key: String,
     pub model: String,
     pub api_url: String,
-    /// SSE 流式模式；true 时 LLM 客户端使用 SSE 逐块读取响应，降低峰值内存。默认 false（整包读取）。
-    #[serde(default)]
-    pub stream: bool,
     /// 单次响应最大 token 数；None 时由各客户端使用内置默认值（1024）。
     #[serde(default)]
     pub max_tokens: Option<u32>,
@@ -165,6 +162,10 @@ pub struct AppConfig {
     #[serde(default)]
     pub locale: Option<String>,
 
+    /// SSE 流式模式（全局）；true 时所有 LLM 客户端使用 SSE 逐块读取响应，降低峰值内存。默认 false。
+    #[serde(default)]
+    pub llm_stream: bool,
+
     /// 加载过程中产生的可观测错误（NVS/SPIFFS/JSON 解析），仅 load() 内写入，不序列化。
     #[serde(skip, default)]
     pub load_errors: Option<Vec<String>>,
@@ -263,6 +264,9 @@ impl AppConfig {
             locale: option_env!("BEETLE_LOCALE")
                 .filter(|s| *s == "zh" || *s == "en")
                 .map(String::from),
+            llm_stream: option_env!("BEETLE_LLM_STREAM")
+                .map(|s| s == "1" || s.eq_ignore_ascii_case("true"))
+                .unwrap_or(false),
             load_errors: None,
         }
     }
@@ -338,7 +342,6 @@ impl AppConfig {
                 api_key: c.api_key.clone(),
                 model: c.model.clone(),
                 api_url: c.api_url.clone(),
-                stream: false,
                 max_tokens: None,
             }];
         }
@@ -590,7 +593,6 @@ impl AppConfig {
                 api_key: c.api_key.clone(),
                 model: c.model.clone(),
                 api_url: c.api_url.clone(),
-                stream: false,
                 max_tokens: None,
             }];
         }

@@ -17,6 +17,7 @@ mod wss_gateway;
 pub use connectivity::{check_all, ChannelConnectivityItem};
 pub use dingtalk::{flush_dingtalk_sends, run_dingtalk_sender_loop};
 pub use dispatch::{run_dispatch, ChannelSinks, MessageSink, QueuedSink};
+pub use dispatch::{build_channel_sinks, spawn_sender_threads, ChannelRxSet};
 pub use feishu::{
     event_body_to_pcmsg, flush_feishu_sends, handle_http_event, run_feishu_sender_loop,
     FeishuEventResponse,
@@ -31,8 +32,8 @@ pub use qq::{
 pub use qq::run_qq_ws_loop;
 pub use http_client::ChannelHttpClient;
 pub use telegram::{
-    flush_telegram_sends, get_bot_username, poll_telegram_once, run_telegram_sender_loop,
-    send_chat_action, TelegramCommandCtx,
+    flush_telegram_sends, get_bot_username, poll_telegram_once, run_telegram_poll_loop,
+    run_telegram_sender_loop, send_chat_action, TelegramCommandCtx,
 };
 pub use websocket::{WebSocketSink, MAX_WS_CONNECTIONS, MAX_WS_MESSAGE_LEN};
 pub use wecom::{flush_wecom_sends, run_wecom_sender_loop};

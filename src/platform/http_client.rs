@@ -130,14 +130,6 @@ impl EspHttpClient {
 
         let result = action(&mut self.conn);
 
-        // 仅失败时重建连接，成功则复用以节省 TLS 握手时间。
-        if let Err(ref err) = result {
-            log::warn!("[{}] request error, replacing connection: {:?}", TAG, err);
-            if let Err(ref e) = self.replace_connection() {
-                log::warn!("[{}] failed to replace connection: {:?}", TAG, e);
-            }
-        }
-
         result
     }
 

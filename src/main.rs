@@ -10,151 +10,16 @@ use beetle::memory::{MemoryStore, SessionStore};
 ))]
 use beetle::run_feishu_ws_loop;
 use beetle::Platform;
-use beetle::PlatformHttpClient;
 use beetle::{
-    get_bot_username, parse_allowed_chat_ids, poll_telegram_once, run_agent_loop,
-    run_dingtalk_sender_loop, run_dispatch, run_feishu_sender_loop, run_qq_sender_loop,
-    run_telegram_sender_loop, run_wecom_sender_loop, send_chat_action, AnthropicClient, AppConfig,
-    ChannelSinks, CronTool, Esp32Platform, EspHttpClient, FallbackLlmClient, FetchUrlTool,
-    FilesTool, GetTimeTool, MessageBus, OpenAiCompatibleClient, PcMsg, QueuedSink, RemindAtTool,
-    HttpPostTool, KvStoreTool, SystemStatsTool, ToolRegistry, UpdateSessionSummaryTool,
-    WebSearchTool, WebSocketSink, DEFAULT_CAPACITY,
+    parse_allowed_chat_ids, run_agent_loop, run_dispatch, send_chat_action,
+    AppConfig, Esp32Platform, EspHttpClient, MessageBus, DEFAULT_CAPACITY,
 };
 
 use std::collections::HashMap;
-use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 
 const TAG: &str = "beetle";
 const VERSION: &str = env!("CARGO_PKG_VERSION");
-
-/// 各通道的 rx 及 flush 所需凭证，由 build_channel_sinks 填充；未启用通道为 None。
-struct ChannelRxSet {
-    telegram: Option<mpsc::Receiver<(String, String)>>,
-    feishu: Option<FeishuRxConfig>,
-    dingtalk: Option<DingtalkRxConfig>,
-    wecom: Option<WecomRxConfig>,
-    qq_channel: Option<QqChannelRxConfig>,
-}
-struct FeishuRxConfig {
-    rx: mpsc::Receiver<(String, String)>,
-    app_id: String,
-    app_secret: String,
-}
-struct DingtalkRxConfig {
-    rx: mpsc::Receiver<(String, String)>,
-    webhook_url: String,
-}
-struct WecomRxConfig {
-    rx: mpsc::Receiver<(String, String)>,
-    corp_id: String,
-    corp_secret: String,
-    agent_id: String,
-    default_touser: String,
-}
-struct QqChannelRxConfig {
-    rx: mpsc::Receiver<(String, String)>,
-    app_id: String,
-    app_secret: String,
-    msg_id_cache: beetle::channels::QqMsgIdCache,
-}
-
-/// 根据 config.enabled_channel 与凭证创建 ChannelSinks 并注册，返回 sinks 与各通道 rx 集合。
-fn build_channel_sinks(
-    config: &AppConfig,
-    qq_msg_id_cache: &beetle::channels::QqMsgIdCache,
-) -> (ChannelSinks, ChannelRxSet) {
-    let mut sinks = ChannelSinks::new();
-    let enabled = config.enabled_channel.as_str();
-
-    let telegram = if enabled == "telegram" && !config.tg_token.trim().is_empty() {
-        let (tx, rx) = mpsc::sync_channel(8);
-        sinks.register(
-            "telegram",
-            Box::new(QueuedSink::new(tx, "telegram_send_queue")),
-        );
-        Some(rx)
-    } else {
-        None
-    };
-
-    let feishu = if enabled == "feishu"
-        && !config.feishu_app_id.trim().is_empty()
-        && !config.feishu_app_secret.trim().is_empty()
-    {
-        let (tx, rx) = mpsc::sync_channel(8);
-        sinks.register("feishu", Box::new(QueuedSink::new(tx, "feishu_send_queue")));
-        Some(FeishuRxConfig {
-            rx,
-            app_id: config.feishu_app_id.clone(),
-            app_secret: config.feishu_app_secret.clone(),
-        })
-    } else {
-        None
-    };
-
-    let dingtalk = if enabled == "dingtalk" && !config.dingtalk_webhook_url.trim().is_empty() {
-        let (tx, rx) = mpsc::sync_channel(8);
-        sinks.register(
-            "dingtalk",
-            Box::new(QueuedSink::new(tx, "dingtalk_send_queue")),
-        );
-        Some(DingtalkRxConfig {
-            rx,
-            webhook_url: config.dingtalk_webhook_url.clone(),
-        })
-    } else {
-        None
-    };
-
-    let wecom = if enabled == "wecom"
-        && !config.wecom_corp_id.trim().is_empty()
-        && !config.wecom_corp_secret.trim().is_empty()
-        && config.wecom_agent_id.trim().parse::<u32>().is_ok()
-    {
-        let (tx, rx) = mpsc::sync_channel(8);
-        sinks.register("wecom", Box::new(QueuedSink::new(tx, "wecom_send_queue")));
-        Some(WecomRxConfig {
-            rx,
-            corp_id: config.wecom_corp_id.clone(),
-            corp_secret: config.wecom_corp_secret.clone(),
-            agent_id: config.wecom_agent_id.clone(),
-            default_touser: config.wecom_default_touser.clone(),
-        })
-    } else {
-        None
-    };
-
-    let qq_channel = if enabled == "qq_channel"
-        && !config.qq_channel_app_id.trim().is_empty()
-        && !config.qq_channel_secret.trim().is_empty()
-    {
-        let (tx, rx) = mpsc::sync_channel(8);
-        sinks.register(
-            "qq_channel",
-            Box::new(QueuedSink::new(tx, "qq_channel_send_queue")),
-        );
-        Some(QqChannelRxConfig {
-            rx,
-            app_id: config.qq_channel_app_id.clone(),
-            app_secret: config.qq_channel_secret.clone(),
-            msg_id_cache: Arc::clone(qq_msg_id_cache),
-        })
-    } else {
-        None
-    };
-
-    sinks.register("websocket", Box::new(WebSocketSink::new("ws")));
-
-    let rx_set = ChannelRxSet {
-        telegram,
-        feishu,
-        dingtalk,
-        wecom,
-        qq_channel,
-    };
-    (sinks, rx_set)
-}
 
 /// 启动自检：存储可读（memory 或 soul 至少其一成功）。失败返回 false，调用方应 log 并 return。
 fn startup_self_check(memory_store: &dyn MemoryStore) -> bool {
@@ -358,37 +223,16 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
         beetle::platform::read_heartbeat_file().unwrap_or_default()
     });
 
-    // 到点提醒：独立线程轮询 RemindAtStore，到点向 inbound_tx 注入 PcMsg。
-    {
-        let remind_tx = inbound_tx.clone();
-        let remind_store = Arc::clone(&remind_at_store);
-        std::thread::spawn(move || {
-            const REMIND_POLL_SECS: u64 = 60;
-            loop {
-                std::thread::sleep(std::time::Duration::from_secs(REMIND_POLL_SECS));
-                let now = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_secs())
-                    .unwrap_or(0);
-                while let Ok(Some((channel, chat_id, context))) = remind_store.pop_due(now) {
-                    let content = format!("提醒：{}", context);
-                    if let Ok(msg) = PcMsg::new(channel, chat_id, content) {
-                        let _ = remind_tx.send(msg);
-                    }
-                }
-            }
-        });
-        log::info!("[{}] remind_at loop started (interval {}s)", TAG, 60);
-    }
+    beetle::memory::run_remind_loop(Arc::clone(&remind_at_store), inbound_tx.clone(), 60);
 
-    let (sinks, mut channel_rx_set) = build_channel_sinks(config.as_ref(), &qq_msg_id_cache);
+    let (sinks, mut channel_rx_set) = beetle::channels::build_channel_sinks(config.as_ref(), &qq_msg_id_cache);
     let sinks = Arc::new(sinks);
     let enabled_channel = config.enabled_channel.as_str();
     log::info!(
-        "[{}] enabled_channel='{}' (use feishu + non-empty app_id/app_secret to start Feishu WS)",
+        "[{}] enabled_channel='{}'",
         TAG,
         if enabled_channel.is_empty() {
-            "(empty)"
+            "(none)"
         } else {
             enabled_channel
         }
@@ -441,152 +285,39 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
         std::thread::spawn(move || run_dispatch(outbound_rx_for_dispatch, sinks_clone));
 
         if enabled_channel == "telegram" && !config.tg_token.trim().is_empty() {
+            let tg_token = config.tg_token.clone();
+            let tg_allowed = parse_allowed_chat_ids(&config.tg_allowed_chat_ids);
+            let tg_group_activation = config.tg_group_activation.clone();
             let tg_inbound_tx = inbound_tx.clone();
             let tg_outbound_tx = outbound_tx.clone();
             let tg_session_store = Arc::clone(&session_store);
             let tg_wifi = wifi_connected;
             let tg_inbound_depth = Arc::clone(&inbound_depth);
             let tg_outbound_depth = Arc::clone(&outbound_depth);
-            let tg_token = config.tg_token.clone();
-            let tg_allowed = parse_allowed_chat_ids(&config.tg_allowed_chat_ids);
-            let tg_group_activation = config.tg_group_activation.clone();
             let tg_config_store = Arc::clone(&config_store);
-                std::thread::spawn(move || {
-                const TAG_TG: &str = "telegram_poll";
-                #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
-                beetle::platform::task_wdt::register_current_task_to_task_wdt();
-                let cmd_ctx = beetle::channels::TelegramCommandCtx {
-                    outbound_tx: tg_outbound_tx,
-                    session_store: tg_session_store,
-                    wifi_connected: tg_wifi,
-                    inbound_depth: tg_inbound_depth,
-                    outbound_depth: tg_outbound_depth,
-                    set_group_activation: Box::new(move |v| {
-                        beetle::config::write_tg_group_activation(tg_config_store.as_ref(), v)
-                    }),
-                };
-                let mut http = match EspHttpClient::new() {
-                    Ok(h) => h,
-                    Err(e) => {
-                        log::warn!("[{}] EspHttpClient::new failed: {}", TAG_TG, e);
-                        return;
-                    }
-                };
-                let bot_username = match get_bot_username(&mut http, &tg_token) {
-                    Ok(Some(u)) => Some(u),
-                    _ => None,
-                };
-                let mut offset: Option<i64> = None;
-                const POLL_INTERVAL_SECS: u64 = 5;
-                const BACKOFF_SECS: u64 = 30;
-                loop {
-                    match poll_telegram_once(
-                        &mut http,
-                        &tg_token,
-                        offset,
-                        &tg_inbound_tx,
-                        &tg_allowed,
-                        &tg_group_activation,
-                        bot_username.as_deref(),
-                        Some(&cmd_ctx),
-                    ) {
-                        Ok(next) => offset = next,
-                        Err(e) => {
-                            log::warn!(
-                                "[{}] poll failed: {}, backoff {}s",
-                                TAG_TG,
-                                e,
-                                BACKOFF_SECS
-                            );
-                            http.reset_connection_for_retry();
-                            std::thread::sleep(std::time::Duration::from_secs(BACKOFF_SECS));
-                        }
-                    }
-                    std::thread::sleep(std::time::Duration::from_secs(POLL_INTERVAL_SECS));
-                }
+            std::thread::spawn(move || {
+                beetle::run_telegram_poll_loop(
+                    tg_token,
+                    tg_allowed,
+                    tg_group_activation,
+                    tg_inbound_tx,
+                    tg_outbound_tx,
+                    tg_session_store,
+                    tg_wifi,
+                    tg_inbound_depth,
+                    tg_outbound_depth,
+                    tg_config_store,
+                )
             });
             log::info!("[{}] Telegram poll loop started", TAG);
         }
 
-        let llm_clients: Vec<Box<dyn beetle::LlmClient>> = config
-            .llm_sources
-            .iter()
-            .filter(|s| {
-                let has_key = !s.api_key.trim().is_empty();
-                let has_model = !s.model.trim().is_empty();
-                let has_provider = !s.provider.trim().is_empty();
-                let has_url = !s.api_url.trim().is_empty()
-                    || s.provider == "openai"
-                    || s.provider == "openai_compatible";
-                has_key && has_model && has_provider && has_url
-            })
-            .map(|s| {
-                let client: Box<dyn beetle::LlmClient> = match s.provider.as_str() {
-                    "openai" | "openai_compatible" => {
-                        Box::new(OpenAiCompatibleClient::from_source(s))
-                    }
-                    _ => Box::new(AnthropicClient::from_source(s)),
-                };
-                client
-            })
-            .collect();
-        if llm_clients.is_empty() {
-            log::warn!(
-                "[{}] no valid llm source configured; using NoopLlmClient and skipping external LLM calls",
-                TAG
-            );
-            log::info!(
-                "[{}] LLM is in no-op mode: local tools and message processing remain available",
-                TAG
-            );
-        }
-        let n_sources = config.llm_sources.len();
-        let (router_client, worker_llm_box): (
-            Option<Box<dyn beetle::LlmClient>>,
-            Box<dyn beetle::LlmClient>,
-        ) = if llm_clients.is_empty() {
-            (None, Box::new(beetle::llm::NoopLlmClient::new()))
-        } else {
-            let router_mode = config
-                .llm_router_source_index
-                .zip(config.llm_worker_source_index)
-                .map_or(false, |(r, w)| {
-                    (r as usize) < n_sources && (w as usize) < n_sources
-                });
-            let router_client: Option<Box<dyn beetle::LlmClient>> = if router_mode {
-                let idx = config.llm_router_source_index.expect("router_mode true") as usize;
-                let s = &config.llm_sources[idx];
-                Some(match s.provider.as_str() {
-                    "openai" | "openai_compatible" => {
-                        Box::new(OpenAiCompatibleClient::from_source(s))
-                            as Box<dyn beetle::LlmClient>
-                    }
-                    _ => Box::new(AnthropicClient::from_source(s)) as Box<dyn beetle::LlmClient>,
-                })
-            } else {
-                None
-            };
-            (router_client, Box::new(FallbackLlmClient::new(llm_clients)))
-        };
-        let mut registry = ToolRegistry::new();
-        registry.register(Box::new(GetTimeTool));
-        registry.register(Box::new(CronTool));
-        registry.register(Box::new(FilesTool));
-        registry.register(Box::new(WebSearchTool::new(config.as_ref())));
-        registry.register(Box::new(FetchUrlTool));
-        registry.register(Box::new(RemindAtTool::new(Arc::clone(&remind_at_store))));
-        registry.register(Box::new(UpdateSessionSummaryTool::new(Arc::clone(
-            &session_summary_store,
-        ))));
-        registry.register(Box::new(beetle::tools::BoardInfoTool));
-        registry.register(Box::new(HttpPostTool));
-        registry.register(Box::new(KvStoreTool));
-        registry.register(Box::new(SystemStatsTool));
-        #[cfg(feature = "gpio")]
-        {
-            registry.register(Box::new(beetle::tools::GpioReadTool));
-            registry.register(Box::new(beetle::tools::GpioWriteTool));
-        }
+        let (router_client, worker_llm_box) = beetle::build_llm_clients(&config);
+        let registry = beetle::build_default_registry(
+            &config,
+            Arc::clone(&remind_at_store),
+            Arc::clone(&session_summary_store),
+        );
         let tool_specs = registry.tool_specs_for_api(4096);
         let skill_meta_store_fn = Arc::clone(&skill_meta_store);
         let skill_storage_fn = Arc::clone(&skill_storage);
@@ -636,53 +367,7 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
             log::info!("[{}] CLI REPL started (stdin)", TAG);
         }
 
-        if let Some(tg_rx) = channel_rx_set.telegram.take() {
-            let tg_send_token = config.tg_token.clone();
-            std::thread::spawn(move || {
-                run_telegram_sender_loop(tg_rx, &tg_send_token, || EspHttpClient::new());
-            });
-            log::info!("[{}] Telegram sender thread started", TAG);
-        }
-        if let Some(c) = channel_rx_set.feishu.take() {
-            let fs_rx = c.rx;
-            let fs_id = c.app_id;
-            let fs_sec = c.app_secret;
-            std::thread::spawn(move || {
-                run_feishu_sender_loop(fs_rx, &fs_id, &fs_sec, || EspHttpClient::new());
-            });
-            log::info!("[{}] Feishu sender thread started", TAG);
-        }
-        if let Some(c) = channel_rx_set.dingtalk.take() {
-            let dt_rx = c.rx;
-            let dt_url = c.webhook_url;
-            std::thread::spawn(move || {
-                run_dingtalk_sender_loop(dt_rx, &dt_url, || EspHttpClient::new());
-            });
-            log::info!("[{}] DingTalk sender thread started", TAG);
-        }
-        if let Some(c) = channel_rx_set.wecom.take() {
-            let wc_rx = c.rx;
-            let wc_cid = c.corp_id;
-            let wc_sec = c.corp_secret;
-            let wc_aid = c.agent_id;
-            let wc_usr = c.default_touser;
-            std::thread::spawn(move || {
-                run_wecom_sender_loop(wc_rx, &wc_cid, &wc_sec, &wc_aid, &wc_usr, || {
-                    EspHttpClient::new()
-                });
-            });
-            log::info!("[{}] WeCom sender thread started", TAG);
-        }
-        if let Some(c) = channel_rx_set.qq_channel.take() {
-            let qq_rx = c.rx;
-            let qq_id = c.app_id;
-            let qq_sec = c.app_secret;
-            let qq_cache = c.msg_id_cache;
-            std::thread::spawn(move || {
-                run_qq_sender_loop(qq_rx, &qq_id, &qq_sec, qq_cache, || EspHttpClient::new());
-            });
-            log::info!("[{}] QQ Channel sender thread started", TAG);
-        }
+        beetle::channels::spawn_sender_threads(&mut channel_rx_set, &config.tg_token, EspHttpClient::new);
 
         if let Err(e) = run_agent_loop(
             &mut http_client,

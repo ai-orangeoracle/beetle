@@ -28,18 +28,20 @@ pub struct AnthropicClient {
 
 impl AnthropicClient {
     pub fn new(config: &AppConfig) -> Self {
-        Self::from_source(&LlmSource {
-            provider: config.model_provider.clone(),
-            api_key: config.api_key.clone(),
-            model: config.model.clone(),
-            api_url: config.api_url.clone(),
-            stream: false,
-            max_tokens: None,
-        })
+        Self::from_source(
+            &LlmSource {
+                provider: config.model_provider.clone(),
+                api_key: config.api_key.clone(),
+                model: config.model.clone(),
+                api_url: config.api_url.clone(),
+                max_tokens: None,
+            },
+            false,
+        )
     }
 
     /// 从单源配置构造，供多源回退使用。api_url 非空时替代默认 API_BASE。
-    pub fn from_source(source: &LlmSource) -> Self {
+    pub fn from_source(source: &LlmSource, stream: bool) -> Self {
         let api_base = if source.api_url.trim().is_empty() {
             API_BASE.to_string()
         } else {
@@ -50,7 +52,7 @@ impl AnthropicClient {
             api_key: source.api_key.clone(),
             max_tokens: source.max_tokens.unwrap_or(DEFAULT_MAX_TOKENS),
             api_base,
-            stream: source.stream,
+            stream,
         }
     }
 }

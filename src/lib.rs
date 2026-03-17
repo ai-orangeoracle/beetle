@@ -38,9 +38,9 @@ pub use bus::{MessageBus, PcMsg, DEFAULT_CAPACITY, MAX_CONTENT_LEN};
 pub use channels::{
     flush_dingtalk_sends, flush_feishu_sends, flush_qq_channel_sends, flush_telegram_sends,
     flush_wecom_sends, get_bot_username, poll_telegram_once, run_dingtalk_sender_loop,
-    run_dispatch, run_feishu_sender_loop, run_qq_sender_loop, run_telegram_sender_loop,
-    run_wecom_sender_loop, send_chat_action, ChannelHttpClient, ChannelSinks, LogSink,
-    MessageSink, QueuedSink, WebSocketSink,
+    run_dispatch, run_feishu_sender_loop, run_qq_sender_loop, run_telegram_poll_loop,
+    run_telegram_sender_loop, run_wecom_sender_loop, send_chat_action, ChannelHttpClient,
+    ChannelSinks, LogSink, MessageSink, QueuedSink, WebSocketSink,
 };
 #[cfg(all(feature = "feishu", any(target_arch = "xtensa", target_arch = "riscv32")))]
 pub use channels::run_feishu_ws_loop;
@@ -50,7 +50,7 @@ pub use config::{parse_allowed_chat_ids, LlmSource, AppConfig};
 pub use error::{Error, Result};
 pub use llm::{
     AnthropicClient, FallbackLlmClient, LlmClient, LlmHttpClient, LlmResponse, Message,
-    OpenAiCompatibleClient,
+    OpenAiCompatibleClient, build_llm_clients,
 };
 pub use platform::{
     connect_wifi, init_nvs, init_spiffs, spiffs_usage, EspHttpClient, SpiffsMemoryStore,
@@ -62,6 +62,7 @@ pub use platform::Esp32Platform;
 pub use tools::{
     CronTool, FetchUrlTool, FilesTool, GetTimeTool, HttpPostTool, KvStoreTool, RemindAtTool,
     SystemStatsTool, Tool, ToolContext, ToolRegistry, UpdateSessionSummaryTool, WebSearchTool,
+    build_default_registry,
 };
 
 /// 任何 PlatformHttpClient 均可作为 LlmHttpClient、ToolContext、ChannelHttpClient 使用。

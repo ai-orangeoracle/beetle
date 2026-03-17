@@ -28,9 +28,9 @@ pub const MIN_FREE_HEAP_FOR_AGENT_ROUND: usize = 96 * 1024;
 pub const MIN_FREE_INTERNAL_WHEN_PSRAM: usize = 48 * 1024;
 
 /// TLS 准入：有 PSRAM 时允许发起单次 TLS（HTTP/WSS）要求的最小 internal 空闲（字节）。
-/// S3 稳态 ~63KB，WSS TLS 常驻 ~1.5KB，agent HTTP TLS ~5KB；56KB 在双 TLS 并存时仅余 ~500B。
-/// 有 PSRAM 时 mbedTLS 大部分分配走 SPIRAM，internal 仅需 ~15KB 给硬件加密/DMA，50KB 留足安全边际。
-pub const TLS_ADMISSION_MIN_INTERNAL_BYTES: usize = 50 * 1024;
+/// 有 PSRAM 时 mbedTLS 大部分分配走 SPIRAM，internal 仅需 ~15KB 给硬件加密/DMA。
+/// 实测 WSS 常驻后稳态 internal ~50KB，45KB 阈值留 30KB 安全余量且不频繁误拒。
+pub const TLS_ADMISSION_MIN_INTERNAL_BYTES: usize = 45 * 1024;
 /// TLS 准入：要求 internal 最大连续块不低于此值，避免碎片化导致 mbedTLS 分配失败。
 pub const TLS_ADMISSION_MIN_LARGEST_BLOCK_BYTES: usize = 24 * 1024;
 /// TLS 准入：无 PSRAM 时 internal 堆空闲下限（字节），mbedTLS 全部走 internal 需更多空间。

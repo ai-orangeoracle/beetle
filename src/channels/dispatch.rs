@@ -2,11 +2,13 @@
 //! Outbound dispatch: recv from outbound_rx, send via MessageSink; per-channel circuit breaker.
 
 use crate::bus::{OutboundRx, MAX_CONTENT_LEN};
+use crate::config::AppConfig;
 use crate::util::truncate_content_to_max;
 use crate::constants::{CHANNEL_FAIL_COOLDOWN_SECS, CHANNEL_FAIL_THRESHOLD};
 use crate::error::Result;
 use crate::metrics;
 use std::collections::HashMap;
+use std::sync::mpsc;
 use std::sync::Mutex;
 use std::sync::OnceLock;
 use std::sync::Arc;
@@ -181,5 +183,202 @@ pub fn run_dispatch(outbound_rx: OutboundRx, sinks: Arc<ChannelSinks>) {
         } else {
             log::warn!("[{}] no sink for channel={}", TAG, msg.channel);
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Channel sink construction & sender thread spawning (extracted from main.rs)
+// ---------------------------------------------------------------------------
+
+/// 各通道的 rx 及 flush 所需凭证，由 build_channel_sinks 填充；未启用通道为 None。
+pub struct ChannelRxSet {
+    pub telegram: Option<mpsc::Receiver<(String, String)>>,
+    pub feishu: Option<FeishuRxConfig>,
+    pub dingtalk: Option<DingtalkRxConfig>,
+    pub wecom: Option<WecomRxConfig>,
+    pub qq_channel: Option<QqChannelRxConfig>,
+}
+
+pub struct FeishuRxConfig {
+    pub rx: mpsc::Receiver<(String, String)>,
+    pub app_id: String,
+    pub app_secret: String,
+}
+
+pub struct DingtalkRxConfig {
+    pub rx: mpsc::Receiver<(String, String)>,
+    pub webhook_url: String,
+}
+
+pub struct WecomRxConfig {
+    pub rx: mpsc::Receiver<(String, String)>,
+    pub corp_id: String,
+    pub corp_secret: String,
+    pub agent_id: String,
+    pub default_touser: String,
+}
+
+pub struct QqChannelRxConfig {
+    pub rx: mpsc::Receiver<(String, String)>,
+    pub app_id: String,
+    pub app_secret: String,
+    pub msg_id_cache: super::QqMsgIdCache,
+}
+
+/// 根据 config.enabled_channel 与凭证创建 ChannelSinks 并注册，返回 sinks 与各通道 rx 集合。
+pub fn build_channel_sinks(
+    config: &AppConfig,
+    qq_msg_id_cache: &super::QqMsgIdCache,
+) -> (ChannelSinks, ChannelRxSet) {
+    let mut sinks = ChannelSinks::new();
+    let enabled = config.enabled_channel.as_str();
+
+    let telegram = if enabled == "telegram" && !config.tg_token.trim().is_empty() {
+        let (tx, rx) = mpsc::sync_channel(8);
+        sinks.register(
+            "telegram",
+            Box::new(QueuedSink::new(tx, "telegram_send_queue")),
+        );
+        Some(rx)
+    } else {
+        None
+    };
+
+    let feishu = if enabled == "feishu"
+        && !config.feishu_app_id.trim().is_empty()
+        && !config.feishu_app_secret.trim().is_empty()
+    {
+        let (tx, rx) = mpsc::sync_channel(8);
+        sinks.register("feishu", Box::new(QueuedSink::new(tx, "feishu_send_queue")));
+        Some(FeishuRxConfig {
+            rx,
+            app_id: config.feishu_app_id.clone(),
+            app_secret: config.feishu_app_secret.clone(),
+        })
+    } else {
+        None
+    };
+
+    let dingtalk = if enabled == "dingtalk" && !config.dingtalk_webhook_url.trim().is_empty() {
+        let (tx, rx) = mpsc::sync_channel(8);
+        sinks.register(
+            "dingtalk",
+            Box::new(QueuedSink::new(tx, "dingtalk_send_queue")),
+        );
+        Some(DingtalkRxConfig {
+            rx,
+            webhook_url: config.dingtalk_webhook_url.clone(),
+        })
+    } else {
+        None
+    };
+
+    let wecom = if enabled == "wecom"
+        && !config.wecom_corp_id.trim().is_empty()
+        && !config.wecom_corp_secret.trim().is_empty()
+        && config.wecom_agent_id.trim().parse::<u32>().is_ok()
+    {
+        let (tx, rx) = mpsc::sync_channel(8);
+        sinks.register("wecom", Box::new(QueuedSink::new(tx, "wecom_send_queue")));
+        Some(WecomRxConfig {
+            rx,
+            corp_id: config.wecom_corp_id.clone(),
+            corp_secret: config.wecom_corp_secret.clone(),
+            agent_id: config.wecom_agent_id.clone(),
+            default_touser: config.wecom_default_touser.clone(),
+        })
+    } else {
+        None
+    };
+
+    let qq_channel = if enabled == "qq_channel"
+        && !config.qq_channel_app_id.trim().is_empty()
+        && !config.qq_channel_secret.trim().is_empty()
+    {
+        let (tx, rx) = mpsc::sync_channel(8);
+        sinks.register(
+            "qq_channel",
+            Box::new(QueuedSink::new(tx, "qq_channel_send_queue")),
+        );
+        Some(QqChannelRxConfig {
+            rx,
+            app_id: config.qq_channel_app_id.clone(),
+            app_secret: config.qq_channel_secret.clone(),
+            msg_id_cache: Arc::clone(qq_msg_id_cache),
+        })
+    } else {
+        None
+    };
+
+    sinks.register("websocket", Box::new(super::WebSocketSink::new("ws")));
+
+    let rx_set = ChannelRxSet {
+        telegram,
+        feishu,
+        dingtalk,
+        wecom,
+        qq_channel,
+    };
+    (sinks, rx_set)
+}
+
+/// 启动各通道的 sender 线程。rx_set 中有值的通道 `.take()` 后 spawn 线程。
+/// `create_http` 工厂闭包在每个线程内调用以创建独立 HTTP 客户端。
+pub fn spawn_sender_threads<F>(rx_set: &mut ChannelRxSet, tg_token: &str, create_http: F)
+where
+    F: Fn() -> crate::Result<crate::platform::EspHttpClient> + Send + 'static + Clone,
+{
+    const TAG: &str = "beetle";
+
+    if let Some(tg_rx) = rx_set.telegram.take() {
+        let f = create_http.clone();
+        let tg_send_token = tg_token.to_string();
+        std::thread::spawn(move || {
+            super::run_telegram_sender_loop(tg_rx, &tg_send_token, f);
+        });
+        log::info!("[{}] Telegram sender thread started", TAG);
+    }
+
+    if let Some(c) = rx_set.feishu.take() {
+        let f = create_http.clone();
+        let fs_rx = c.rx;
+        let fs_id = c.app_id;
+        let fs_sec = c.app_secret;
+        std::thread::spawn(move || {
+            super::run_feishu_sender_loop(fs_rx, &fs_id, &fs_sec, f);
+        });
+        log::info!("[{}] Feishu sender thread started", TAG);
+    }
+    if let Some(c) = rx_set.dingtalk.take() {
+        let f = create_http.clone();
+        let dt_rx = c.rx;
+        let dt_url = c.webhook_url;
+        std::thread::spawn(move || {
+            super::run_dingtalk_sender_loop(dt_rx, &dt_url, f);
+        });
+        log::info!("[{}] DingTalk sender thread started", TAG);
+    }
+    if let Some(c) = rx_set.wecom.take() {
+        let f = create_http.clone();
+        let wc_rx = c.rx;
+        let wc_cid = c.corp_id;
+        let wc_sec = c.corp_secret;
+        let wc_aid = c.agent_id;
+        let wc_usr = c.default_touser;
+        std::thread::spawn(move || {
+            super::run_wecom_sender_loop(wc_rx, &wc_cid, &wc_sec, &wc_aid, &wc_usr, f);
+        });
+        log::info!("[{}] WeCom sender thread started", TAG);
+    }
+    if let Some(c) = rx_set.qq_channel.take() {
+        let f = create_http.clone();
+        let qq_rx = c.rx;
+        let qq_id = c.app_id;
+        let qq_sec = c.app_secret;
+        let qq_cache = c.msg_id_cache;
+        std::thread::spawn(move || {
+            super::run_qq_sender_loop(qq_rx, &qq_id, &qq_sec, qq_cache, f);
+        });
+        log::info!("[{}] QQ Channel sender thread started", TAG);
     }
 }

@@ -4,11 +4,12 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use crate::bus::{InboundTx, OutboundTx, PcMsg, MAX_CONTENT_LEN};
+use crate::channels::ChannelHttpClient;
 use crate::error::{Error, Result};
 use crate::memory::SessionStore;
+use crate::platform::EspHttpClient;
 
 use super::send::set_message_reaction;
-use crate::channels::ChannelHttpClient;
 
 const TAG_POLL: &str = "telegram";
 const BIND_HINT_EMPTY: &str =
@@ -246,4 +247,78 @@ pub fn poll_telegram_once<H: ChannelHttpClient>(
         }
     }
     Ok(next_offset)
+}
+
+/// 启动 Telegram 长轮询循环（阻塞，应在独立线程调用）。
+/// 内部创建 EspHttpClient、TelegramCommandCtx，执行轮询循环。
+pub fn run_telegram_poll_loop(
+    token: String,
+    allowed_chat_ids: Vec<String>,
+    group_activation: String,
+    inbound_tx: InboundTx,
+    outbound_tx: OutboundTx,
+    session_store: Arc<dyn SessionStore + Send + Sync>,
+    wifi_connected: bool,
+    inbound_depth: Arc<std::sync::atomic::AtomicUsize>,
+    outbound_depth: Arc<std::sync::atomic::AtomicUsize>,
+    config_store: Arc<dyn crate::platform::ConfigStore>,
+) {
+    const TAG_TG: &str = "telegram_poll";
+
+    #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+    crate::platform::task_wdt::register_current_task_to_task_wdt();
+
+    let cmd_ctx = TelegramCommandCtx {
+        outbound_tx,
+        session_store,
+        wifi_connected,
+        inbound_depth,
+        outbound_depth,
+        set_group_activation: Box::new(move |v| {
+            crate::config::write_tg_group_activation(config_store.as_ref(), v)
+        }),
+    };
+
+    let mut http = match EspHttpClient::new() {
+        Ok(h) => h,
+        Err(e) => {
+            log::warn!("[{}] EspHttpClient::new failed: {}", TAG_TG, e);
+            return;
+        }
+    };
+
+    let bot_username = match super::send::get_bot_username(&mut http, &token) {
+        Ok(Some(u)) => Some(u),
+        _ => None,
+    };
+
+    let mut offset: Option<i64> = None;
+    const POLL_INTERVAL_SECS: u64 = 5;
+    const BACKOFF_SECS: u64 = 30;
+
+    loop {
+        match poll_telegram_once(
+            &mut http,
+            &token,
+            offset,
+            &inbound_tx,
+            &allowed_chat_ids,
+            &group_activation,
+            bot_username.as_deref(),
+            Some(&cmd_ctx),
+        ) {
+            Ok(next) => offset = next,
+            Err(e) => {
+                log::warn!(
+                    "[{}] poll failed: {}, backoff {}s",
+                    TAG_TG,
+                    e,
+                    BACKOFF_SECS
+                );
+                ChannelHttpClient::reset_connection_for_retry(&mut http);
+                std::thread::sleep(std::time::Duration::from_secs(BACKOFF_SECS));
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_secs(POLL_INTERVAL_SECS));
+    }
 }

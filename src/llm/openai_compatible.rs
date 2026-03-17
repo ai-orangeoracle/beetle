@@ -24,18 +24,20 @@ pub struct OpenAiCompatibleClient {
 
 impl OpenAiCompatibleClient {
     pub fn new(config: &AppConfig) -> Self {
-        Self::from_source(&LlmSource {
-            provider: config.model_provider.clone(),
-            api_key: config.api_key.clone(),
-            model: config.model.clone(),
-            api_url: config.api_url.clone(),
-            stream: false,
-            max_tokens: None,
-        })
+        Self::from_source(
+            &LlmSource {
+                provider: config.model_provider.clone(),
+                api_key: config.api_key.clone(),
+                model: config.model.clone(),
+                api_url: config.api_url.clone(),
+                max_tokens: None,
+            },
+            false,
+        )
     }
 
     /// 从单源配置构造，供多源回退使用。
-    pub fn from_source(source: &LlmSource) -> Self {
+    pub fn from_source(source: &LlmSource, stream: bool) -> Self {
         let api_base = if source.api_url.is_empty() {
             DEFAULT_API_BASE.to_string()
         } else {
@@ -46,7 +48,7 @@ impl OpenAiCompatibleClient {
             model: source.model.clone(),
             api_key: source.api_key.clone(),
             max_tokens: source.max_tokens.unwrap_or(DEFAULT_MAX_TOKENS),
-            stream: source.stream,
+            stream,
         }
     }
 }

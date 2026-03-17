@@ -198,6 +198,34 @@ pub fn build_system_prompt(
     out
 }
 
+/// 启动到点提醒轮询线程（内部 spawn，立即返回）。
+/// 每 `poll_interval_secs` 秒检查一次 RemindAtStore，到点的条目通过 inbound_tx 注入。
+pub fn run_remind_loop(
+    remind_store: std::sync::Arc<dyn RemindAtStore + Send + Sync>,
+    inbound_tx: crate::bus::InboundTx,
+    poll_interval_secs: u64,
+) {
+    std::thread::spawn(move || {
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(poll_interval_secs));
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            while let Ok(Some((channel, chat_id, context))) = remind_store.pop_due(now) {
+                let content = format!("提醒：{}", context);
+                if let Ok(msg) = PcMsg::new(channel, chat_id, content) {
+                    let _ = inbound_tx.send(msg);
+                }
+            }
+        }
+    });
+    log::info!(
+        "[beetle] remind_at loop started (interval {}s)",
+        poll_interval_secs
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::build_system_prompt;

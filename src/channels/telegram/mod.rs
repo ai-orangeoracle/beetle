@@ -3,7 +3,7 @@
 mod poll;
 mod send;
 
-pub use poll::{poll_telegram_once, TelegramCommandCtx};
+pub use poll::{poll_telegram_once, run_telegram_poll_loop, TelegramCommandCtx};
 pub use send::{
     check_connectivity, flush_telegram_sends, get_bot_username, run_telegram_sender_loop,
     send_chat_action,

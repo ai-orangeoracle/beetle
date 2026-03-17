@@ -20,7 +20,71 @@ pub use types::{
     MAX_REQUEST_BODY_LEN,
 };
 
+use crate::config::AppConfig;
 use crate::error::Result;
+
+/// 从配置构建 (router, worker) LLM 客户端对。
+/// router 用于分发判断（可选），worker 用于实际 LLM 请求。空列表返回 (None, NoopLlmClient)。
+pub fn build_llm_clients(
+    config: &AppConfig,
+) -> (Option<Box<dyn LlmClient>>, Box<dyn LlmClient>) {
+    const TAG: &str = "beetle";
+
+    let global_stream = config.llm_stream;
+
+    let llm_clients: Vec<Box<dyn LlmClient>> = config
+        .llm_sources
+        .iter()
+        .filter(|s| {
+            let has_key = !s.api_key.trim().is_empty();
+            let has_model = !s.model.trim().is_empty();
+            let has_provider = !s.provider.trim().is_empty();
+            let has_url = !s.api_url.trim().is_empty()
+                || s.provider == "openai"
+                || s.provider == "openai_compatible";
+            has_key && has_model && has_provider && has_url
+        })
+        .map(|s| -> Box<dyn LlmClient> {
+            match s.provider.as_str() {
+                "openai" | "openai_compatible" => {
+                    Box::new(OpenAiCompatibleClient::from_source(s, global_stream))
+                }
+                _ => Box::new(AnthropicClient::from_source(s, global_stream)),
+            }
+        })
+        .collect();
+
+    if llm_clients.is_empty() {
+        log::warn!(
+            "[{}] no valid llm source configured; using NoopLlmClient and skipping external LLM calls",
+            TAG
+        );
+        log::info!(
+            "[{}] LLM is in no-op mode: local tools and message processing remain available",
+            TAG
+        );
+        return (None, Box::new(NoopLlmClient::new()));
+    }
+
+    let n_sources = config.llm_sources.len();
+    let router_mode = config
+        .llm_router_source_index
+        .zip(config.llm_worker_source_index)
+        .is_some_and(|(r, w)| (r as usize) < n_sources && (w as usize) < n_sources);
+
+    let router_client: Option<Box<dyn LlmClient>> = if router_mode {
+        let idx = config.llm_router_source_index.expect("router_mode true") as usize;
+        let s = &config.llm_sources[idx];
+        Some(match s.provider.as_str() {
+            "openai" | "openai_compatible" => Box::new(OpenAiCompatibleClient::from_source(s, global_stream)),
+            _ => Box::new(AnthropicClient::from_source(s, global_stream)),
+        })
+    } else {
+        None
+    };
+
+    (router_client, Box::new(FallbackLlmClient::new(llm_clients)))
+}
 
 /// 供 main 注入的 HTTP 客户端抽象；platform::EspHttpClient 在 lib 中实现此 trait。
 /// 方法名 do_post 避免与 EspHttpClient::post 重名；headers 含 x-api-key、anthropic-version 等。

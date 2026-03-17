@@ -5,7 +5,9 @@ use crate::error::{Error, Result};
 use crate::llm::ToolSpec as LlmToolSpec;
 use crate::tools::{Tool, MAX_TOOL_ARGS_LEN, MAX_TOOL_RESULT_LEN};
 use crate::util::truncate_to_byte_len;
+use crate::config::AppConfig;
 use indexmap::IndexMap;
+use std::sync::Arc;
 
 /// 按 name 注册与派发工具；可生成带总长度上界的 tool specs。IndexMap 保证工具顺序稳定。
 pub struct ToolRegistry {
@@ -87,4 +89,32 @@ impl ToolRegistry {
         let result = tool.execute(args, ctx)?;
         Ok(truncate_to_byte_len(&result, MAX_TOOL_RESULT_LEN))
     }
+}
+
+/// 构建包含所有内置工具的注册表。
+pub fn build_default_registry(
+    config: &AppConfig,
+    remind_at_store: Arc<dyn crate::memory::RemindAtStore + Send + Sync>,
+    session_summary_store: Arc<dyn crate::memory::SessionSummaryStore + Send + Sync>,
+) -> ToolRegistry {
+    let mut registry = ToolRegistry::new();
+    registry.register(Box::new(super::GetTimeTool));
+    registry.register(Box::new(super::CronTool));
+    registry.register(Box::new(super::FilesTool));
+    registry.register(Box::new(super::WebSearchTool::new(config)));
+    registry.register(Box::new(super::FetchUrlTool));
+    registry.register(Box::new(super::RemindAtTool::new(remind_at_store)));
+    registry.register(Box::new(super::UpdateSessionSummaryTool::new(
+        session_summary_store,
+    )));
+    registry.register(Box::new(super::BoardInfoTool));
+    registry.register(Box::new(super::HttpPostTool));
+    registry.register(Box::new(super::KvStoreTool));
+    registry.register(Box::new(super::SystemStatsTool));
+    #[cfg(feature = "gpio")]
+    {
+        registry.register(Box::new(super::GpioReadTool));
+        registry.register(Box::new(super::GpioWriteTool));
+    }
+    registry
 }

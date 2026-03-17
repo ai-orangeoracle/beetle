@@ -26,7 +26,7 @@ pub use get_time::GetTimeTool;
 pub use gpio::{GpioReadTool, GpioWriteTool};
 pub use http_post::HttpPostTool;
 pub use kv_store::KvStoreTool;
-pub use registry::ToolRegistry;
+pub use registry::{ToolRegistry, build_default_registry};
 pub use remind_at::RemindAtTool;
 pub use system_stats::SystemStatsTool;
 pub use update_session_summary::UpdateSessionSummaryTool;
