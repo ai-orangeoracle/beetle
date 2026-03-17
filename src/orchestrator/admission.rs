@@ -35,7 +35,7 @@ pub enum ToolDecision {
 
 /// 需要网络的工具（Critical 压力下拒绝）。
 /// Tools that require network (denied under Critical pressure).
-const NETWORK_TOOLS: &[&str] = &["web_search", "http_post", "fetch_url"];
+const NETWORK_TOOLS: &[&str] = &["web_search", "http_post", "fetch_url", "analyze_image"];
 
 /// agent loop 收到消息后、处理前调用。
 /// Called by agent loop after receiving a message, before processing.
