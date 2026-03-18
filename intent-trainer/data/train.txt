@@ -1,0 +1,510 @@
+__label__fallback Joke
+__label__get_time 星期几
+__label__kv_store 读取 持久化 key
+__label__fallback 为啥
+__label__remind_at 几分钟后提醒
+__label__gpio_read Read pin 13
+__label__get_time 现在是几点
+__label__cron 0 9 * * * 下次运行时间
+__label__remind_at 等会提醒
+__label__fallback 怎么办
+__label__get_time 现在几点
+__label__remind_at remind me at 12:00
+__label__get_time 现在几点了
+__label__web_search 搜 上海天气
+__label__board_info 查设备型号
+__label__gpio_write 开灯吧
+__label__kv_store 删除某个 key
+__label__cron 0 * * * * 下次什么时候运行
+__label__files 文件列表
+__label__board_info 多少核
+__label__files List storage
+__label__board_info Board information
+__label__fallback 这句话什么意思
+__label__board_info 堆内存
+__label__fetch_url 获取网页内容
+__label__board_info 查板子型号
+__label__kv_store kv 列表
+__label__cron 0 * * * * 下次几点
+__label__board_info Show device info
+__label__board_info 什么开发板
+__label__gpio_write Pin 13 output 0
+__label__cron When is next cron run
+__label__web_search 查 百科
+__label__board_info 查一下板子型号
+__label__kv_store 删除 key
+__label__gpio_write Turn on the light
+__label__fallback Poem
+__label__board_info Heap size
+__label__get_time 当前几点
+__label__kv_store 读 key
+__label__remind_at 到时间叫我
+__label__fetch_url 拉取 某网址
+__label__get_time Tell me the current time
+__label__get_time 查一下时间
+__label__web_search 网上查 汇率
+__label__get_time 报时
+__label__fallback 陪聊
+__label__system_stats 空间还有多少
+__label__remind_at 提醒 明天 9 点
+__label__cron cron 下次执行
+__label__board_info IDF version
+__label__web_search 搜索 fastText 用法
+__label__remind_at 下午 2 点提醒
+__label__kv_store Remove key
+__label__gpio_write 关
+__label__get_time Today's date
+__label__files storage 内容
+__label__fallback 你是谁
+__label__cron 解析 cron 表达式
+__label__files 看看根目录
+__label__fallback Introduce yourself
+__label__web_search Google 一下
+__label__remind_at 闹钟 下午 3 点
+__label__gpio_read 13 号引脚状态
+__label__fallback 写诗
+__label__board_info 看看板子信息
+__label__gpio_write Set GPIO 2 high
+__label__remind_at 半小时后叫我
+__label__remind_at 提醒 明天开会
+__label__fetch_url 拉取内容
+__label__board_info 设备型号
+__label__files List directory
+__label__gpio_read 读引脚 2
+__label__web_search 搜 某明星
+__label__system_stats SPIFFS 空间
+__label__fallback 含义是什么
+__label__remind_at schedule a reminder
+__label__board_info Get device model
+__label__remind_at 设提醒
+__label__files 打开 skills/readme.md
+__label__files 目录列表
+__label__web_search 百度搜索
+__label__remind_at 设个闹钟
+__label__fallback Summarize this
+__label__system_stats 看看存储
+__label__web_search 搜一下 北京天气
+__label__remind_at 闹钟 明天 9 点
+__label__fallback 随便聊聊
+__label__get_time Time now
+__label__board_info 运行了多久
+__label__system_stats How much storage left
+__label__cron cron 表达式解析
+__label__get_time What time is it
+__label__kv_store kv 存 foo 为 bar
+__label__get_time 现在时刻几点
+__label__fallback 什么意思
+__label__system_stats 存储容量
+__label__files 有哪些文件
+__label__files 读 skills 下的文件
+__label__get_time Get current time
+__label__web_search 网上查 定义
+__label__fallback 会做什么
+__label__fallback 翻译成英文
+__label__fetch_url 拉取网页
+__label__gpio_write 2 脚拉高
+__label__fallback explain this
+__label__remind_at 10 点提醒我
+__label__system_stats 连接状态
+__label__cron 0 9 * * 1-5 下次什么时候触发
+__label__fallback 你好啊
+__label__fallback 咋办
+__label__cron 下次 cron 触发
+__label__system_stats 网络是否正常
+__label__files 读 path/to/file
+__label__gpio_write 开灯
+__label__remind_at 提醒我 10 分钟后
+__label__fetch_url GET 一下某链接
+__label__web_search 查 新闻
+__label__fallback 心情不好
+__label__web_search 搜一搜
+__label__gpio_write 拉高 2 号
+__label__board_info 硬件信息
+__label__gpio_write 开一下灯
+__label__get_time Tell me the time
+__label__fetch_url 获取 url 内容
+__label__fetch_url Fetch URL
+__label__board_info 板载芯片
+__label__cron 解析 5 字段 cron
+__label__system_stats 空间占用
+__label__fetch_url 获取这个链接的内容
+__label__kv_store 存 key value
+__label__fetch_url 读取 url
+__label__fallback What does this mean
+__label__fetch_url fetch 网页
+__label__kv_store 键值 删
+__label__web_search 搜 论文
+__label__files 列出根目录文件
+__label__remind_at Remind me in 10 minutes to drink water
+__label__remind_at 到点提醒
+__label__fallback Hello
+__label__board_info uptime
+__label__fallback 为什么这样
+__label__get_time 时间现在几点
+__label__remind_at 明天 9 点提醒开会
+__label__cron Next run time for cron
+__label__gpio_read 看一下 2 脚
+__label__gpio_read 读一下 2 号引脚
+__label__gpio_read Read GPIO 2
+__label__get_time 现在几点了呀
+__label__board_info 板型
+__label__gpio_read 读一下 2 脚
+__label__kv_store Save key value
+__label__kv_store 持久化 存 key
+__label__files storage 里有什么
+__label__system_stats 网络通吗
+__label__fallback 总结这段话
+__label__fallback 翻译
+__label__remind_at 10 分钟后提醒我
+__label__web_search Search for Python
+__label__gpio_write gpio 2 输出 1
+__label__fallback 怎么做
+__label__fetch_url HTTP GET 某地址
+__label__web_search 搜 机器学习
+__label__system_stats 检查网络
+__label__get_time 几号了
+__label__fallback Just chatting
+__label__files 列出目录
+__label__files List root
+__label__system_stats WiFi 信号
+__label__system_stats 连上网了吗
+__label__fallback How to do it
+__label__fallback Meaning of this
+__label__fallback 不开心
+__label__web_search Search online
+__label__files 打开文件
+__label__board_info Device info
+__label__web_search Look up
+__label__remind_at Remind at 12:00
+__label__kv_store 键值 列表
+__label__get_time 几点了呢
+__label__gpio_write Turn off the light
+__label__system_stats 系统状态
+__label__fallback Write a poem
+__label__board_info 芯片型号
+__label__fetch_url Fetch the page
+__label__files 列出文件
+__label__remind_at 提醒我 晚上 7 点
+__label__board_info 固件跑在什么板上
+__label__kv_store Read key value
+__label__get_time 几点了
+__label__cron cron 0 8 * * * 下次
+__label__gpio_write 把 2 号脚拉高
+__label__remind_at 到点叫我
+__label__cron 解析 0 9 * * 1-5
+__label__fetch_url GET this url
+__label__kv_store Show all keys
+__label__fallback 解释一下
+__label__fetch_url 拉取 URL
+__label__fallback 干嘛呢
+__label__fallback 如何解决
+__label__gpio_write 13 脚低电平
+__label__cron cron 表达式 0 * * * * 下次什么时候
+__label__web_search Web search for
+__label__remind_at 10 分钟后提醒我
+__label__board_info ESP chip type
+__label__board_info 什么板子
+__label__files Read a file
+__label__remind_at 稍后提醒
+__label__board_info 开发板型号
+__label__files 列出路径下的文件
+__label__remind_at 半小时后提醒我
+__label__gpio_write 输出低 13 脚
+__label__gpio_write 设置 GPIO 2 为 1
+__label__remind_at 一会儿提醒我
+__label__remind_at 提醒我喝水
+__label__fetch_url 获取 某 url
+__label__system_stats 网络连接状态
+__label__gpio_read GPIO 2 的电平
+__label__fallback hi
+__label__fetch_url Fetch this link
+__label__get_time 当前时间
+__label__files 读一下某文件
+__label__fallback 什么意思
+__label__gpio_read 2 号脚现在多少
+__label__web_search Search for
+__label__kv_store Set key value
+__label__remind_at 过 10 分钟提醒
+__label__board_info 芯片是什么
+__label__gpio_write 写 GPIO 2 为 1
+__label__gpio_write pin 13 低
+__label__remind_at 过一会儿提醒
+__label__kv_store 存 键 值
+__label__gpio_write GPIO 2 output 1
+__label__get_time 现在什么时间了
+__label__gpio_read 读 13 脚
+__label__system_stats 存储用了多少
+__label__files 读文件
+__label__system_stats 剩余空间
+__label__files 列出子目录
+__label__fallback Who are you
+__label__remind_at 明天早上 8 点提醒
+__label__kv_store 删 key
+__label__board_info 内存多少
+__label__web_search 查一下 某某公司
+__label__web_search Look up today's news
+__label__kv_store kv 删除
+__label__fallback 聊聊天
+__label__get_time 现在是什么时间
+__label__fallback 概括
+__label__board_info 板载信息
+__label__remind_at 到点提醒我
+__label__web_search 搜索 文档
+__label__fallback Hey
+__label__fallback 在吗
+__label__fallback 写首诗吧
+__label__gpio_write 2 号脚输出高电平
+__label__board_info 查开发板型号
+__label__gpio_write 关灯
+__label__remind_at 明天提醒我
+__label__get_time 现在几刻
+__label__system_stats System stats
+__label__files 目录里有什么
+__label__fetch_url 拉取这个链接
+__label__fallback 你能做什么
+__label__files 读一下 skills/foo.md
+__label__web_search Web search
+__label__remind_at Set a reminder
+__label__kv_store kv delete
+__label__fetch_url fetch 这个 url
+__label__fallback 你好呀
+__label__get_time 当前几点了
+__label__fallback what can you do
+__label__fallback Tell me a joke
+__label__fetch_url 获取链接内容
+__label__web_search 百度一下
+__label__remind_at 提醒 10 分钟后
+__label__files 列出 path
+__label__gpio_read 13 脚电平
+__label__gpio_write 熄灯
+__label__gpio_write 灯打开
+__label__fetch_url 获取 https://xxx 的内容
+__label__fallback Hi there
+__label__files List all files
+__label__board_info 查芯片型号
+__label__files 列出当前目录
+__label__get_time 现在什么时候了
+__label__gpio_read 读 gpio 2
+__label__fetch_url 抓取网页
+__label__kv_store kv 读 theme
+__label__web_search 查资料
+__label__gpio_write 开
+__label__remind_at 提醒我 下午 3 点
+__label__files 读存储文件
+__label__system_stats 存储还剩多少
+__label__system_stats 存储使用情况
+__label__cron cron 下次运行时间
+__label__system_stats 设备状态
+__label__get_time 现在几点了啊
+__label__gpio_write 关闭灯
+__label__get_time 现在时间
+__label__kv_store 列出所有键
+__label__remind_at Remind me at 3pm
+__label__gpio_write 2 号引脚写 1
+__label__get_time 现在什么时候
+__label__fallback 帮我分析一下这段话
+__label__system_stats 存储够用吗
+__label__system_stats WiFi 状态
+__label__fallback hello
+__label__board_info 板子类型
+__label__kv_store 删掉 key x
+__label__fetch_url 拉一下这个链接
+__label__system_stats WiFi status
+__label__remind_at 10分钟后叫我
+__label__files 读取文件内容
+__label__web_search Search the web
+__label__remind_at 过十分钟提醒我
+__label__fallback 怎么办啊
+__label__board_info What is the board model
+__label__kv_store 键值存储 列出
+__label__kv_store kv list
+__label__fallback 聊聊
+__label__gpio_read get gpio 2
+__label__kv_store kv get
+__label__system_stats 存储满了没
+__label__gpio_write gpio write 13 0
+__label__fallback 聊会儿
+__label__board_info Get board info
+__label__get_time Current time
+__label__cron 下次触发时间
+__label__cron 解析 0 0 * * 0
+__label__get_time 时间日期
+__label__gpio_write 把灯打开
+__label__remind_at 设个定时
+__label__fetch_url 获取 链接 内容
+__label__remind_at 等会提醒我
+__label__gpio_read 引脚 2 的电压
+__label__get_time What time is it now
+__label__kv_store 取 键
+__label__cron cron 下次
+__label__gpio_write 把灯关上
+__label__board_info 开发板类型
+__label__system_stats WiFi 连上了吗
+__label__remind_at 十分钟后叫我
+__label__gpio_read pin 2 读一下
+__label__web_search 搜索 菜谱
+__label__gpio_read pin 13 状态
+__label__files 读文件 config.json
+__label__gpio_write 拉低 13 号
+__label__gpio_write 打开灯
+__label__gpio_read 读取引脚 13
+__label__fetch_url 拉取并返回内容
+__label__get_time 本地时间
+__label__gpio_write 引脚 13 设为 0
+__label__fetch_url 拉取 某 URL
+__label__fetch_url GET 拉取
+__label__kv_store kv 列出键
+__label__web_search 网上搜 某某
+__label__fallback Explain
+__label__kv_store kv 存储
+__label__fallback 作首诗
+__label__kv_store 存储 key foo value bar
+__label__board_info 板子信息
+__label__files Read content of file
+__label__get_time What's the time
+__label__board_info 芯片类型
+__label__gpio_read 13 号脚是高是低
+__label__get_time 现在北京时间几点
+__label__get_time 今天几号
+__label__fallback 概括一下
+__label__kv_store Get key
+__label__board_info board info
+__label__system_stats 系统健康
+__label__system_stats Storage free
+__label__board_info 看板子型号
+__label__gpio_write 13 脚置 0
+__label__fallback 该怎么弄
+__label__board_info What board is this
+__label__cron cron 0 7 * * 1-5
+__label__board_info 设备型号是什么
+__label__gpio_read Pin 13 high or low
+__label__web_search 搜索 开源项目
+__label__fallback 啥意思啊
+__label__files 文件内容
+__label__fallback 为什么这样
+__label__fallback Capabilities
+__label__system_stats 健康检查
+__label__kv_store 列 key
+__label__system_stats Runtime health
+__label__fallback 嗨你好
+__label__gpio_read get pin 13
+__label__fallback Analyze
+__label__remind_at 提醒我 某时间
+__label__gpio_write gpio write 2 1
+__label__gpio_read 读取 2 号引脚电平
+__label__web_search 搜索 如何做意面
+__label__remind_at 设一个提醒
+__label__get_time Time please
+__label__fetch_url 抓取 某链接
+__label__get_time Give me the time
+__label__files 列出所有文件
+__label__gpio_read 读取 GPIO 2
+__label__board_info 查板型
+__label__gpio_write 灯关闭
+__label__fallback 原因是什么
+__label__get_time 帮我看看几点了
+__label__files 读取存储里的文件
+__label__fallback Translate
+__label__kv_store 存一下 key foo value bar
+__label__fallback 介绍一下
+__label__fetch_url 抓一下 url
+__label__get_time 看看几点了
+__label__get_time 当前 UTC 时间
+__label__gpio_write 13 号脚输出低
+__label__web_search search for python tutorial
+__label__cron 0 12 * * * 下次执行
+__label__board_info 运行时间
+__label__fallback Meaning
+__label__system_stats Is WiFi connected
+__label__fallback 在吗你好
+__label__gpio_read 读取 2 脚状态
+__label__remind_at 提醒一下
+__label__system_stats 设备运行状态
+__label__kv_store kv 删除 x
+__label__system_stats SPIFFS usage
+__label__fetch_url fetch 地址
+__label__system_stats wifi 连接
+__label__remind_at Schedule reminder
+__label__fallback 介绍一下自己
+__label__get_time 现在星期几
+__label__web_search Search the internet
+__label__web_search 网上查 今日新闻
+__label__kv_store 读取 key
+__label__system_stats 网络状态
+__label__kv_store 键值 取
+__label__fallback 总结一下
+__label__web_search 搜 翻译
+__label__fetch_url Get url body
+__label__board_info 看设备信息
+__label__fallback Why
+__label__cron Parse cron expression
+__label__files list 根目录
+__label__gpio_write 关灯吧
+__label__get_time 现在几点钟
+__label__web_search 查 最新新闻
+__label__fallback 你能干嘛
+__label__kv_store 键值存储 读
+__label__kv_store kv set
+__label__get_time What date is it
+__label__files 读取 config.json
+__label__get_time 看一下时间
+__label__system_stats 磁盘空间
+__label__files list 目录
+__label__kv_store 读取 key theme
+__label__board_info 板子什么型号
+__label__board_info 板子啥型号
+__label__kv_store List keys
+__label__gpio_read GPIO 13 状态
+__label__gpio_write 设置引脚 13 为 0
+__label__fallback What are you
+__label__kv_store 列出 key
+__label__cron cron 下次触发时间
+__label__fetch_url fetch 某链接
+__label__gpio_write 13 脚拉低
+__label__gpio_read 读 2 和 13 脚
+__label__fallback 为什么
+__label__get_time 当前时间几点
+__label__system_stats 存储空间
+__label__kv_store list keys
+__label__web_search 帮我搜
+__label__files 列出 storage 根下
+__label__board_info 看板子信息
+__label__web_search 搜索 教程
+__label__board_info Free heap
+__label__fallback Chat
+__label__board_info Chip model
+__label__fallback 随便说说
+__label__cron 解析 0 * * * *
+__label__kv_store list 所有 key
+__label__board_info 什么芯片
+__label__remind_at 一刻钟后提醒
+__label__fallback Reason
+__label__remind_at 几点提醒我
+__label__fallback 你会啥
+__label__files 列出 storage
+__label__web_search 查 某公司
+__label__fallback 打个招呼
+__label__get_time 现在时刻
+__label__gpio_read What is the level of pin 2
+__label__fallback 你好
+__label__board_info CPU 型号
+__label__fallback 解释解释
+__label__fallback Talk to me
+__label__kv_store 键值 存
+__label__remind_at 定时任务提醒
+__label__gpio_write 2 号引脚输出高
+__label__gpio_read GPIO 2 level
+__label__files Read file
+__label__cron 0 0 * * * 下次触发
+__label__fetch_url Fetch content from url
+__label__fallback What to do
+__label__get_time 今天星期几号
+__label__gpio_write Set pin 13 low
+__label__get_time 现在
+__label__get_time 星期几今天
+__label__remind_at 定时 下午三点
+__label__gpio_write 2 脚置 1
+__label__files 列出 / 下的文件
+__label__get_time 现在日期
+__label__files 列出文件列表
+__label__remind_at 十分钟后提醒我喝水

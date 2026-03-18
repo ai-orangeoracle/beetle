@@ -1,0 +1,42 @@
+WiFi 连上了吗
+网络状态
+存储用了多少
+SPIFFS 空间
+设备健康
+系统状态
+wifi 连接
+存储空间
+WiFi 状态
+连上网了吗
+网络连上了没
+存储还剩多少
+磁盘空间
+SPIFFS 用了多少
+健康检查
+系统健康
+网络通吗
+WiFi 是否连接
+存储使用情况
+剩余空间
+System stats
+WiFi status
+Network status
+Storage usage
+How much storage left
+Is WiFi connected
+设备运行状态
+存储容量
+空间占用
+网络连接状态
+检查网络
+看看存储
+存储够用吗
+WiFi 信号
+连接状态
+Runtime health
+Storage free
+SPIFFS usage
+设备状态
+网络是否正常
+存储满了没
+空间还有多少

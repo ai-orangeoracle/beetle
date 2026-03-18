@@ -83,4 +83,9 @@ pub trait Tool: Send + Sync {
     fn description(&self) -> &str;
     fn schema(&self) -> Value;
     fn execute(&self, args: &str, ctx: &mut dyn ToolContext) -> Result<String>;
+    /// 该工具是否需要网络（HTTP/TLS）；orchestrator 在高压力时拒绝网络工具。
+    /// Whether this tool requires network (HTTP/TLS); orchestrator denies network tools under high pressure.
+    fn requires_network(&self) -> bool {
+        false
+    }
 }

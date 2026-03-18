@@ -1,0 +1,38 @@
+拉取 https://example.com
+fetch 这个 url
+GET 一下某链接
+抓取网页
+拉取 URL
+获取这个链接的内容
+Fetch URL
+GET this url
+拉取 某网址
+获取网页内容
+Fetch the page
+拉一下这个链接
+抓一下 url
+获取 https://xxx 的内容
+Read url content
+拉取网页
+fetch 某链接
+GET 请求这个地址
+拉取内容
+获取链接内容
+Fetch content from url
+拉取 某 URL
+抓取 某链接
+获取 url 内容
+GET 拉取
+fetch 网页
+拉取 链接
+读取 url
+抓取 网址
+Fetch this link
+Get url body
+拉取并返回内容
+获取 某 url
+HTTP GET 某地址
+拉取 地址
+fetch 地址
+获取 链接 内容
+拉取这个链接

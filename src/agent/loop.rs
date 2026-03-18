@@ -623,7 +623,8 @@ fn run_worker_path<H: PlatformHttpClient>(
             ));
             for (i, tc) in tool_calls.iter().enumerate() {
                 // 工具执行门控
-                let result = match crate::orchestrator::can_execute_tool_pub(&tc.name) {
+                let needs_net = registry.is_network_tool(&tc.name);
+                let result = match crate::orchestrator::can_execute_tool_pub(&tc.name, needs_net) {
                     ToolDecision::Deny { reason } => {
                         log::info!("[agent_tool] {} denied: {}", tc.name, reason);
                         format!("{{\"error\": \"{}\"}}", reason)

@@ -219,6 +219,10 @@ impl Tool for AnalyzeImageTool {
         })
     }
 
+    fn requires_network(&self) -> bool {
+        true
+    }
+
     fn execute(&self, args: &str, ctx: &mut dyn ToolContext) -> Result<String> {
         let m = parse_tool_args(args, STAGE)?;
 

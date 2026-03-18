@@ -52,6 +52,12 @@ pub struct OrchestratorState {
     // 队列深度（heartbeat 定期更新）
     pub inbound_depth: AtomicU32,
     pub outbound_depth: AtomicU32,
+
+    // 会话与存储指标（heartbeat 定期更新）
+    // Session & storage metrics (updated periodically by heartbeat)
+    pub session_count: AtomicU32,
+    pub storage_used_kb: AtomicU32,
+    pub storage_total_kb: AtomicU32,
 }
 
 impl Default for OrchestratorState {
@@ -77,6 +83,9 @@ impl OrchestratorState {
             ],
             inbound_depth: AtomicU32::new(0),
             outbound_depth: AtomicU32::new(0),
+            session_count: AtomicU32::new(0),
+            storage_used_kb: AtomicU32::new(0),
+            storage_total_kb: AtomicU32::new(0),
         }
     }
 
@@ -86,6 +95,27 @@ impl OrchestratorState {
         self.heap_free_spiram.store(spiram, Ordering::Relaxed);
         self.heap_largest_block.store(largest_block, Ordering::Relaxed);
     }
+}
+
+/// 单通道健康快照（用于 API 序列化）。
+/// Per-channel health snapshot for API serialization.
+#[derive(serde::Serialize)]
+pub struct ChannelHealthSnapshot {
+    pub consecutive_failures: u32,
+    pub total_failures: u32,
+    pub total_successes: u32,
+    pub healthy: bool,
+}
+
+/// 全部通道健康快照（具名结构，API 输出更易读）。
+/// All channels health snapshot (named struct for readable API output).
+#[derive(serde::Serialize)]
+pub struct ChannelsHealthSnapshot {
+    pub telegram: ChannelHealthSnapshot,
+    pub feishu: ChannelHealthSnapshot,
+    pub dingtalk: ChannelHealthSnapshot,
+    pub wecom: ChannelHealthSnapshot,
+    pub qq_channel: ChannelHealthSnapshot,
 }
 
 /// 全局资源快照（无锁原子读取）。
@@ -99,6 +129,10 @@ pub struct ResourceSnapshot {
     pub inbound_depth: u32,
     pub outbound_depth: u32,
     pub budget: super::pressure::ResourceBudget,
+    pub channels: ChannelsHealthSnapshot,
+    pub session_count: u32,
+    pub storage_used_kb: u32,
+    pub storage_total_kb: u32,
 }
 
 impl ResourceSnapshot {
@@ -106,6 +140,13 @@ impl ResourceSnapshot {
         let pressure = super::pressure::PressureLevel::from_byte(
             state.pressure_level.load(Ordering::Relaxed),
         );
+        let channels = ChannelsHealthSnapshot {
+            telegram: super::channel_health::snapshot_by_index(state, ChannelIndex::Telegram as usize),
+            feishu: super::channel_health::snapshot_by_index(state, ChannelIndex::Feishu as usize),
+            dingtalk: super::channel_health::snapshot_by_index(state, ChannelIndex::DingTalk as usize),
+            wecom: super::channel_health::snapshot_by_index(state, ChannelIndex::WeCom as usize),
+            qq_channel: super::channel_health::snapshot_by_index(state, ChannelIndex::QqChannel as usize),
+        };
         Self {
             pressure,
             heap_free_internal: state.heap_free_internal.load(Ordering::Relaxed),
@@ -114,6 +155,10 @@ impl ResourceSnapshot {
             inbound_depth: state.inbound_depth.load(Ordering::Relaxed),
             outbound_depth: state.outbound_depth.load(Ordering::Relaxed),
             budget: super::pressure::budget_for_level(pressure),
+            channels,
+            session_count: state.session_count.load(Ordering::Relaxed),
+            storage_used_kb: state.storage_used_kb.load(Ordering::Relaxed),
+            storage_total_kb: state.storage_total_kb.load(Ordering::Relaxed),
         }
     }
 }

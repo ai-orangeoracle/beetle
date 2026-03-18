@@ -1,0 +1,51 @@
+存一下 key foo value bar
+读取 key theme
+列出所有 key
+删掉 key x
+设置 key value
+获取 key 的值
+删除 key
+列出 key
+kv 存 foo 为 bar
+kv 读 theme
+kv 删除 x
+kv 列表
+键值存储 存
+键值存储 读
+键值存储 删
+键值存储 列出
+Set key value
+Get key
+Delete key
+List keys
+存 key value
+读 key
+删 key
+list keys
+kv set
+kv get
+kv delete
+kv list
+存储 key foo value bar
+读取 key
+删除某个 key
+列出所有键
+键值 存
+键值 取
+键值 删
+键值 列表
+Save key value
+Read key value
+Remove key
+Show all keys
+存 键 值
+取 键
+删 键
+列 key
+kv 存储
+kv 读取
+kv 删除
+kv 列出键
+持久化 存 key
+读取 持久化 key
+list 所有 key

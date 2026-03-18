@@ -1,0 +1,48 @@
+列出根目录文件
+读一下 skills/foo.md
+storage 里有什么
+列出 storage
+读文件 config.json
+list 根目录
+列出文件
+读文件
+列出目录
+根目录下有什么
+列出根目录
+读取 config.json
+打开 skills/readme.md
+storage 里有哪些文件
+列出所有文件
+读一下某文件
+列出当前目录
+List files
+Read file
+List directory
+List storage
+列出 storage 根目录
+读 skills 下的文件
+读取存储里的文件
+有哪些文件
+目录列表
+文件列表
+List files in root
+Read content of file
+列出 / 下的文件
+读 path/to/file
+列出 path
+List root
+列出文件列表
+读取文件内容
+storage 内容
+看看根目录
+打开文件
+列出子目录
+List all files
+Read a file
+目录里有什么
+文件内容
+列出路径下的文件
+读取 path
+list 目录
+列出 storage 根下
+读存储文件

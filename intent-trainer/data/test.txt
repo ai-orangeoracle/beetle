@@ -1,0 +1,90 @@
+__label__board_info 运行多久了
+__label__gpio_write pin 13 设成高
+__label__fallback 今天心情不好
+__label__get_time 今天星期几
+__label__fallback 讲个笑话
+__label__files List files
+__label__kv_store 列出所有 key
+__label__files 列出 storage 根目录
+__label__kv_store 设置 key value
+__label__fallback 说个笑话
+__label__kv_store Delete key
+__label__fetch_url 拉取 链接
+__label__fallback Why is that
+__label__board_info IDF 版本
+__label__cron Next run for 0 9 * * *
+__label__cron 下次运行 0 * * * *
+__label__get_time 当前时刻
+__label__board_info 硬件型号
+__label__fallback 来个笑话
+__label__kv_store 删 键
+__label__fallback 为啥啊
+__label__gpio_write 输出高 2 脚
+__label__fallback Summary
+__label__gpio_write 点亮灯
+__label__get_time 几点了现在
+__label__web_search 查 单词意思
+__label__kv_store 获取 key 的值
+__label__remind_at 十分钟后提醒我
+__label__fallback 分析总结
+__label__files 读取 path
+__label__fallback 写一首诗
+__label__gpio_read 2 号引脚当前电平
+__label__gpio_read 2 脚电平
+__label__system_stats 网络连上了没
+__label__get_time 几点钟了
+__label__fallback How to fix
+__label__remind_at Remind me later
+__label__system_stats Network status
+__label__gpio_write 13 号引脚写 0
+__label__board_info 设备信息
+__label__files storage 里有哪些文件
+__label__fallback 给我讲个笑话
+__label__kv_store kv 读取
+__label__web_search 查 股票行情
+__label__remind_at Remind me in 10 minutes
+__label__kv_store 键值存储 删
+__label__fallback How are you
+__label__web_search Search for something
+__label__files List files in root
+__label__remind_at 稍后提醒我
+__label__get_time UTC 时间
+__label__remind_at 设闹钟 8 点
+__label__cron Cron next trigger
+__label__system_stats 设备健康
+__label__cron cron 0 0 * * * 下次执行时间
+__label__web_search 搜 天气预报
+__label__gpio_write 关一下灯
+__label__board_info 核心数
+__label__gpio_read 引脚 13 是高还是低
+__label__board_info 系统信息
+__label__remind_at 定时提醒
+__label__fetch_url 拉取 地址
+__label__system_stats WiFi 是否连接
+__label__web_search 网上查一下
+__label__get_time 几点了呀
+__label__system_stats Storage usage
+__label__gpio_write pin 2 高
+__label__remind_at 到时间提醒我
+__label__remind_at 5 分钟后提醒
+__label__fetch_url 抓取 网址
+__label__fallback 分析这段文字
+__label__files 根目录下有什么
+__label__fallback 啥意思
+__label__gpio_write 写 13 脚为 0
+__label__gpio_read 读 2 号 GPIO
+__label__kv_store 键值存储 存
+__label__system_stats SPIFFS 用了多少
+__label__web_search 搜索一下
+__label__remind_at 5 分钟后叫我
+__label__fetch_url 拉取 https://example.com
+__label__board_info 板子型号
+__label__files 列出根目录
+__label__gpio_read 2 脚是 0 还是 1
+__label__get_time 给我查一下时间
+__label__board_info ESP32 型号
+__label__fetch_url GET 请求这个地址
+__label__board_info 板子型号是多少
+__label__get_time 时间
+__label__web_search Find information about
+__label__fetch_url Read url content

@@ -1,0 +1,59 @@
+__label__get_time 现在几点了
+__label__get_time 几点了呀
+__label__get_time What time is it now
+__label__get_time 当前时刻
+__label__get_time 今天星期几
+__label__board_info 查板子型号
+__label__board_info 板子型号是多少
+__label__board_info 什么芯片
+__label__board_info Get board info
+__label__system_stats WiFi 连着吗
+__label__system_stats 存储还剩多少
+__label__system_stats 网络通吗
+__label__gpio_write 开灯
+__label__gpio_write 关灯
+__label__gpio_write 把 2 号脚拉高
+__label__gpio_write Turn on the light
+__label__gpio_read 读一下 2 号引脚
+__label__gpio_read pin 13 状态
+__label__web_search 搜 北京明天天气
+__label__web_search 搜索 fastText
+__label__web_search Search the web
+__label__files 列出根目录
+__label__files 读一下 config.json
+__label__files List files in root
+__label__remind_at 十分钟后提醒我喝水
+__label__remind_at 明天 9 点提醒开会
+__label__remind_at Remind me in 10 minutes
+__label__remind_at 5 分钟后提醒我
+__label__fallback 你好啊
+__label__fallback 讲个笑话
+__label__fallback 你是谁
+__label__fallback 随便聊聊
+__label__fallback hello
+__label__cron 下次触发时间
+__label__cron 解析 0 9 * * 1-5
+__label__fetch_url 拉取这个链接
+__label__fetch_url Fetch URL
+__label__kv_store 读取 key theme
+__label__kv_store 列出所有 key
+__label__get_time 现在什么时候了
+__label__get_time 报时
+__label__board_info 看板子信息
+__label__board_info 设备型号
+__label__system_stats WiFi 连上了吗
+__label__gpio_write 打开灯
+__label__gpio_write 关闭灯
+__label__web_search 网上查一下
+__label__files storage 里有什么
+__label__remind_at 设个闹钟
+__label__fallback 你能做什么
+__label__fallback 写一首诗
+__label__get_time 现在日期
+__label__board_info 运行多久了
+__label__remind_at 到点提醒我
+__label__fallback 解释一下
+__label__get_time 时间
+__label__web_search 查一下 某某
+__label__files 列出文件
+__label__remind_at 10 分钟后叫我

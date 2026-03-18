@@ -2,7 +2,7 @@
 //! Four-dimensional admission: inbound/outbound/LLM/tool, coordinated via unified resource snapshot.
 
 use crate::constants::{
-    LOW_MEM_DEFER_SLEEP_MS, TLS_ADMISSION_MIN_INTERNAL_BYTES,
+    LOW_MEM_DEFER_SLEEP_MS, OUTBOUND_DEFER_DELAY_MS, TLS_ADMISSION_MIN_INTERNAL_BYTES,
     TLS_ADMISSION_MIN_LARGEST_BLOCK_BYTES,
 };
 use std::sync::atomic::Ordering;
@@ -32,10 +32,6 @@ pub enum ToolDecision {
     Allow,
     Deny { reason: &'static str },
 }
-
-/// 需要网络的工具（Critical 压力下拒绝）。
-/// Tools that require network (denied under Critical pressure).
-const NETWORK_TOOLS: &[&str] = &["web_search", "http_post", "fetch_url", "analyze_image"];
 
 /// agent loop 收到消息后、处理前调用。
 /// Called by agent loop after receiving a message, before processing.
@@ -93,15 +89,15 @@ pub fn can_call_llm(state: &OrchestratorState) -> LlmDecision {
     }
 }
 
-/// agent 准备执行工具前调用。
-/// Called by agent before executing a tool.
-pub fn can_execute_tool(state: &OrchestratorState, tool_name: &str) -> ToolDecision {
+/// agent 准备执行工具前调用；`requires_network` 由调用方从 ToolRegistry 推导。
+/// Called by agent before executing a tool; `requires_network` is derived from ToolRegistry by the caller.
+pub fn can_execute_tool(state: &OrchestratorState, _tool_name: &str, requires_network: bool) -> ToolDecision {
     let pressure =
         PressureLevel::from_byte(state.pressure_level.load(Ordering::Relaxed));
 
     match pressure {
         PressureLevel::Critical => {
-            if NETWORK_TOOLS.contains(&tool_name) {
+            if requires_network {
                 ToolDecision::Deny {
                     reason: "critical_no_network_tools",
                 }
@@ -110,7 +106,7 @@ pub fn can_execute_tool(state: &OrchestratorState, tool_name: &str) -> ToolDecis
             }
         }
         PressureLevel::Cautious => {
-            if NETWORK_TOOLS.contains(&tool_name) {
+            if requires_network {
                 let internal = state.heap_free_internal.load(Ordering::Relaxed);
                 if internal < TLS_ADMISSION_MIN_INTERNAL_BYTES as u32 {
                     return ToolDecision::Deny {
@@ -121,5 +117,17 @@ pub fn can_execute_tool(state: &OrchestratorState, tool_name: &str) -> ToolDecis
             ToolDecision::Allow
         }
         PressureLevel::Normal => ToolDecision::Allow,
+    }
+}
+
+/// dispatch 发送前调用。出站消息已消耗 LLM 计算资源，优先 Defer 而非 Reject。
+/// Called by dispatch before sending. Outbound messages already consumed LLM compute; prefer Defer over Reject.
+pub fn should_accept_outbound(state: &OrchestratorState, _channel: &str) -> AdmissionDecision {
+    let pressure = PressureLevel::from_byte(state.pressure_level.load(Ordering::Relaxed));
+    match pressure {
+        PressureLevel::Critical => AdmissionDecision::Defer {
+            delay_ms: OUTBOUND_DEFER_DELAY_MS,
+        },
+        PressureLevel::Cautious | PressureLevel::Normal => AdmissionDecision::Accept,
     }
 }

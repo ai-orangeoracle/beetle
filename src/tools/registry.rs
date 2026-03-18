@@ -30,6 +30,12 @@ impl ToolRegistry {
         self.tools.get(name).map(|b| b.as_ref())
     }
 
+    /// 该工具是否需要网络（从 Tool trait 推导）。未注册工具返回 false。
+    /// Whether the named tool requires network (derived from Tool trait). Returns false for unknown tools.
+    pub fn is_network_tool(&self, name: &str) -> bool {
+        self.tools.get(name).is_some_and(|t| t.requires_network())
+    }
+
     /// 生成供 LLM API 使用的 tool specs，总描述长度不超过 max_total_len（字符数）。
     /// 超限时从尾部丢弃工具。
     pub fn tool_specs_for_api(&self, max_total_len: usize) -> Vec<LlmToolSpec> {

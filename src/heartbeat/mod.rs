@@ -89,6 +89,13 @@ pub fn run_heartbeat_loop_with_tasks(
                 }
             }
 
+            // Session/storage metrics: collect every SESSION_METRICS_INTERVAL_ROUNDS rounds.
+            if round % crate::constants::SESSION_METRICS_INTERVAL_ROUNDS == 0 {
+                let sess_count = session_store.list_chat_ids().map(|v| v.len() as u32).unwrap_or(0);
+                let (s_used, s_total) = storage_usage_kb();
+                crate::orchestrator::update_session_storage(sess_count, s_used, s_total);
+            }
+
             // Update queue depth snapshot for pressure computation.
             let in_d = inbound_depth.load(std::sync::atomic::Ordering::Relaxed) as u32;
             let out_d = outbound_depth.load(std::sync::atomic::Ordering::Relaxed) as u32;
@@ -153,4 +160,19 @@ pub fn run_heartbeat_loop_with_tasks(
         }
     });
     log::info!("[{}] heartbeat loop with tasks started (interval {}s)", TAG, interval_secs);
+}
+
+/// 存储用量（KB）。ESP32 读 SPIFFS，host 返回 (0, 0)。
+/// Storage usage in KB. ESP32 reads SPIFFS, host returns (0, 0).
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+fn storage_usage_kb() -> (u32, u32) {
+    match crate::platform::spiffs_usage() {
+        Some((total, used)) => ((used / 1024) as u32, (total / 1024) as u32),
+        None => (0, 0),
+    }
+}
+
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+fn storage_usage_kb() -> (u32, u32) {
+    (0, 0)
 }

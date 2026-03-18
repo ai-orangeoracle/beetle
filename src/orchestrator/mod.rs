@@ -140,14 +140,28 @@ pub fn update_queue_depth(inbound: u32, outbound: u32) {
     STATE.outbound_depth.store(outbound, std::sync::atomic::Ordering::Relaxed);
 }
 
+/// 更新会话与存储指标（由 heartbeat 定期调用）。
+/// Update session & storage metrics (called periodically by heartbeat).
+pub fn update_session_storage(session_count: u32, storage_used_kb: u32, storage_total_kb: u32) {
+    STATE.session_count.store(session_count, std::sync::atomic::Ordering::Relaxed);
+    STATE.storage_used_kb.store(storage_used_kb, std::sync::atomic::Ordering::Relaxed);
+    STATE.storage_total_kb.store(storage_total_kb, std::sync::atomic::Ordering::Relaxed);
+}
+
 /// LLM 调用门控。
 pub fn can_call_llm_pub() -> LlmDecision {
     admission::can_call_llm(&STATE)
 }
 
 /// 工具执行门控。
-pub fn can_execute_tool_pub(tool_name: &str) -> ToolDecision {
-    admission::can_execute_tool(&STATE, tool_name)
+pub fn can_execute_tool_pub(tool_name: &str, requires_network: bool) -> ToolDecision {
+    admission::can_execute_tool(&STATE, tool_name, requires_network)
+}
+
+/// 出站门禁决策。
+/// Outbound admission decision.
+pub fn should_accept_outbound_pub(channel: &str) -> AdmissionDecision {
+    admission::should_accept_outbound(&STATE, channel)
 }
 
 /// 启动时打印 TLS 准入基线。

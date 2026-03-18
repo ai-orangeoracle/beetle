@@ -144,6 +144,14 @@ pub fn run_dispatch(outbound_rx: OutboundRx, sinks: Arc<ChannelSinks>) {
             continue;
         }
         if let Some(sink) = sinks.get(&msg.channel) {
+            // 出站门禁：Critical 压力下延迟，让堆有恢复时间
+            // Outbound admission: defer under Critical pressure to allow heap recovery
+            if let crate::orchestrator::AdmissionDecision::Defer { delay_ms } =
+                crate::orchestrator::should_accept_outbound_pub(&msg.channel)
+            {
+                log::info!("[{}] outbound deferred {}ms (pressure)", TAG, delay_ms);
+                std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+            }
             let mut last_err = None;
             for attempt in 0..SEND_RETRY {
                 if attempt > 0 {

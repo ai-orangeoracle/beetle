@@ -1,0 +1,59 @@
+板子信息
+设备信息
+什么芯片
+芯片型号
+板型
+board info
+设备型号
+运行多久了
+IDF 版本
+堆内存
+开发板型号
+什么板子
+芯片是什么
+CPU 型号
+核心数
+ESP32 型号
+板子型号
+系统信息
+硬件信息
+设备型号是什么
+运行了多久
+uptime
+板载信息
+Board information
+Device info
+Chip model
+What board is this
+ESP chip type
+Free heap
+Heap size
+IDF version
+运行时间
+板子类型
+芯片类型
+多少核
+内存多少
+板载芯片
+开发板类型
+Get board info
+Show device info
+硬件型号
+固件跑在什么板上
+什么开发板
+板子啥型号
+查板子型号
+查一下板子型号
+看板子型号
+板子型号是多少
+查设备型号
+看看板子信息
+查板型
+板子什么型号
+查开发板型号
+What is the board model
+Get device model
+板子型号
+查芯片型号
+看设备信息
+看板子信息

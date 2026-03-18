@@ -25,6 +25,9 @@ impl Tool for FetchUrlTool {
             "required": ["url"]
         })
     }
+    fn requires_network(&self) -> bool {
+        true
+    }
     fn execute(&self, args: &str, ctx: &mut dyn ToolContext) -> Result<String> {
         let m = parse_tool_args(args, "tool_fetch_url")?;
         let url = m

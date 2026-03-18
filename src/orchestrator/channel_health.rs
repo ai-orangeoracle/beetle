@@ -92,3 +92,22 @@ pub fn is_channel_healthy_by_index(state: &OrchestratorState, idx: usize) -> boo
     let last = slot.last_failure_epoch_secs.load(Ordering::Relaxed);
     uptime_secs().saturating_sub(last) >= CHANNEL_FAIL_COOLDOWN_SECS as u32
 }
+
+/// 构建单通道健康快照（用于 ResourceSnapshot 序列化）。
+/// Build per-channel health snapshot for ResourceSnapshot serialization.
+pub fn snapshot_by_index(state: &OrchestratorState, idx: usize) -> super::state::ChannelHealthSnapshot {
+    let slot = &state.channel_health[idx];
+    let consecutive_failures = slot.consecutive_failures.load(Ordering::Relaxed);
+    let healthy = if consecutive_failures < CHANNEL_FAIL_THRESHOLD {
+        true
+    } else {
+        let last = slot.last_failure_epoch_secs.load(Ordering::Relaxed);
+        uptime_secs().saturating_sub(last) >= CHANNEL_FAIL_COOLDOWN_SECS as u32
+    };
+    super::state::ChannelHealthSnapshot {
+        consecutive_failures,
+        total_failures: slot.total_failures.load(Ordering::Relaxed),
+        total_successes: slot.total_successes.load(Ordering::Relaxed),
+        healthy,
+    }
+}

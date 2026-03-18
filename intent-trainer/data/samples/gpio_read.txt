@@ -1,0 +1,32 @@
+读一下 2 号引脚
+GPIO 2 的电平
+引脚 13 是高还是低
+读 gpio 2
+pin 13 状态
+看一下 2 脚
+读引脚 2
+2 脚电平
+13 号脚是高是低
+读取 GPIO 2
+读取引脚 13
+2 号脚现在多少
+13 脚电平
+读一下 2 脚
+GPIO 13 状态
+pin 2 读一下
+读 2 号 GPIO
+引脚 2 的电压
+Read GPIO 2
+Read pin 13
+What is the level of pin 2
+GPIO 2 level
+Pin 13 high or low
+读 13 脚
+2 脚是 0 还是 1
+读取 2 号引脚电平
+13 号引脚状态
+get gpio 2
+get pin 13
+2 号引脚当前电平
+读 2 和 13 脚
+读取 2 脚状态

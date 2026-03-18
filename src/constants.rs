@@ -85,3 +85,11 @@ pub const KV_STORE_MAX_VALUE_LEN: usize = 512;
 pub const SESSION_GC_MAX_AGE_SECS: u64 = 604_800;
 /// 会话 GC：每 N 轮 heartbeat 执行一次（~50 分钟 @ 30s 间隔）。
 pub const SESSION_GC_INTERVAL_ROUNDS: u32 = 100;
+
+/// 会话/存储指标采集频率：每 N 轮 heartbeat 执行一次（~5 分钟 @ 30s 间隔）。
+/// Session/storage metrics collection interval (heartbeat rounds).
+pub const SESSION_METRICS_INTERVAL_ROUNDS: u32 = 10;
+
+/// 出站门禁 Critical 压力时延迟毫秒数。
+/// Outbound admission defer delay under Critical pressure.
+pub const OUTBOUND_DEFER_DELAY_MS: u64 = 2000;
