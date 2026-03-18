@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/assets/beetle-logo.svg" alt="甲虫" width="64" height="64" />
+</p>
+
 # Beetle（甲虫）
 
 [![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE)
@@ -94,7 +98,7 @@ cargo build --release
 ```
 
 - **Target**：默认 `xtensa-esp32s3-espidf`；板型由 `BOARD` 与 `board_presets.toml` 决定。
-- **Features**：`config_api`（默认）、`telegram`、`feishu`（默认）、`websocket`、`cli`、`ota`、`gpio`。  
+- **Features**：`config_api`（默认）、`telegram`、`feishu`（默认）、`websocket`、`cli`、`ota`。  
   示例：`cargo build --release --features cli,ota`
 
 烧录与串口：`--flash` 才烧录；`./build.sh clean` 清理；`--no-monitor` 不打开串口监控。指定串口：`ESPFLASH_PORT=/dev/cu.usbserial-xxx` 或 `COM3`。连接失败时检查 USB 线/口、板子进入下载模式（按住 BOOT 短按 RESET），脚本会在 erase/flash 失败时打印诊断提示。
@@ -139,7 +143,7 @@ cargo build --release
 | 多通道统一 | 飞书 / 钉钉 / 企微 / QQ 频道 / Telegram / WebSocket 同队列、同一 Agent |
 | 浏览器配网 | 热点 Beetle → 192.168.4.1；已连 WiFi → http://beetle.local（mDNS），配对码保护写操作 |
 | Rust 全栈 | 类型安全、统一错误与资源上界；新通道/工具/LLM 实现 trait 即注册 |
-| 记忆与工具 | 长期记忆、会话摘要、到点提醒；GetTime、Cron、Files、WebSearch、AnalyzeImage、FetchUrl、HttpPost、RemindAt、KvStore、UpdateSessionSummary；**board_info** 查设备状态（芯片、堆、运行时间、压力、WiFi、SPIFFS）；Skills 注入系统提示。可选：GpioRead、GpioWrite（feature `gpio`） |
+| 记忆与工具 | 长期记忆、会话摘要、到点提醒；GetTime、Cron、Files、WebSearch、AnalyzeImage、FetchUrl、HttpPost、RemindAt、KvStore、UpdateSessionSummary；**board_info** 查设备状态（芯片、堆、运行时间、压力、WiFi、SPIFFS）；**device_control** 按 config/hardware.json 控制 GPIO/PWM/ADC/蜂鸣器等；Skills 注入系统提示 |
 | 资源与健康 | 编排器：堆/队列压力、HTTP 准入、通道熔断；健康与资源快照通过 API 暴露 |
 
 ---
@@ -160,6 +164,7 @@ cargo build --release
 | [配置 API 契约](docs/zh-cn/config-api.md) | HTTP API：配对、配置分段、健康、OTA、webhook |
 | [Agent 工具说明](docs/zh-cn/tools.md) | 面向用户：Agent 可用工具说明（get_time、web_search、board_info 等） |
 | [硬件与资源](docs/zh-cn/hardware.md) | 板型、内存、PSRAM、看门狗、编译选项、排错 |
+| [硬件设备配置与 LLM 驱动设计](docs/zh-cn/hardware-device-config.md) | 里程碑设计：JSON 配置即用、device_control 工具、GPIO/PWM/ADC/蜂鸣器 |
 | [架构概要](docs/zh-cn/architecture.md) | 模块划分、数据流、扩展方式 |
 
 ---

@@ -13,7 +13,7 @@
 ## 配对码与鉴权
 
 - **未激活**：NVS 中无有效 6 位配对码。仅 **GET /config**、**GET /pairing**、**GET /api/pairing_code**、**POST /api/pairing_code**（仅用于首次设置）及所有 **OPTIONS** 可访问，其余返回 401 `{"error":"请先设置配对码"}`。前端应引导用户访问 `/pairing` 设置配对码。
-- **已激活**：用户已通过 **POST /api/pairing_code** 设置过 6 位码。**GET 类**接口（GET /、GET /api/config、health、diagnose、sessions、memory/status、skills、soul、user）**不需**带配对码。**写操作**（POST /api/config/wifi、/api/config/llm、/api/config/channels、/api/config/system、/api/restart、/api/config_reset、/api/soul、/api/user、/api/skills、/api/skills/import、/api/webhook、/api/ota，DELETE /api/skills）必须在请求中携带正确码，否则 401 `{"error":"配对码错误"}`。
+- **已激活**：用户已通过 **POST /api/pairing_code** 设置过 6 位码。**GET 类**接口（GET /、GET /api/config、health、diagnose、sessions、memory/status、skills、soul、user）**不需**带配对码。**写操作**（POST /api/config/wifi、/api/config/llm、/api/config/channels、/api/config/system、/api/config/hardware、/api/restart、/api/config_reset、/api/soul、/api/user、/api/skills、/api/skills/import、/api/webhook、/api/ota，DELETE /api/skills）必须在请求中携带正确码，否则 401 `{"error":"配对码错误"}`。
 - **携带方式**：Query 参数 `?code=<6位码>` 或 Header `X-Pairing-Code: <6位码>`。
 - **恢复出厂**：**POST /api/config_reset** 须带正确配对码；成功后清除配置并清除配对码，设备回到未激活状态。
 
@@ -47,7 +47,9 @@
       "POST /api/skills/import",
       "POST /api/restart",
       "POST /api/config_reset",
-      "POST /api/webhook"
+      "POST /api/webhook",
+      "GET /api/config/hardware",
+      "POST /api/config/hardware"
     ]
   }
   ```
@@ -73,7 +75,7 @@
 
 ## 配置读写
 
-**存储策略**：NVS 仅存 6 个小键（WiFi SSID/密码、代理、会话条数、群组触发、界面语言）；LLM 多源与通道配置存 SPIFFS（`config/llm.json`、`config/channels.json`），技能启用/顺序存 `config/skills_meta.json`。GET /api/config 合并 NVS 与 SPIFFS 后返回完整配置。
+**存储策略**：NVS 仅存 6 个小键（WiFi SSID/密码、代理、会话条数、群组触发、界面语言）；LLM 多源与通道配置存 SPIFFS（`config/llm.json`、`config/channels.json`），硬件设备配置存 `config/hardware.json`，技能启用/顺序存 `config/skills_meta.json`。GET /api/config 合并 NVS 与 SPIFFS 后返回完整配置。
 
 ### GET /api/wifi/scan
 
@@ -114,6 +116,40 @@
 - **校验**：仅本段——wifi 字段长度 ≤ 64；`proxy_url` 为空或形如 `http://host:port`；`session_max_messages`、`tg_group_activation` 同上。
 - **响应**：成功 200 `{"ok": true}`；校验失败 400。
 - **说明**：WiFi 写入后需重启生效。
+
+### GET /api/config/hardware
+
+- **用途**：获取当前硬件设备配置段（`config/hardware.json` 内容）。
+- **响应**：200，JSON 为 `HardwareSegment`：`{ "hardware_devices": [...] }`。文件不存在时返回 `{ "hardware_devices": [] }`。
+- **说明**：GET 返回文件原始内容。若启动时该校验未通过，运行时使用空设备列表，且 `load_errors` 会包含 `hardware_validation_failed`。
+
+### POST /api/config/hardware
+
+- **用途**：写入硬件设备配置段到 SPIFFS（`config/hardware.json`）；请求体为 segment 全量，后端校验并写入。重启后生效。重启后加载时若校验失败，`load_errors` 将含 `hardware_validation_failed`；完整校验规则见 [硬件设备配置与 LLM 驱动设计](hardware-device-config.md)。
+- **请求**：`Content-Type: application/json`，Body 为 `HardwareSegment`：
+  ```json
+  {
+    "hardware_devices": [
+      {
+        "id": "板载LED",
+        "device_type": "gpio_out",
+        "pins": { "pin": 2 },
+        "what": "板载指示灯，可开关",
+        "how": "传 value：1=亮，0=灭"
+      }
+    ]
+  }
+  ```
+  每项 `DeviceEntry` 含 `id`、`device_type`、`pins`、`what`、`how`、可选 `options`。
+- **校验**（仅本段）：
+  - 设备总数 ≤ 8
+  - `id` 非空且 ≤ 32 字节，不得重复
+  - `device_type` 须为 `gpio_out` / `gpio_in` / `pwm_out` / `adc_in` / `buzzer` 之一
+  - `what` ≤ 128 字节，`how` ≤ 256 字节
+  - `pins` 须含 `"pin"` 键；引脚值 1–48，不得为 strapping 引脚（0, 3, 45, 46），不得跨设备冲突
+  - `adc_in` 引脚须在 ADC1 范围（GPIO 1–10）
+  - `pwm_out` 设备总数 ≤ 4；`options.frequency_hz` 若存在须在 1–40000
+- **响应**：成功 200 `{"ok": true}`；校验失败 400。
 
 ### POST /api/config/wifi
 
@@ -264,7 +300,7 @@
 
 ### POST /api/config_reset
 
-- **用途**：恢复出厂（清空 NVS 配置区并删除 SPIFFS 上的 `config/llm.json`、`config/channels.json`、`config/skills_meta.json`），与 CLI `config_reset yes` 等价。
+- **用途**：恢复出厂（清空 NVS 配置区并删除 SPIFFS 上的 `config/llm.json`、`config/channels.json`、`config/hardware.json`、`config/skills_meta.json`），与 CLI `config_reset yes` 等价。
 - **响应**：成功 200，`{"ok": true}`；失败 500，`{"error": "reset failed"}`。
 - **说明**：调用后建议用户重启设备，重启后 `AppConfig::load()` 仅来自环境变量；NVS 仅保留 6 个小键（wifi、proxy、session、tg_group、locale 等），其余配置存 SPIFFS。
 

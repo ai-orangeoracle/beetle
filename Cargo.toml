@@ -47,7 +47,6 @@ feishu = ["prost", "bytes"]  # 通道核心功能，默认开启
 websocket = []
 cli = []
 ota = []
-gpio = []
 
 [profile.release]
 opt-level = "s"

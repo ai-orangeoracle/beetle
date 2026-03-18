@@ -172,6 +172,10 @@ pub struct AppConfig {
     #[serde(default)]
     pub llm_stream: bool,
 
+    /// 硬件设备配置（从 SPIFFS config/hardware.json 加载），不序列化到 NVS。
+    #[serde(skip, default)]
+    pub hardware_devices: Vec<DeviceEntry>,
+
     /// 加载过程中产生的可观测错误（NVS/SPIFFS/JSON 解析），仅 load() 内写入，不序列化。
     #[serde(skip, default)]
     pub load_errors: Option<Vec<String>>,
@@ -282,6 +286,7 @@ impl AppConfig {
             llm_stream: option_env!("BEETLE_LLM_STREAM")
                 .map(|s| s == "1" || s.eq_ignore_ascii_case("true"))
                 .unwrap_or(false),
+            hardware_devices: vec![],
             load_errors: None,
         }
     }
@@ -348,6 +353,16 @@ impl AppConfig {
                 }
                 Err(_) => {
                     load_errors.push("spiffs_channels_read_error".into());
+                }
+            }
+            match r.read_config_file("config/hardware.json") {
+                Ok(Some(b)) => {
+                    let s = String::from_utf8_lossy(&b);
+                    c.merge_hardware_from_json(&s, &mut load_errors);
+                }
+                Ok(None) => {}
+                Err(_) => {
+                    load_errors.push("spiffs_hardware_read_error".into());
                 }
             }
         }
@@ -419,6 +434,25 @@ impl AppConfig {
             Err(e) => {
                 log::warn!("[config] merge_channels_from_json parse failed: {}", e);
                 errors.push("channels_json_invalid".into());
+            }
+        }
+    }
+
+    /// 从 SPIFFS 读到的 hardware.json 字符串合并到当前 config（仅覆盖硬件设备列表）。
+    /// 解析成功后校验；校验失败则不覆盖、保留空列表，并记录 hardware_validation_failed。
+    pub fn merge_hardware_from_json(&mut self, json: &str, errors: &mut Vec<String>) {
+        match serde_json::from_str::<HardwareSegment>(json) {
+            Ok(seg) => {
+                if let Err(e) = validate_hardware_segment(&seg) {
+                    log::warn!("[config] merge_hardware_from_json validation failed: {}", e);
+                    errors.push("hardware_validation_failed".into());
+                    return;
+                }
+                self.hardware_devices = seg.hardware_devices;
+            }
+            Err(e) => {
+                log::warn!("[config] merge_hardware_from_json parse failed: {}", e);
+                errors.push("hardware_json_invalid".into());
             }
         }
     }
@@ -781,6 +815,42 @@ pub struct SystemSegment {
     pub locale: Option<String>,
 }
 
+// ── Hardware device config constants ──
+const MAX_HARDWARE_DEVICES: usize = 8;
+const MAX_PWM_DEVICES: usize = 4;
+const HARDWARE_ID_MAX_LEN: usize = 32;
+const HARDWARE_WHAT_MAX_LEN: usize = 128;
+const HARDWARE_HOW_MAX_LEN: usize = 256;
+const HARDWARE_PIN_MIN: i32 = 1;
+const HARDWARE_PIN_MAX: i32 = 48;
+const HARDWARE_FORBIDDEN_PINS: [i32; 4] = [0, 3, 45, 46]; // ESP32-S3 strapping
+const HARDWARE_ADC1_PINS: std::ops::RangeInclusive<i32> = 1..=10;
+const HARDWARE_PWM_FREQ_MIN: u32 = 1;
+const HARDWARE_PWM_FREQ_MAX: u32 = 40_000;
+const KNOWN_DEVICE_TYPES: [&str; 5] = ["gpio_out", "gpio_in", "pwm_out", "adc_in", "buzzer"];
+
+/// 引脚配置：键为引脚角色（如 "pin"），值为 GPIO 编号。
+pub type PinConfig = std::collections::HashMap<String, i32>;
+
+/// 单个硬件设备条目。
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DeviceEntry {
+    pub id: String,
+    pub device_type: String,
+    pub pins: PinConfig,
+    pub what: String,
+    pub how: String,
+    #[serde(default)]
+    pub options: serde_json::Value,
+}
+
+/// POST /api/config/hardware 请求体；硬件设备列表。
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct HardwareSegment {
+    #[serde(default)]
+    pub hardware_devices: Vec<DeviceEntry>,
+}
+
 /// 私有：校验 llm_sources 非空、字段长度、router/worker 下标。供 from_json_and_validate 与 save_llm_segment 复用。
 fn validate_llm_sources(
     sources: &[LlmSource],
@@ -896,6 +966,124 @@ fn validate_system_segment_fields(seg: &SystemSegment) -> Result<()> {
     Ok(())
 }
 
+/// 私有：校验 HardwareSegment 全部约束（设备数、ID、类型、引脚范围/冲突、PWM 频率等）。
+fn validate_hardware_segment(seg: &HardwareSegment) -> Result<()> {
+    if seg.hardware_devices.len() > MAX_HARDWARE_DEVICES {
+        return Err(Error::config(
+            "hardware",
+            format!("hardware_devices count must be <= {}", MAX_HARDWARE_DEVICES),
+        ));
+    }
+    let mut seen_ids = std::collections::HashSet::new();
+    let mut seen_pins = std::collections::HashSet::new();
+    let mut pwm_count: usize = 0;
+    for (i, dev) in seg.hardware_devices.iter().enumerate() {
+        // id
+        if dev.id.is_empty() || dev.id.len() > HARDWARE_ID_MAX_LEN {
+            return Err(Error::config(
+                "hardware",
+                format!("hardware_devices[{}].id must be 1..={} chars", i, HARDWARE_ID_MAX_LEN),
+            ));
+        }
+        if !seen_ids.insert(&dev.id) {
+            return Err(Error::config(
+                "hardware",
+                format!("hardware_devices[{}].id '{}' is duplicated", i, dev.id),
+            ));
+        }
+        // device_type
+        if !KNOWN_DEVICE_TYPES.contains(&dev.device_type.as_str()) {
+            return Err(Error::config(
+                "hardware",
+                format!(
+                    "hardware_devices[{}].device_type '{}' is not one of {:?}",
+                    i, dev.device_type, KNOWN_DEVICE_TYPES
+                ),
+            ));
+        }
+        // what / how
+        if dev.what.len() > HARDWARE_WHAT_MAX_LEN {
+            return Err(Error::config(
+                "hardware",
+                format!("hardware_devices[{}].what length must be <= {}", i, HARDWARE_WHAT_MAX_LEN),
+            ));
+        }
+        if dev.how.len() > HARDWARE_HOW_MAX_LEN {
+            return Err(Error::config(
+                "hardware",
+                format!("hardware_devices[{}].how length must be <= {}", i, HARDWARE_HOW_MAX_LEN),
+            ));
+        }
+        // pins: must have "pin" key
+        let pin_val = dev.pins.get("pin").ok_or_else(|| {
+            Error::config(
+                "hardware",
+                format!("hardware_devices[{}].pins must have a \"pin\" key", i),
+            )
+        })?;
+        // validate all pin values
+        for (role, &pv) in &dev.pins {
+            if !(HARDWARE_PIN_MIN..=HARDWARE_PIN_MAX).contains(&pv) {
+                return Err(Error::config(
+                    "hardware",
+                    format!(
+                        "hardware_devices[{}].pins.{} = {} out of range {}..={}",
+                        i, role, pv, HARDWARE_PIN_MIN, HARDWARE_PIN_MAX
+                    ),
+                ));
+            }
+            if HARDWARE_FORBIDDEN_PINS.contains(&pv) {
+                return Err(Error::config(
+                    "hardware",
+                    format!(
+                        "hardware_devices[{}].pins.{} = {} is a forbidden strapping pin",
+                        i, role, pv
+                    ),
+                ));
+            }
+            if !seen_pins.insert(pv) {
+                return Err(Error::config(
+                    "hardware",
+                    format!("pin {} is used by multiple devices (conflict at devices[{}].pins.{})", pv, i, role),
+                ));
+            }
+        }
+        // adc_in: pin must be in ADC1 range
+        if dev.device_type == "adc_in" && !HARDWARE_ADC1_PINS.contains(pin_val) {
+            return Err(Error::config(
+                "hardware",
+                format!(
+                    "hardware_devices[{}] adc_in pin {} must be in ADC1 range {:?}",
+                    i, pin_val, HARDWARE_ADC1_PINS
+                ),
+            ));
+        }
+        // pwm_out count + frequency
+        if dev.device_type == "pwm_out" {
+            pwm_count += 1;
+            if let Some(freq) = dev.options.get("frequency_hz").and_then(|v| v.as_u64()) {
+                let freq = freq as u32;
+                if !(HARDWARE_PWM_FREQ_MIN..=HARDWARE_PWM_FREQ_MAX).contains(&freq) {
+                    return Err(Error::config(
+                        "hardware",
+                        format!(
+                            "hardware_devices[{}] pwm_out frequency_hz {} must be {}..={}",
+                            i, freq, HARDWARE_PWM_FREQ_MIN, HARDWARE_PWM_FREQ_MAX
+                        ),
+                    ));
+                }
+            }
+        }
+    }
+    if pwm_count > MAX_PWM_DEVICES {
+        return Err(Error::config(
+            "hardware",
+            format!("pwm_out device count {} exceeds max {}", pwm_count, MAX_PWM_DEVICES),
+        ));
+    }
+    Ok(())
+}
+
 /// 校验 LlmSegment 并写入 SPIFFS config/llm.json；body 即全量，不做合并。
 pub fn save_llm_segment(writer: &dyn ConfigFileStore, body: &str) -> Result<()> {
     let seg: LlmSegment =
@@ -950,6 +1138,17 @@ pub fn save_system_segment_to_nvs(store: &dyn ConfigStore, body: &str) -> Result
         }
     }
     store.write_strings(&pairs)?;
+    Ok(())
+}
+
+/// 校验 HardwareSegment 并写入 SPIFFS config/hardware.json；body 即全量，不做合并。
+pub fn save_hardware_segment(writer: &dyn ConfigFileStore, body: &str) -> Result<()> {
+    let seg: HardwareSegment =
+        serde_json::from_str(body).map_err(|e| Error::config("deserialize", e.to_string()))?;
+    validate_hardware_segment(&seg)?;
+    let json =
+        serde_json::to_string(&seg).map_err(|e| Error::config("serialize", e.to_string()))?;
+    writer.write_config_file("config/hardware.json", json.as_bytes())?;
     Ok(())
 }
 

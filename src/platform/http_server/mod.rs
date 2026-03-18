@@ -454,6 +454,38 @@ pub fn run(
         }
     );
 
+    // ── /api/config/hardware ──
+    let store_hw_get = std::sync::Arc::clone(&config_store);
+    let ctx_hw_get = Arc::clone(&ctx);
+    register!(
+        server,
+        "/api/config/hardware",
+        Method::Get,
+        move |req| -> HandlerResult { activated_get_json!(req, store_hw_get, ctx_hw_get, handlers::config::get_hardware_body) }
+    );
+    register!(
+        server,
+        "/api/config/hardware",
+        Method::Options,
+        |req| -> HandlerResult { resp_options!(req) }
+    );
+    let store_hw_post = std::sync::Arc::clone(&config_store);
+    let ctx_hw_post = Arc::clone(&ctx);
+    register!(
+        server,
+        "/api/config/hardware",
+        Method::Post,
+        move |mut req| -> HandlerResult {
+            if req.method() == Method::Options {
+                return resp_options!(req);
+            }
+            require_pairing_code!(req, store_hw_post);
+            let body = read_body_utf8!(req, POST_BODY_MAX_LEN, store_hw_post);
+            let r = handlers::config::post_hardware(ctx_hw_post.as_ref(), &body).map_err(to_io)?;
+            write_api_resp!(req, r)
+        }
+    );
+
     let ctx_wifi_scan = Arc::clone(&ctx);
     register!(
         server,

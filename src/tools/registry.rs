@@ -119,10 +119,10 @@ pub fn build_default_registry(
     registry.register(Box::new(super::BoardInfoTool));
     registry.register(Box::new(super::HttpPostTool));
     registry.register(Box::new(super::KvStoreTool));
-    #[cfg(feature = "gpio")]
-    {
-        registry.register(Box::new(super::GpioReadTool));
-        registry.register(Box::new(super::GpioWriteTool));
+    if !config.hardware_devices.is_empty() {
+        registry.register(Box::new(super::DeviceControlTool::new(
+            config.hardware_devices.clone(),
+        )));
     }
     registry
 }

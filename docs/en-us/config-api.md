@@ -13,7 +13,7 @@ The device firmware exposes only HTTP APIs and **does not** ship a built-in conf
 ## Pairing code and auth
 
 - **Not activated**: No valid 6-digit pairing code in NVS. Only **GET /config**, **GET /pairing**, **GET /api/pairing_code**, **POST /api/pairing_code** (for initial setup only), and all **OPTIONS** are allowed; all other requests return 401 `{"error":"Please set pairing code first"}`. The frontend should direct the user to `/pairing` to set the code.
-- **Activated**: The user has set a 6-digit code via **POST /api/pairing_code**. **Read-only** endpoints (GET /, GET /api/config, health, diagnose, sessions, memory/status, skills, soul, user) **do not** require the pairing code. **Write** operations (POST /api/config/wifi, /api/config/llm, /api/config/channels, /api/config/system, /api/restart, /api/config_reset, /api/soul, /api/user, /api/skills, /api/skills/import, /api/webhook, /api/ota; DELETE /api/skills) must include the correct code or return 401 `{"error":"Invalid pairing code"}`.
+- **Activated**: The user has set a 6-digit code via **POST /api/pairing_code**. **Read-only** endpoints (GET /, GET /api/config, health, diagnose, sessions, memory/status, skills, soul, user) **do not** require the pairing code. **Write** operations (POST /api/config/wifi, /api/config/llm, /api/config/channels, /api/config/system, /api/config/hardware, /api/restart, /api/config_reset, /api/soul, /api/user, /api/skills, /api/skills/import, /api/webhook, /api/ota; DELETE /api/skills) must include the correct code or return 401 `{"error":"Invalid pairing code"}`.
 - **How to send**: Query `?code=<6-digit>` or Header `X-Pairing-Code: <6-digit>`.
 - **Factory reset**: **POST /api/config_reset** requires the correct pairing code; on success it clears config and the pairing code, and the device returns to the not-activated state.
 
@@ -47,7 +47,9 @@ The device firmware exposes only HTTP APIs and **does not** ship a built-in conf
       "POST /api/skills/import",
       "POST /api/restart",
       "POST /api/config_reset",
-      "POST /api/webhook"
+      "POST /api/webhook",
+      "GET /api/config/hardware",
+      "POST /api/config/hardware"
     ]
   }
   ```
@@ -73,7 +75,7 @@ The device firmware exposes only HTTP APIs and **does not** ship a built-in conf
 
 ## Config read/write
 
-**Storage**: NVS holds only 6 small keys (WiFi SSID/password, proxy, session count, group trigger, UI locale). LLM multi-source and channel config are on SPIFFS (`config/llm.json`, `config/channels.json`); skill enable/order on `config/skills_meta.json`. GET /api/config merges NVS and SPIFFS and returns the full config.
+**Storage**: NVS holds only 6 small keys (WiFi SSID/password, proxy, session count, group trigger, UI locale). LLM multi-source and channel config are on SPIFFS (`config/llm.json`, `config/channels.json`); hardware device config on `config/hardware.json`; skill enable/order on `config/skills_meta.json`. GET /api/config merges NVS and SPIFFS and returns the full config.
 
 ### GET /api/wifi/scan
 
@@ -114,6 +116,40 @@ The device firmware exposes only HTTP APIs and **does not** ship a built-in conf
 - **Validation**: This segment only—wifi field length ≤ 64; `proxy_url` empty or like `http://host:port`; `session_max_messages`, `tg_group_activation` as above.
 - **Response**: Success 200 `{"ok": true}`; validation failure 400.
 - **Note**: WiFi changes take effect after reboot.
+
+### GET /api/config/hardware
+
+- **Purpose**: Get current hardware device config segment (`config/hardware.json` content).
+- **Response**: 200, JSON is `HardwareSegment`: `{ "hardware_devices": [...] }`. Returns `{ "hardware_devices": [] }` when the file does not exist.
+- **Note**: GET returns the raw file content. If validation failed at boot, the runtime uses an empty device list and `load_errors` will include `hardware_validation_failed`.
+
+### POST /api/config/hardware
+
+- **Purpose**: Write the hardware device config segment to SPIFFS (`config/hardware.json`); request body is the full segment; backend validates and writes. Takes effect after reboot. If validation fails when loading after reboot, `load_errors` will include `hardware_validation_failed`; full validation rules in [Hardware device config & LLM-driven control](hardware-device-config.md).
+- **Request**: `Content-Type: application/json`, Body is `HardwareSegment`:
+  ```json
+  {
+    "hardware_devices": [
+      {
+        "id": "onboard_led",
+        "device_type": "gpio_out",
+        "pins": { "pin": 2 },
+        "what": "Onboard LED indicator, toggleable",
+        "how": "Pass value: 1=on, 0=off"
+      }
+    ]
+  }
+  ```
+  Each `DeviceEntry` has `id`, `device_type`, `pins`, `what`, `how`, optional `options`.
+- **Validation** (this segment only):
+  - Total device count ≤ 8
+  - `id` non-empty, ≤ 32 bytes, must be unique
+  - `device_type` must be one of `gpio_out` / `gpio_in` / `pwm_out` / `adc_in` / `buzzer`
+  - `what` ≤ 128 bytes, `how` ≤ 256 bytes
+  - `pins` must have a `"pin"` key; pin value 1–48, must not be strapping pins (0, 3, 45, 46), must not conflict across devices
+  - `adc_in` pin must be in ADC1 range (GPIO 1–10)
+  - `pwm_out` device count ≤ 4; `options.frequency_hz` if present must be 1–40000
+- **Response**: Success 200 `{"ok": true}`; validation failure 400.
 
 ### POST /api/config/wifi
 
@@ -264,7 +300,7 @@ The device firmware exposes only HTTP APIs and **does not** ship a built-in conf
 
 ### POST /api/config_reset
 
-- **Purpose**: Factory reset (clear NVS config area and remove SPIFFS `config/llm.json`, `config/channels.json`, `config/skills_meta.json`); same as CLI `config_reset yes`.
+- **Purpose**: Factory reset (clear NVS config area and remove SPIFFS `config/llm.json`, `config/channels.json`, `config/hardware.json`, `config/skills_meta.json`); same as CLI `config_reset yes`.
 - **Response**: Success 200, `{"ok": true}`; failure 500, `{"error": "reset failed"}`.
 - **Note**: After calling, user should restart; after restart `AppConfig::load()` uses only env; NVS keeps the 6 small keys (wifi, proxy, session, tg_group, locale, etc.); the rest is on SPIFFS.
 

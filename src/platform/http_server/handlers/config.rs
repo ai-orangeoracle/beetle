@@ -1,4 +1,4 @@
-//! 配置 API：GET /api/config、POST /api/config/wifi、POST /api/config/llm、/channels、/system。
+//! 配置 API：GET /api/config、POST /api/config/wifi、POST /api/config/llm、/channels、/system、/hardware。
 
 use crate::config::{self, AppConfig};
 use crate::platform::http_server::common::{to_io, ApiResponse, WifiConfigPayload};
@@ -57,6 +57,27 @@ pub fn post_channels(ctx: &HandlerContext, body: &str) -> Result<ApiResponse, st
 pub fn post_system(ctx: &HandlerContext, body: &str) -> Result<ApiResponse, std::io::Error> {
     let locale = config::get_locale(ctx.config_store.as_ref());
     match config::save_system_segment_to_nvs(ctx.config_store.as_ref(), body) {
+        Ok(()) => Ok(ApiResponse::ok_200_json("{\"ok\":true}")),
+        Err(e) => Ok(ApiResponse::err_400(&user_message::from_error(&e, &locale))),
+    }
+}
+
+/// GET /api/config/hardware：返回 HardwareSegment JSON（文件不存在时返回空 devices）。
+pub fn get_hardware_body(ctx: &HandlerContext) -> Result<String, std::io::Error> {
+    match ctx.config_file_store.read_config_file("config/hardware.json") {
+        Ok(Some(b)) => {
+            let s = String::from_utf8_lossy(&b);
+            Ok(s.into_owned())
+        }
+        Ok(None) => Ok(r#"{"hardware_devices":[]}"#.to_string()),
+        Err(e) => Err(to_io(e.to_string())),
+    }
+}
+
+/// POST /api/config/hardware：校验并写入 HardwareSegment 到 SPIFFS config/hardware.json。
+pub fn post_hardware(ctx: &HandlerContext, body: &str) -> Result<ApiResponse, std::io::Error> {
+    let locale = config::get_locale(ctx.config_store.as_ref());
+    match config::save_hardware_segment(ctx.config_file_store.as_ref(), body) {
         Ok(()) => Ok(ApiResponse::ok_200_json("{\"ok\":true}")),
         Err(e) => Ok(ApiResponse::err_400(&user_message::from_error(&e, &locale))),
     }

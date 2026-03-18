@@ -42,6 +42,12 @@
 
 ---
 
+## 可配置硬件设备
+
+通过 `config/hardware.json` 可配置 GPIO 输出/输入、PWM、ADC、蜂鸣器等设备，由 `device_control` 工具供 LLM 调用。设计说明见 [硬件设备配置与 LLM 驱动设计](hardware-device-config.md)；配置方式与校验规则见 [配置 API - GET/POST /api/config/hardware](config-api.md)。
+
+---
+
 ## 已知问题与排错
 
 - **`esp_task_wdt_reset: task not found`**：发起 HTTP 的线程必须已注册到任务看门狗（TWDT）。主 Agent 线程、Feishu/QQ WSS 线程、Telegram 轮询线程在启动时均已调用 `register_current_task_to_task_wdt()`；若仍出现此错误，检查是否在新线程中直接使用 `EspHttpClient` 而未注册。

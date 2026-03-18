@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/assets/beetle-logo.svg" alt="Beetle" width="64" height="64" />
+</p>
+
 # Beetle
 
 [![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE)
@@ -94,7 +98,7 @@ cargo build --release
 ```
 
 - **Target**: Default `xtensa-esp32s3-espidf`; board type from `BOARD` and `board_presets.toml`.
-- **Features**: `config_api` (default), `telegram`, `feishu` (default), `websocket`, `cli`, `ota`, `gpio`.  
+- **Features**: `config_api` (default), `telegram`, `feishu` (default), `websocket`, `cli`, `ota`.  
   Example: `cargo build --release --features cli,ota`
 
 Flash: use `--flash` to flash; `./build.sh clean` to clean; `--no-monitor` to skip serial monitor. Set `ESPFLASH_PORT` to e.g. `/dev/cu.usbserial-xxx` or `COM3`. On connect failure: check USB cable/port; put board in download mode (hold BOOT, tap RESET); script prints diagnostics on erase/flash failure.
@@ -139,7 +143,7 @@ Full key names and validation: `src/config.rs`. Runtime config segments (LLM, ch
 | Unified channels | Feishu / DingTalk / WeCom / QQ Channel / Telegram / WebSocket, same queue, same Agent |
 | Browser provisioning | Hotspot Beetle → 192.168.4.1; after WiFi → http://beetle.local (mDNS), pairing code for writes |
 | Rust stack | Type-safe, unified errors and resource limits; new channel/tool/LLM via trait |
-| Memory & tools | Long-term memory, session summary, reminders; GetTime, Cron, Files, WebSearch, AnalyzeImage, FetchUrl, HttpPost, RemindAt, KvStore, UpdateSessionSummary; **board_info** for device status (chip, heap, uptime, pressure, WiFi, SPIFFS); Skills in system prompt. Optional: GpioRead, GpioWrite (feature `gpio`) |
+| Memory & tools | Long-term memory, session summary, reminders; GetTime, Cron, Files, WebSearch, AnalyzeImage, FetchUrl, HttpPost, RemindAt, KvStore, UpdateSessionSummary; **board_info** for device status (chip, heap, uptime, pressure, WiFi, SPIFFS); **device_control** for GPIO/PWM/ADC/buzzer per config/hardware.json; Skills in system prompt |
 | Resource & health | Orchestrator: heap/queue pressure, HTTP admission, channel circuit breaker; health and resource snapshot via API |
 
 ---
@@ -160,6 +164,7 @@ Full key names and validation: `src/config.rs`. Runtime config segments (LLM, ch
 | [Config API contract](docs/en-us/config-api.md) | HTTP API: pairing, config segments, health, OTA, webhook |
 | [Agent tools](docs/en-us/tools.md) | User-facing guide: what tools the Agent can use (get_time, web_search, board_info, etc.) |
 | [Hardware & resources](docs/en-us/hardware.md) | Boards, memory, PSRAM, watchdog, build options, troubleshooting |
+| [Hardware device config & LLM-driven control](docs/en-us/hardware-device-config.md) | Milestone design: JSON config–driven device_control tool for GPIO/PWM/ADC/buzzer |
 | [Architecture](docs/en-us/architecture.md) | Modules, data flow, extension |
 
 ---

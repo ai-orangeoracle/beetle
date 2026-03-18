@@ -42,6 +42,12 @@ Logs or CLI let you confirm memory usage is within expectations.
 
 ---
 
+## Configurable hardware devices
+
+GPIO output/input, PWM, ADC, buzzer, etc. can be configured via `config/hardware.json` and used by the LLM through the `device_control` tool. See [Hardware device config & LLM-driven control](hardware-device-config.md) for the design; [Config API – GET/POST /api/config/hardware](config-api.md) for usage and validation.
+
+---
+
 ## Known issues and troubleshooting
 
 - **`esp_task_wdt_reset: task not found`**: Any thread that performs HTTP must be registered with the task watchdog (TWDT). The main Agent thread, Feishu/QQ WSS threads, and Telegram poll thread call `register_current_task_to_task_wdt()` at startup. If you still see this, check for use of `EspHttpClient` in a new thread without registration.

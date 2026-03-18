@@ -48,7 +48,10 @@ pub use channels::{
 pub use channels::run_feishu_ws_loop;
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 pub use channels::run_qq_ws_loop;
-pub use config::{parse_allowed_chat_ids, LlmSource, AppConfig};
+pub use config::{
+    parse_allowed_chat_ids, LlmSource, AppConfig,
+    DeviceEntry, PinConfig, HardwareSegment, save_hardware_segment,
+};
 pub use error::{Error, Result};
 pub use llm::{
     AnthropicClient, FallbackLlmClient, LlmClient, LlmHttpClient, LlmResponse, Message,
@@ -62,8 +65,8 @@ pub use platform::{ConfigStore, Platform, PlatformHttpClient, SkillStorage};
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 pub use platform::Esp32Platform;
 pub use tools::{
-    CronTool, FetchUrlTool, FilesTool, GetTimeTool, HttpPostTool, KvStoreTool, RemindAtTool,
-    Tool, ToolContext, ToolRegistry, UpdateSessionSummaryTool, WebSearchTool,
+    CronTool, DeviceControlTool, FetchUrlTool, FilesTool, GetTimeTool, HttpPostTool, KvStoreTool,
+    RemindAtTool, Tool, ToolContext, ToolRegistry, UpdateSessionSummaryTool, WebSearchTool,
     build_default_registry,
 };
 

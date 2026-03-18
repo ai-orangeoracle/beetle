@@ -9,8 +9,8 @@ pub mod cron;
 pub mod fetch_url;
 pub mod files;
 pub mod get_time;
-#[cfg(feature = "gpio")]
-pub mod gpio;
+pub mod hardware;
+pub mod hardware_drivers;
 pub mod http_post;
 pub mod kv_store;
 pub mod remind_at;
@@ -23,8 +23,7 @@ pub use cron::CronTool;
 pub use fetch_url::FetchUrlTool;
 pub use files::FilesTool;
 pub use get_time::GetTimeTool;
-#[cfg(feature = "gpio")]
-pub use gpio::{GpioReadTool, GpioWriteTool};
+pub use hardware::DeviceControlTool;
 pub use http_post::HttpPostTool;
 pub use kv_store::KvStoreTool;
 pub use registry::{ToolRegistry, build_default_registry};
