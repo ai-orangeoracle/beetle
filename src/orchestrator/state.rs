@@ -48,6 +48,10 @@ pub struct OrchestratorState {
 
     // 通道健康（channel_health.rs 管理）—— 固定大小数组，无堆分配
     pub channel_health: [ChannelHealthSlot; MAX_CHANNELS],
+
+    // 队列深度（heartbeat 定期更新）
+    pub inbound_depth: AtomicU32,
+    pub outbound_depth: AtomicU32,
 }
 
 impl Default for OrchestratorState {
@@ -71,6 +75,8 @@ impl OrchestratorState {
                 ChannelHealthSlot::new(),
                 ChannelHealthSlot::new(),
             ],
+            inbound_depth: AtomicU32::new(0),
+            outbound_depth: AtomicU32::new(0),
         }
     }
 

@@ -7,6 +7,7 @@ use crate::util::truncate_content_to_max;
 use crate::error::Result;
 use crate::metrics;
 use std::collections::HashMap;
+use std::collections::VecDeque;
 use std::sync::mpsc;
 use std::sync::Arc;
 use std::time::Duration;
@@ -31,7 +32,7 @@ impl QueuedSink {
 impl MessageSink for QueuedSink {
     fn send(&self, chat_id: &str, content: &str) -> Result<()> {
         let content = truncate_content_to_max(content, MAX_CONTENT_LEN);
-        self.tx.try_send((chat_id.to_string(), content)).map_err(|e| crate::error::Error::Other {
+        self.tx.try_send((chat_id.to_string(), content.into_owned())).map_err(|e| crate::error::Error::Other {
             source: Box::new(e),
             stage: self.stage,
         })
@@ -88,7 +89,7 @@ const COOLDOWN_BUFFER_MAX: usize = 16;
 /// 单通道熔断冷却期内暂存消息，冷却结束后重放。
 pub fn run_dispatch(outbound_rx: OutboundRx, sinks: Arc<ChannelSinks>) {
     const TAG: &str = "channel_dispatch";
-    let mut cooldown_buffer: Vec<crate::bus::PcMsg> = Vec::new();
+    let mut cooldown_buffer: VecDeque<crate::bus::PcMsg> = VecDeque::new();
 
     while let Ok(msg) = outbound_rx.recv() {
         let content = truncate_content_to_max(&msg.content, MAX_CONTENT_LEN);
@@ -100,10 +101,10 @@ pub fn run_dispatch(outbound_rx: OutboundRx, sinks: Arc<ChannelSinks>) {
         let mut i = 0;
         while i < cooldown_buffer.len() {
             if !is_channel_in_cooldown(&cooldown_buffer[i].channel) {
-                let buffered = cooldown_buffer.swap_remove(i);
+                let buffered = cooldown_buffer.swap_remove_back(i).unwrap();
                 let bc = truncate_content_to_max(&buffered.content, MAX_CONTENT_LEN);
                 if let Some(sink) = sinks.get(&buffered.channel) {
-                    if sink.send(&buffered.chat_id, &bc).is_ok() {
+                    if sink.send(&buffered.chat_id, &*bc).is_ok() {
                         record_channel_ok(&buffered.channel);
                         metrics::record_dispatch_send(true);
                     } else {
@@ -119,15 +120,15 @@ pub fn run_dispatch(outbound_rx: OutboundRx, sinks: Arc<ChannelSinks>) {
 
         if is_channel_in_cooldown(&msg.channel) {
             if cooldown_buffer.len() < COOLDOWN_BUFFER_MAX {
-                cooldown_buffer.push(msg);
+                cooldown_buffer.push_back(msg);
             } else {
                 log::warn!(
                     "[{}] channel={} cooldown buffer full, dropping oldest",
                     TAG,
                     msg.channel
                 );
-                cooldown_buffer.remove(0);
-                cooldown_buffer.push(msg);
+                cooldown_buffer.pop_front();
+                cooldown_buffer.push_back(msg);
             }
             continue;
         }
@@ -137,7 +138,7 @@ pub fn run_dispatch(outbound_rx: OutboundRx, sinks: Arc<ChannelSinks>) {
                 if attempt > 0 {
                     std::thread::sleep(Duration::from_millis(SEND_RETRY_DELAY_MS));
                 }
-                match sink.send(&msg.chat_id, &content) {
+                match sink.send(&msg.chat_id, &*content) {
                     Ok(()) => {
                         last_err = None;
                         record_channel_ok(&msg.channel);

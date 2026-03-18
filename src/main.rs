@@ -221,7 +221,7 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
     beetle::cron::run_cron_loop(inbound_tx.clone(), beetle::cron::DEFAULT_CRON_INTERVAL_SECS);
     beetle::heartbeat::run_heartbeat_loop_with_tasks(VERSION, 30, inbound_tx.clone(), || {
         beetle::platform::read_heartbeat_file().unwrap_or_default()
-    });
+    }, Arc::clone(&inbound_depth), Arc::clone(&outbound_depth));
 
     beetle::memory::run_remind_loop(Arc::clone(&remind_at_store), inbound_tx.clone(), 60);
 

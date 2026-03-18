@@ -1,49 +1,54 @@
 //! 轻量工具，避免热路径堆分配；敏感信息脱敏供日志安全。
 //! Lightweight helpers; secret redaction for safe logging.
 
-/// 按字符边界截断内容至最多 max 个字符；供 agent 与 dispatch 统一使用。
-pub fn truncate_content_to_max(s: &str, max: usize) -> String {
-    if s.chars().count() <= max {
-        s.to_string()
-    } else {
-        s.chars().take(max).collect::<String>()
+/// 按字符边界截断内容至最多 max 个字符；不截断时零分配返回借用。
+/// Truncate to at most `max` chars; returns `Cow::Borrowed` (zero alloc) when no truncation needed.
+pub fn truncate_content_to_max(s: &str, max: usize) -> std::borrow::Cow<'_, str> {
+    // Fast path: ASCII-dominant messages where byte len ≤ max guarantees char count ≤ max.
+    if s.len() <= max {
+        return std::borrow::Cow::Borrowed(s);
+    }
+    // Slow path: find the byte offset of the max-th char boundary in a single pass.
+    match s.char_indices().nth(max) {
+        Some((byte_offset, _)) => std::borrow::Cow::Owned(s[..byte_offset].to_string()),
+        None => std::borrow::Cow::Borrowed(s), // fewer than max chars despite byte len > max
     }
 }
 
 /// 按 UTF-8 字符边界截断至最多 max_bytes 字节；若发生截断则末尾追加 "…"（3 字节）。保证返回值 len() <= max_bytes。
 pub fn truncate_to_byte_len(s: &str, max_bytes: usize) -> String {
+    if s.len() <= max_bytes {
+        return s.to_string();
+    }
     const ELLIPSIS: &str = "…";
     let cap = max_bytes.saturating_sub(ELLIPSIS.len());
-    let mut len = 0usize;
-    let mut out = String::new();
-    for c in s.chars() {
-        let n = c.len_utf8();
-        if len + n > cap {
-            break;
-        }
-        len += n;
-        out.push(c);
+    // Find the largest char-aligned position ≤ cap using is_char_boundary (O(1)~O(3)).
+    let mut end = cap;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
     }
-    if out.len() < s.len() {
-        out.push_str(ELLIPSIS);
-    }
+    let mut out = String::with_capacity(end + ELLIPSIS.len());
+    out.push_str(&s[..end]);
+    out.push_str(ELLIPSIS);
     out
 }
 
 /// URL 查询参数 percent-encode：保留字母数字与 -_.~，其余按 UTF-8 字节编码为 %XX。供 web_search 等使用。
 pub fn percent_encode_query(s: &str) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
     fn need_encode(b: u8) -> bool {
         matches!(b, b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~')
     }
-    let mut out = String::new();
-    for b in s.as_bytes() {
-        if need_encode(*b) {
-            out.push(*b as char);
-        } else if *b == b' ' {
+    let mut out = String::with_capacity(s.len());
+    for &b in s.as_bytes() {
+        if need_encode(b) {
+            out.push(b as char);
+        } else if b == b' ' {
             out.push_str("%20");
         } else {
             out.push('%');
-            out.push_str(&hex::encode(std::slice::from_ref(b)));
+            out.push(HEX[(b >> 4) as usize] as char);
+            out.push(HEX[(b & 0x0f) as usize] as char);
         }
     }
     out

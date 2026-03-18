@@ -11,6 +11,7 @@ pub mod pressure;
 pub mod state;
 
 use crate::error::Result;
+use std::sync::atomic::AtomicU32;
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
@@ -25,6 +26,10 @@ pub use state::ResourceSnapshot;
 static STATE: state::OrchestratorState = state::OrchestratorState::new();
 static TLS_PERMIT: Mutex<()> = Mutex::new(());
 static INITIALIZED: OnceLock<()> = OnceLock::new();
+/// 上次刷新堆状态的 uptime 秒数（AtomicU32 for xtensa compatibility）。
+static LAST_REFRESH_SECS: AtomicU32 = AtomicU32::new(0);
+/// refresh_heap_if_stale 使用的启动时刻基准。
+static REFRESH_START: OnceLock<std::time::Instant> = OnceLock::new();
 
 /// main 启动时调用一次，初始化 orchestrator（幂等）。
 /// Called once by main at startup (idempotent).
@@ -64,6 +69,21 @@ pub fn update_heap_state() {
     STATE
         .pressure_level
         .store(PressureLevel::Normal as u8, Ordering::Relaxed);
+}
+
+/// 若距上次刷新 ≥2s 则重新采样堆状态并返回最新压力等级，否则返回缓存值。
+/// Refresh heap state if stale (≥2s since last refresh), otherwise return cached pressure.
+const REFRESH_MIN_INTERVAL_SECS: u32 = 2;
+
+pub fn refresh_heap_if_stale() -> PressureLevel {
+    let start = REFRESH_START.get_or_init(std::time::Instant::now);
+    let now_secs = start.elapsed().as_secs() as u32;
+    let last = LAST_REFRESH_SECS.load(std::sync::atomic::Ordering::Relaxed);
+    if now_secs.wrapping_sub(last) >= REFRESH_MIN_INTERVAL_SECS {
+        LAST_REFRESH_SECS.store(now_secs, std::sync::atomic::Ordering::Relaxed);
+        update_heap_state();
+    }
+    current_pressure()
 }
 
 /// 返回当前压力等级。
@@ -111,6 +131,13 @@ pub fn is_channel_healthy_pub(channel: &str) -> bool {
 /// 入站准入决策。
 pub fn should_accept_inbound_pub(channel: &str, chat_id: &str) -> AdmissionDecision {
     admission::should_accept_inbound(&STATE, channel, chat_id)
+}
+
+/// 更新队列深度（由 heartbeat 定期调用）。
+/// Update queue depth snapshot (called periodically by heartbeat).
+pub fn update_queue_depth(inbound: u32, outbound: u32) {
+    STATE.inbound_depth.store(inbound, std::sync::atomic::Ordering::Relaxed);
+    STATE.outbound_depth.store(outbound, std::sync::atomic::Ordering::Relaxed);
 }
 
 /// LLM 调用门控。

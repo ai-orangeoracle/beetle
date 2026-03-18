@@ -62,17 +62,24 @@ pub fn run_heartbeat_loop(version: &'static str, interval_secs: u64) {
 }
 
 /// 周期打日志并在有待办时向 inbound 注入一条 PcMsg；同一待办 30s 内不重复注入。
+/// 同时更新 orchestrator 的队列深度快照。
 pub fn run_heartbeat_loop_with_tasks(
     version: &'static str,
     interval_secs: u64,
     inbound_tx: crate::bus::InboundTx,
     read_heartbeat: impl Fn() -> String + Send + 'static,
+    inbound_depth: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    outbound_depth: std::sync::Arc<std::sync::atomic::AtomicUsize>,
 ) {
     START.get_or_init(Instant::now);
     let interval = Duration::from_secs(interval_secs);
     std::thread::spawn(move || {
         loop {
             std::thread::sleep(interval);
+            // Update queue depth snapshot for pressure computation.
+            let in_d = inbound_depth.load(std::sync::atomic::Ordering::Relaxed) as u32;
+            let out_d = outbound_depth.load(std::sync::atomic::Ordering::Relaxed) as u32;
+            crate::orchestrator::update_queue_depth(in_d, out_d);
             crate::orchestrator::update_heap_state();
             let uptime_secs = START.get().map(|s| s.elapsed().as_secs()).unwrap_or(0);
             #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]

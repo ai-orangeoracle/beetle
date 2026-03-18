@@ -119,7 +119,9 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
     let tool_descriptions = registry.format_descriptions_for_system_prompt(8 * 1024);
 
     // Track repeated LLM failure for same request body, avoid infinite retry.
-    let mut llm_failure_count: HashMap<String, u8> = HashMap::new();
+    // Key: u64 hash of (channel, chat_id, content) — avoids per-message format! String alloc.
+    // Value: (failure count, last failure time) — entries expire after 5 minutes.
+    let mut llm_failure_count: HashMap<u64, (u8, Instant)> = HashMap::new();
     // Throttle "low memory, defer" log per chat_id to avoid log spam.
     let mut low_mem_defer_log: Option<(String, Instant)> = None;
 
@@ -143,10 +145,16 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
         crate::platform::task_wdt::feed_current_task();
         let msg_key = {
             let mut hasher = DefaultHasher::new();
+            msg.channel.hash(&mut hasher);
+            msg.chat_id.hash(&mut hasher);
             msg.content.hash(&mut hasher);
-            format!("{}|{}|{}", msg.channel, msg.chat_id, hasher.finish())
+            hasher.finish()
         };
-        if llm_failure_count.get(&msg_key).copied().unwrap_or(0) >= 3 {
+        let now_for_key = Instant::now();
+        if llm_failure_count.get(&msg_key)
+            .map(|(count, ts)| *count >= 3 && now_for_key.duration_since(*ts) < Duration::from_secs(300))
+            .unwrap_or(false)
+        {
             let out = PcMsg {
                 channel: msg.channel.clone(),
                 chat_id: msg.chat_id.clone(),
@@ -158,6 +166,8 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
             continue;
         }
 
+        // Refresh heap state if stale before admission check.
+        crate::orchestrator::refresh_heap_if_stale();
         match crate::orchestrator::should_accept_inbound_pub(&msg.channel, &msg.chat_id) {
             AdmissionDecision::Accept => {}
             AdmissionDecision::Defer { delay_ms } => {
@@ -216,6 +226,7 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
         }
 
         // LLM 门控：Critical 压力下降级，Cautious 堆不足时延迟重试
+        crate::orchestrator::refresh_heap_if_stale();
         match crate::orchestrator::can_call_llm_pub() {
             LlmDecision::Proceed => {}
             LlmDecision::RetryLater { delay_ms } => {
@@ -290,7 +301,7 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
                 log::warn!("[agent] chat loop failed: {}", e);
                 state::set_last_error(&e);
 
-                let counter = llm_failure_count.entry(msg_key.clone()).or_insert(0);
+                let (counter, _) = llm_failure_count.entry(msg_key).or_insert((0, Instant::now()));
                 *counter = counter.saturating_add(1);
 
                 if *counter < 3 {
@@ -325,9 +336,9 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
         };
         let (mut reply_content, is_interrupt) = match &outcome {
             WorkerOutcome::Interrupt(confirm) => {
-                (truncate_content_to_max(confirm, MAX_CONTENT_LEN), true)
+                (truncate_content_to_max(confirm, MAX_CONTENT_LEN).into_owned(), true)
             }
-            WorkerOutcome::Content(s) => (truncate_content_to_max(s, MAX_CONTENT_LEN), false),
+            WorkerOutcome::Content(s) => (truncate_content_to_max(s, MAX_CONTENT_LEN).into_owned(), false),
         };
         let mark_important = !is_interrupt && reply_content.contains(AGENT_MARKER_MARK_IMPORTANT);
         if !is_interrupt {
@@ -336,14 +347,14 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
                     .replace(AGENT_MARKER_MARK_IMPORTANT, "")
                     .trim()
                     .to_string();
-                reply_content = truncate_content_to_max(&reply_content, MAX_CONTENT_LEN);
+                reply_content = truncate_content_to_max(&reply_content, MAX_CONTENT_LEN).into_owned();
             }
             if reply_content.contains(AGENT_MARKER_SIGNAL_COMFORT) {
                 reply_content = reply_content
                     .replace(AGENT_MARKER_SIGNAL_COMFORT, "")
                     .trim()
                     .to_string();
-                reply_content = truncate_content_to_max(&reply_content, MAX_CONTENT_LEN);
+                reply_content = truncate_content_to_max(&reply_content, MAX_CONTENT_LEN).into_owned();
                 let _ = config.emotion_signal_store.set(&msg.chat_id, "comfort");
             }
         }
@@ -374,7 +385,8 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
         if reply_content.trim() == "SILENT" || (msg.channel == "cron" && reply_content.is_empty()) {
             llm_failure_count.remove(&msg_key);
             if llm_failure_count.len() > 64 {
-                llm_failure_count.retain(|_, v| *v > 0);
+                let now = Instant::now();
+                llm_failure_count.retain(|_, (count, ts)| *count > 0 && now.duration_since(*ts) < Duration::from_secs(300));
             }
             continue;
         }
@@ -392,7 +404,8 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
         }
         llm_failure_count.remove(&msg_key);
         if llm_failure_count.len() > 64 {
-            llm_failure_count.retain(|_, v| *v > 0);
+            let now = Instant::now();
+            llm_failure_count.retain(|_, (count, ts)| *count > 0 && now.duration_since(*ts) < Duration::from_secs(300));
         }
 
         let out = PcMsg {
@@ -469,6 +482,21 @@ fn run_worker_path<H: PlatformHttpClient>(
 
     let mut final_content = String::new();
     for _round in 0..MAX_REACT_ROUNDS {
+        // Inter-round pressure check: skip first round (already gated by caller).
+        if _round > 0 {
+            crate::orchestrator::update_heap_state();
+            match crate::orchestrator::can_call_llm_pub() {
+                LlmDecision::Proceed => {}
+                LlmDecision::RetryLater { .. } | LlmDecision::Degrade { .. } => {
+                    if final_content.is_empty() {
+                        final_content = LOW_MEMORY_USER_MESSAGE.to_string();
+                    } else {
+                        final_content.push_str("\n\n（因设备内存不足，后续步骤已省略）");
+                    }
+                    break;
+                }
+            }
+        }
         let t0 = metrics::record_llm_call_start();
         let response = match worker_llm.chat(&mut tool_ctx, &system, &messages, Some(config.tool_specs)) {
             Ok(r) => {
