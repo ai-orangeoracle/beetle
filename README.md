@@ -124,10 +124,10 @@ Partition table is defined by `board_presets.toml` and `sdkconfig.defaults.esp32
 | DingTalk | `DINGTALK_WEBHOOK_URL` |
 | WeCom | `WECOM_CORP_ID`, `WECOM_CORP_SECRET`, `WECOM_AGENT_ID`, `WECOM_DEFAULT_TOUSER` |
 | QQ Channel | `QQ_CHANNEL_APP_ID`, `QQ_CHANNEL_SECRET` |
-| LLM | `API_KEY`, `MODEL`, `MODEL_PROVIDER`, `API_URL` (Ollama-compatible etc.) |
+| LLM | Multi-source: `config/llm.json` (SPIFFS); build-time env for defaults. Keys: provider, api_key, model, api_url, stream, max_tokens; router/worker indices for routing mode. |
 | Proxy / search | `PROXY_URL`, `SEARCH_KEY`, `TAVILY_KEY` |
 
-Full key names and validation: `src/config.rs`. Provisioning and config page: [Configuration](docs/en-us/configuration.md).
+Full key names and validation: `src/config.rs`. Runtime config segments (LLM, channels, system) and API: [Config API](docs/en-us/config-api.md). Provisioning: [Configuration](docs/en-us/configuration.md).
 
 ---
 
@@ -139,7 +139,8 @@ Full key names and validation: `src/config.rs`. Provisioning and config page: [C
 | Unified channels | Feishu / DingTalk / WeCom / QQ Channel / Telegram / WebSocket, same queue, same Agent |
 | Browser provisioning | Hotspot Beetle → 192.168.4.1; after WiFi → http://beetle.local (mDNS), pairing code for writes |
 | Rust stack | Type-safe, unified errors and resource limits; new channel/tool/LLM via trait |
-| Memory & tools | Long-term memory, session summary, reminders; FetchUrl, WebSearch, Cron, Files; Skills in system prompt |
+| Memory & tools | Long-term memory, session summary, reminders; GetTime, Cron, Files, WebSearch, AnalyzeImage, FetchUrl, HttpPost, RemindAt, KvStore, UpdateSessionSummary; **board_info** for device status (chip, heap, uptime, pressure, WiFi, SPIFFS); Skills in system prompt. Optional: GpioRead, GpioWrite (feature `gpio`) |
+| Resource & health | Orchestrator: heap/queue pressure, HTTP admission, channel circuit breaker; health and resource snapshot via API |
 
 ---
 
@@ -156,6 +157,8 @@ Full key names and validation: `src/config.rs`. Provisioning and config page: [C
 | Doc | Description |
 |-----|-------------|
 | [Configuration](docs/en-us/configuration.md) | Provisioning, config page, mDNS, common config |
+| [Config API contract](docs/en-us/config-api.md) | HTTP API: pairing, config segments, health, OTA, webhook |
+| [Agent tools](docs/en-us/tools.md) | User-facing guide: what tools the Agent can use (get_time, web_search, board_info, etc.) |
 | [Hardware & resources](docs/en-us/hardware.md) | Boards, memory, PSRAM, watchdog, build options, troubleshooting |
 | [Architecture](docs/en-us/architecture.md) | Modules, data flow, extension |
 
