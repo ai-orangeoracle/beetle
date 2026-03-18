@@ -63,7 +63,7 @@ pub use platform::{ConfigStore, Platform, PlatformHttpClient, SkillStorage};
 pub use platform::Esp32Platform;
 pub use tools::{
     CronTool, FetchUrlTool, FilesTool, GetTimeTool, HttpPostTool, KvStoreTool, RemindAtTool,
-    SystemStatsTool, Tool, ToolContext, ToolRegistry, UpdateSessionSummaryTool, WebSearchTool,
+    Tool, ToolContext, ToolRegistry, UpdateSessionSummaryTool, WebSearchTool,
     build_default_registry,
 };
 

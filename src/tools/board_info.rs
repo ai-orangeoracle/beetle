@@ -1,5 +1,5 @@
-//! board_info 工具：返回板型、堆、运行时间、IDF 版本等 JSON；ESP 用 platform/heap 与 esp_idf_svc::sys，host 返回占位。
-//! board_info tool: return board and system info as JSON; ESP uses platform/heap and esp_idf_svc::sys, host returns placeholder.
+//! board_info 工具：返回设备状态 JSON（芯片、堆、运行时间、IDF 版本、压力、WiFi、SPIFFS）；ESP 用 platform/heap 与 esp_idf_svc::sys，host 返回占位。
+//! board_info tool: device status JSON — chip, heap, uptime, IDF version, pressure, WiFi, SPIFFS; ESP uses platform/heap and esp_idf_svc::sys, host placeholder.
 
 use crate::error::Result;
 use crate::tools::{Tool, ToolContext};
@@ -7,7 +7,8 @@ use serde_json::json;
 
 pub struct BoardInfoTool;
 
-// 从编译目标推断芯片型号（esp_chip_info 未在 esp-idf-sys bindings 中暴露，避免依赖）
+// 从编译目标推断芯片型号（esp_chip_info 未在 esp-idf-sys bindings 中暴露，避免依赖）。
+// 若 TARGET 未包含 esp32（如构建环境未传），则按 target_arch 回退，避免显示 ESP32-unknown。
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 fn chip_model_from_target() -> (&'static str, u32, u32) {
     let target = option_env!("TARGET").unwrap_or("");
@@ -26,7 +27,12 @@ fn chip_model_from_target() -> (&'static str, u32, u32) {
     } else if target.contains("esp32") {
         ("ESP32", 2u32)
     } else {
-        ("ESP32-unknown", 1u32)
+        // TARGET 未设置或不含 esp32 时按架构回退（常见于非常规构建）
+        #[cfg(target_arch = "xtensa")]
+        let fallback = ("ESP32-S3", 2u32);
+        #[cfg(target_arch = "riscv32")]
+        let fallback = ("ESP32-C3", 1u32);
+        fallback
     };
     (model, 0u32, cores) // revision 运行时不可靠则填 0
 }
@@ -56,8 +62,18 @@ fn collect_esp() -> String {
         }
     };
 
+    // 编译时由 build.rs 从 IDF_PATH/version.txt 注入；未设置 IDF_PATH 时为 "unknown"
     let idf_version = option_env!("IDF_VERSION").unwrap_or("unknown");
     let budget = crate::orchestrator::current_budget();
+    let wifi_sta_connected = crate::platform::is_wifi_sta_connected();
+    let spiffs = crate::platform::spiffs_usage().map(|(total, used)| {
+        let free = total.saturating_sub(used);
+        json!({
+            "total_bytes": total,
+            "used_bytes": used,
+            "free_bytes": free,
+        })
+    });
 
     let out = json!({
         "chip_model": chip_model,
@@ -70,6 +86,8 @@ fn collect_esp() -> String {
         "idf_version": idf_version,
         "pressure_level": format!("{:?}", budget.level),
         "hint": budget.llm_hint,
+        "wifi_sta_connected": wifi_sta_connected,
+        "spiffs": spiffs,
     });
     out.to_string()
 }
@@ -77,6 +95,15 @@ fn collect_esp() -> String {
 #[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
 fn collect_host() -> String {
     let budget = crate::orchestrator::current_budget();
+    let wifi_sta_connected = crate::platform::is_wifi_sta_connected();
+    let spiffs = crate::platform::spiffs_usage().map(|(total, used)| {
+        let free = total.saturating_sub(used);
+        json!({
+            "total_bytes": total,
+            "used_bytes": used,
+            "free_bytes": free,
+        })
+    });
     let out = json!({
         "chip_model": "host",
         "chip_revision": 0,
@@ -88,6 +115,8 @@ fn collect_host() -> String {
         "idf_version": "n/a",
         "pressure_level": format!("{:?}", budget.level),
         "hint": budget.llm_hint,
+        "wifi_sta_connected": wifi_sta_connected,
+        "spiffs": spiffs,
     });
     out.to_string()
 }
@@ -97,7 +126,7 @@ impl Tool for BoardInfoTool {
         "board_info"
     }
     fn description(&self) -> &str {
-        "Return board info: chip, heap, uptime, IDF version, and current resource pressure level. Use for debugging or when user asks about device status."
+        "Return device status: chip, heap, uptime, IDF version, resource pressure, WiFi STA connection, SPIFFS storage (total/used/free). Use when user asks about device status, memory, network, or storage."
     }
     fn schema(&self) -> serde_json::Value {
         json!({ "type": "object", "properties": {} })

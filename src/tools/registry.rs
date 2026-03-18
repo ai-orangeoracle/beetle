@@ -119,7 +119,6 @@ pub fn build_default_registry(
     registry.register(Box::new(super::BoardInfoTool));
     registry.register(Box::new(super::HttpPostTool));
     registry.register(Box::new(super::KvStoreTool));
-    registry.register(Box::new(super::SystemStatsTool));
     #[cfg(feature = "gpio")]
     {
         registry.register(Box::new(super::GpioReadTool));

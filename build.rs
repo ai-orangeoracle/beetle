@@ -108,6 +108,7 @@ fn main() {
             .as_ref()
             .and_then(|s| s.lines().next())
             .map(|l| l.trim().to_string())
+            .or_else(|| std::env::var("ESP_IDF_VERSION").ok())
             .unwrap_or_else(|| "unknown".to_string());
         println!("cargo:rustc-env=IDF_VERSION={}", idf_version);
     }
