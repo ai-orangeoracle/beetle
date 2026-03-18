@@ -7,6 +7,8 @@ import MenuItem from "@mui/material/MenuItem";
 import Select from "@mui/material/Select";
 import Stack from "@mui/material/Stack";
 import Button from "@mui/material/Button";
+import Switch from "@mui/material/Switch";
+import FormControlLabel from "@mui/material/FormControlLabel";
 import TextField from "@mui/material/TextField";
 import Typography from "@mui/material/Typography";
 import type { SelectChangeEvent } from "@mui/material/Select";
@@ -84,6 +86,7 @@ export function AIConfigPage() {
   const [sources, setSources] = useState<SourceFormRow[]>([]);
   const [routerIndex, setRouterIndex] = useState<number | null>(null);
   const [workerIndex, setWorkerIndex] = useState<number | null>(null);
+  const [llmStream, setLlmStream] = useState(false);
   const [saveStatus, setSaveStatus] = useState<
     "idle" | "saving" | "ok" | "fail"
   >("idle");
@@ -126,6 +129,7 @@ export function AIConfigPage() {
       setSources(toSourceRows(list));
       setRouterIndex(config.llm_router_source_index ?? null);
       setWorkerIndex(config.llm_worker_source_index ?? null);
+      setLlmStream(config.llm_stream ?? false);
     };
     queueMicrotask(sync);
   }, [config]);
@@ -183,6 +187,7 @@ export function AIConfigPage() {
       llm_sources,
       llm_router_source_index: routerIndex,
       llm_worker_source_index: workerIndex,
+      llm_stream: llmStream,
     });
     setSaveStatus(result.ok ? "ok" : "fail");
     const errMsg =
@@ -249,6 +254,22 @@ export function AIConfigPage() {
           </Typography>
         )}
         <Stack spacing={0}>
+          <FormControlLabel
+            control={
+              <Switch
+                checked={llmStream}
+                onChange={(e) => {
+                  setDirty(true);
+                  setLlmStream(e.target.checked);
+                }}
+              />
+            }
+            label={t("config.llmStream")}
+            sx={{ mb: 1 }}
+          />
+          <Typography variant="caption" color="text.secondary" sx={{ ml: 7, mt: -1, mb: 2 }}>
+            {t("config.llmStreamHelp")}
+          </Typography>
           {sources.map((row, i) => (
             <FormSectionSubCollapsible
               key={i}
@@ -367,7 +388,7 @@ export function AIConfigPage() {
           </Button>
           <FormSectionSubCollapsible
             title={t("config.llmRouterWorkerTitle")}
-            defaultOpen={false}
+            defaultOpen={true}
           >
             <Box sx={{ display: "flex", gap: 2, flexWrap: "wrap" }}>
               <TextField

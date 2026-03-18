@@ -357,6 +357,7 @@ impl AppConfig {
     pub fn merge_llm_from_json(&mut self, json: &str, errors: &mut Vec<String>) {
         match serde_json::from_str::<LlmSegment>(json) {
             Ok(seg) => {
+                self.llm_stream = seg.llm_stream;
                 if !seg.llm_sources.is_empty() {
                     self.llm_sources = seg.llm_sources.clone();
                     self.llm_router_source_index = seg.llm_router_source_index;
@@ -693,6 +694,8 @@ pub struct LlmSegment {
     pub llm_router_source_index: Option<u8>,
     #[serde(default)]
     pub llm_worker_source_index: Option<u8>,
+    #[serde(default)]
+    pub llm_stream: bool,
 }
 
 /// 允许的 enabled_channel 取值；空表示不启用任何通道。
