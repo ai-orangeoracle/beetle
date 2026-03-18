@@ -46,6 +46,7 @@
 - 新通道：实现 `MessageSink` trait 并注册，不修改 bus/agent。
 - 新工具：实现 `Tool` trait 并注册到 `ToolRegistry`。
 - 新 LLM：实现 `LlmClient` trait 并注入。
+- 新流式编辑通道：实现 `StreamEditor` trait（`send_initial` + `edit`），在 `main.rs` 根据 `enabled_channel` 创建并注入 `AgentLoopConfig.stream_editor`。实现方自行创建 HTTP 连接，不依赖 agent 的 LLM 连接。
 
 ---
 
@@ -54,13 +55,14 @@
 ### 网络与 HTTP
 
 - **WiFi**：`connect_wifi(config: &AppConfig) -> Result<()>`。调用前对 config 做 `validate_for_wifi()`；连接超时 15s；错误 stage 为 `wifi_connect`。
-- **HTTP 客户端**：由 **main 构造一次**，LLM、工具、通道均**注入**同一 `EspHttpClient`，不在各处再 `EspHttpClient::new()`。直连用 `new()`，走 proxy 用 `new_with_config(&config)`。响应体上限 512KB，请求超时 30s。
+- **HTTP 客户端**：由 **main 构造一次**，LLM、工具、通道均**注入**同一 `EspHttpClient`，不在各处再 `EspHttpClient::new()`。直连用 `new()`，走 proxy 用 `new_with_config(&config)`。响应体上限 512KB，请求超时 30s。**例外**：`StreamEditor` 实现和 sender 线程需自行创建独立 HTTP 连接（主连接被 LLM 流占用或运行在独立线程）。
 - **Error stage**：网络/HTTP 错误带 stage（`wifi_connect`、`http_client_new`、`http_get_request`、`http_get_submit`、`proxy_connect`）；不新增未使用 Error 变体。
 - **platform 边界**：platform 是唯一依赖 esp-idf-svc 的模块；核心域（llm、agent、tools、channels）不直接依赖 platform，通过 main 注入的客户端或 trait 使用。
 
 ### LLM
 
 - **LlmClient**：Agent/main 只依赖此 trait。`chat(&self, http: &mut dyn LlmHttpClient, system, messages, tools) -> Result<LlmResponse>`；**llm 不依赖 platform**，HTTP 由调用方注入。
+- **chat_with_progress**：可选流式回调方法；默认回退到 `chat`。`StreamProgressFn<'a> = &'a mut dyn FnMut(&str, &str)` 传递 `(delta, accumulated)`。`FallbackLlmClient` 仅第一源走 progress，后续降级普通 chat。
 - **LlmHttpClient**：在 **lib** 中由 `EspHttpClient` 实现（`do_post(url, headers, body)`）；新增 LLM 厂商时仅新增实现 `LlmClient` 的类型，不修改 platform。
 - **类型与常量**：`Message`、`LlmResponse`、`ToolSpec` 在 `llm::types`；`MAX_REQUEST_BODY_LEN`（512KB）、`MAX_MESSAGE_CONTENT_LEN`（64KB）；序列化超限用 `Error::Config`。
 - **错误 stage**：LLM 用 `llm_request`、`llm_parse`。

@@ -62,7 +62,7 @@ pub fn run_heartbeat_loop(version: &'static str, interval_secs: u64) {
 }
 
 /// 周期打日志并在有待办时向 inbound 注入一条 PcMsg；同一待办 30s 内不重复注入。
-/// 同时更新 orchestrator 的队列深度快照。
+/// 同时更新 orchestrator 的队列深度快照。定期执行会话 GC。
 pub fn run_heartbeat_loop_with_tasks(
     version: &'static str,
     interval_secs: u64,
@@ -70,12 +70,25 @@ pub fn run_heartbeat_loop_with_tasks(
     read_heartbeat: impl Fn() -> String + Send + 'static,
     inbound_depth: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     outbound_depth: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    session_store: std::sync::Arc<dyn crate::memory::SessionStore + Send + Sync>,
 ) {
     START.get_or_init(Instant::now);
     let interval = Duration::from_secs(interval_secs);
     std::thread::spawn(move || {
+        let mut round: u32 = 0;
         loop {
             std::thread::sleep(interval);
+            round = round.wrapping_add(1);
+
+            // Session GC: run every SESSION_GC_INTERVAL_ROUNDS rounds.
+            if round % crate::constants::SESSION_GC_INTERVAL_ROUNDS == 0 {
+                match session_store.gc_stale(crate::constants::SESSION_GC_MAX_AGE_SECS) {
+                    Ok(n) if n > 0 => log::info!("[{}] session GC removed {} stale files", TAG, n),
+                    Err(e) => log::warn!("[{}] session GC error: {}", TAG, e),
+                    _ => {}
+                }
+            }
+
             // Update queue depth snapshot for pressure computation.
             let in_d = inbound_depth.load(std::sync::atomic::Ordering::Relaxed) as u32;
             let out_d = outbound_depth.load(std::sync::atomic::Ordering::Relaxed) as u32;

@@ -44,6 +44,43 @@ fn ensure_storage_ready(memory_store: &dyn MemoryStore) {
     }
 }
 
+/// Telegram 流式编辑器：LLM 流式输出期间，按需创建独立 HTTP 连接发送/编辑消息。
+struct TelegramStreamEditor {
+    token: String,
+}
+
+impl beetle::StreamEditor for TelegramStreamEditor {
+    fn send_initial(&self, chat_id: &str, content: &str) -> beetle::Result<Option<String>> {
+        let mut http = EspHttpClient::new()?;
+        beetle::tg_send_and_get_id(&mut http, &self.token, chat_id, content)
+    }
+    fn edit(&self, chat_id: &str, message_id: &str, content: &str) -> beetle::Result<()> {
+        let mut http = EspHttpClient::new()?;
+        beetle::tg_edit_message_text(&mut http, &self.token, chat_id, message_id, content)
+    }
+}
+
+/// 飞书流式编辑器：按需获取 tenant_access_token 并发送/编辑消息。
+struct FeishuStreamEditor {
+    app_id: String,
+    app_secret: String,
+}
+
+impl beetle::StreamEditor for FeishuStreamEditor {
+    fn send_initial(&self, chat_id: &str, content: &str) -> beetle::Result<Option<String>> {
+        let mut http = EspHttpClient::new()?;
+        let token = beetle::feishu_acquire_token(&mut http, &self.app_id, &self.app_secret)
+            .ok_or_else(|| beetle::Error::config("feishu_stream", "failed to acquire tenant_token"))?;
+        beetle::feishu_send_and_get_id(&mut http, &token, chat_id, content)
+    }
+    fn edit(&self, _chat_id: &str, message_id: &str, content: &str) -> beetle::Result<()> {
+        let mut http = EspHttpClient::new()?;
+        let token = beetle::feishu_acquire_token(&mut http, &self.app_id, &self.app_secret)
+            .ok_or_else(|| beetle::Error::config("feishu_stream", "failed to acquire tenant_token"))?;
+        beetle::feishu_edit_message(&mut http, &token, message_id, content)
+    }
+}
+
 fn main() {
     esp_idf_svc::sys::link_patches();
     esp_idf_svc::log::EspLogger::initialize_default();
@@ -221,7 +258,7 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
     beetle::cron::run_cron_loop(inbound_tx.clone(), beetle::cron::DEFAULT_CRON_INTERVAL_SECS);
     beetle::heartbeat::run_heartbeat_loop_with_tasks(VERSION, 30, inbound_tx.clone(), || {
         beetle::platform::read_heartbeat_file().unwrap_or_default()
-    }, Arc::clone(&inbound_depth), Arc::clone(&outbound_depth));
+    }, Arc::clone(&inbound_depth), Arc::clone(&outbound_depth), Arc::clone(&session_store));
 
     beetle::memory::run_remind_loop(Arc::clone(&remind_at_store), inbound_tx.clone(), 60);
 
@@ -318,6 +355,7 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
             &config,
             Arc::clone(&remind_at_store),
             Arc::clone(&session_summary_store),
+            Arc::clone(&session_store),
         );
         let tool_specs = registry.tool_specs_for_api(4096);
         let skill_meta_store_fn = Arc::clone(&skill_meta_store);
@@ -336,6 +374,33 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
                 let _ = send_chat_action(http, &config.tg_token, cid, "typing");
             }
         };
+        // 流式编辑器：根据 enabled_channel 选择对应通道的 StreamEditor 实现。
+        enum StreamEditorImpl {
+            Telegram(TelegramStreamEditor),
+            Feishu(FeishuStreamEditor),
+        }
+        let stream_editor_impl: Option<StreamEditorImpl> = if config.llm_stream {
+            match config.enabled_channel.as_str() {
+                "telegram" if !config.tg_token.trim().is_empty() => {
+                    Some(StreamEditorImpl::Telegram(TelegramStreamEditor {
+                        token: config.tg_token.clone(),
+                    }))
+                }
+                "feishu" if !config.feishu_app_id.trim().is_empty() => {
+                    Some(StreamEditorImpl::Feishu(FeishuStreamEditor {
+                        app_id: config.feishu_app_id.clone(),
+                        app_secret: config.feishu_app_secret.clone(),
+                    }))
+                }
+                _ => None,
+            }
+        } else {
+            None
+        };
+        let stream_editor_ref: Option<&dyn beetle::StreamEditor> = stream_editor_impl.as_ref().map(|e| match e {
+            StreamEditorImpl::Telegram(t) => t as &dyn beetle::StreamEditor,
+            StreamEditorImpl::Feishu(f) => f as &dyn beetle::StreamEditor,
+        });
         let agent_config = beetle::AgentLoopConfig {
             memory_store: memory_store.as_ref(),
             session_store: session_store.as_ref(),
@@ -349,6 +414,8 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
             important_message_store: important_message_store.as_ref(),
             emotion_signal_store: emotion_signal_store.as_ref(),
             pending_retry: pending_retry_store.as_ref(),
+            llm_stream: config.llm_stream,
+            stream_editor: stream_editor_ref,
         };
         #[cfg(feature = "cli")]
         {

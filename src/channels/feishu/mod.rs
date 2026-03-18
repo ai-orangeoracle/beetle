@@ -1,11 +1,13 @@
 //! 飞书通道：出站 Sink/flush，入站 HTTP 事件与长连接 WS，连通性检查。
 //! 一通道一目录，所有飞书相关逻辑集中于此。
 
-mod send;
+pub(crate) mod send;
 #[allow(unused_imports)]
 pub use send::{
-    check_connectivity, event_body_to_pcmsg, flush_feishu_sends, run_feishu_sender_loop,
-    FeishuTokenRequest, FeishuTokenResponse, FEISHU_TOKEN_URL,
+    acquire_tenant_token, check_connectivity, edit_message as feishu_edit_message,
+    event_body_to_pcmsg, flush_feishu_sends, run_feishu_sender_loop,
+    send_and_get_id as feishu_send_and_get_id, FeishuTokenRequest, FeishuTokenResponse,
+    FEISHU_TOKEN_URL,
 };
 
 mod event;

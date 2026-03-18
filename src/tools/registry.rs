@@ -96,6 +96,7 @@ pub fn build_default_registry(
     config: &AppConfig,
     remind_at_store: Arc<dyn crate::memory::RemindAtStore + Send + Sync>,
     session_summary_store: Arc<dyn crate::memory::SessionSummaryStore + Send + Sync>,
+    session_store: Arc<dyn crate::memory::SessionStore + Send + Sync>,
 ) -> ToolRegistry {
     let mut registry = ToolRegistry::new();
     registry.register(Box::new(super::GetTimeTool));
@@ -107,6 +108,7 @@ pub fn build_default_registry(
     registry.register(Box::new(super::RemindAtTool::new(remind_at_store)));
     registry.register(Box::new(super::UpdateSessionSummaryTool::new(
         session_summary_store,
+        session_store,
     )));
     registry.register(Box::new(super::BoardInfoTool));
     registry.register(Box::new(super::HttpPostTool));

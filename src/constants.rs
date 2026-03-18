@@ -80,3 +80,8 @@ pub const KV_STORE_MAX_ENTRIES: usize = 64;
 pub const KV_STORE_MAX_KEY_LEN: usize = 64;
 /// kv_store 工具：value 最大字节数；适合偏好/状态等小型数据。
 pub const KV_STORE_MAX_VALUE_LEN: usize = 512;
+
+/// 会话 GC：过期时间（秒），7 天。
+pub const SESSION_GC_MAX_AGE_SECS: u64 = 604_800;
+/// 会话 GC：每 N 轮 heartbeat 执行一次（~50 分钟 @ 30s 间隔）。
+pub const SESSION_GC_INTERVAL_ROUNDS: u32 = 100;

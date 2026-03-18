@@ -107,6 +107,12 @@ pub struct AppConfig {
     pub wecom_agent_id: String,
     /// 默认接收人：userid 或 @all；出站时 chat_id 为空则用此值。
     pub wecom_default_touser: String,
+    /// 企业微信回调 Token（用于签名校验，可选）。
+    pub wecom_token: String,
+    /// 企业微信回调 EncodingAESKey（用于消息加解密，可选）。
+    pub wecom_encoding_aes_key: String,
+    /// 钉钉回调 App Secret（用于验签，可选）。
+    pub dingtalk_app_secret: String,
 
     /// QQ 频道机器人 App ID；与 qq_channel_secret 均非空时启用回调与出站。
     #[serde(default)]
@@ -215,6 +221,15 @@ impl AppConfig {
                 .unwrap_or("")
                 .into(),
             wecom_default_touser: option_env!("BEETLE_WECOM_DEFAULT_TOUSER")
+                .unwrap_or("")
+                .into(),
+            wecom_token: option_env!("BEETLE_WECOM_TOKEN")
+                .unwrap_or("")
+                .into(),
+            wecom_encoding_aes_key: option_env!("BEETLE_WECOM_ENCODING_AES_KEY")
+                .unwrap_or("")
+                .into(),
+            dingtalk_app_secret: option_env!("BEETLE_DINGTALK_APP_SECRET")
                 .unwrap_or("")
                 .into(),
             api_key: option_env!("BEETLE_API_KEY").unwrap_or("").into(),
@@ -390,6 +405,9 @@ impl AppConfig {
             self.wecom_corp_secret = seg.wecom_corp_secret;
             self.wecom_agent_id = seg.wecom_agent_id;
             self.wecom_default_touser = seg.wecom_default_touser;
+            self.wecom_token = seg.wecom_token;
+            self.wecom_encoding_aes_key = seg.wecom_encoding_aes_key;
+            self.dingtalk_app_secret = seg.dingtalk_app_secret;
             self.qq_channel_app_id = seg.qq_channel_app_id;
             self.qq_channel_secret = seg.qq_channel_secret;
             self.webhook_enabled = seg.webhook_enabled;
@@ -730,6 +748,12 @@ pub struct ChannelsSegment {
     pub wecom_agent_id: String,
     #[serde(default)]
     pub wecom_default_touser: String,
+    #[serde(default)]
+    pub wecom_token: String,
+    #[serde(default)]
+    pub wecom_encoding_aes_key: String,
+    #[serde(default)]
+    pub dingtalk_app_secret: String,
     #[serde(default)]
     pub qq_channel_app_id: String,
     #[serde(default)]

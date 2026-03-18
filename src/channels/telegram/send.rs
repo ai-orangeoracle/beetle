@@ -223,6 +223,65 @@ pub fn set_message_reaction<H: ChannelHttpClient>(
     Ok(())
 }
 
+/// 发送消息并返回平台侧 message_id（字符串形式）；供流式编辑使用。
+pub fn send_and_get_id<H: ChannelHttpClient>(
+    http: &mut H,
+    token: &str,
+    chat_id: &str,
+    content: &str,
+) -> Result<Option<String>> {
+    let body = serde_json::json!({
+        "chat_id": chat_id,
+        "text": content,
+    });
+    let body_bytes = serde_json::to_vec(&body).map_err(|e| Error::Other {
+        source: Box::new(e),
+        stage: "telegram_send",
+    })?;
+    let url = format!("{}{}/sendMessage", TELEGRAM_API_BASE, token);
+    let (status, resp_body) = http.http_post(&url, &body_bytes)
+        .map_err(|e| map_stage(e, "telegram_send"))?;
+    if status >= 400 {
+        return Err(Error::Http { status_code: status, stage: "telegram_send" });
+    }
+    #[derive(serde::Deserialize)]
+    struct R { result: Option<Inner> }
+    #[derive(serde::Deserialize)]
+    struct Inner { message_id: Option<i64> }
+    let r: R = serde_json::from_slice(resp_body.as_ref()).map_err(|e| Error::Other {
+        source: Box::new(e),
+        stage: "telegram_send_parse",
+    })?;
+    Ok(r.result.and_then(|i| i.message_id).map(|id| id.to_string()))
+}
+
+/// 编辑已发送的 Telegram 消息文本（editMessageText API）。
+pub fn edit_message_text<H: ChannelHttpClient>(
+    http: &mut H,
+    token: &str,
+    chat_id: &str,
+    message_id: &str,
+    content: &str,
+) -> Result<()> {
+    let msg_id: i64 = message_id.parse().map_err(|_| Error::config("telegram_edit", "invalid message_id"))?;
+    let body = serde_json::json!({
+        "chat_id": chat_id,
+        "message_id": msg_id,
+        "text": content,
+    });
+    let body_bytes = serde_json::to_vec(&body).map_err(|e| Error::Other {
+        source: Box::new(e),
+        stage: "telegram_edit",
+    })?;
+    let url = format!("{}{}/editMessageText", TELEGRAM_API_BASE, token);
+    let (status, _) = http.http_post(&url, &body_bytes)
+        .map_err(|e| map_stage(e, "telegram_edit"))?;
+    if status >= 400 {
+        return Err(Error::Http { status_code: status, stage: "telegram_edit" });
+    }
+    Ok(())
+}
+
 /// 调用 getMe 获取 bot username（不含 @），供 mention 门控使用。失败或缺失返回 Ok(None)。
 pub fn get_bot_username<H: ChannelHttpClient + ?Sized>(
     http: &mut H,

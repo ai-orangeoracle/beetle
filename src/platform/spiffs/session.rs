@@ -239,4 +239,47 @@ impl SessionStore for SpiffsSessionStore {
         }
         Ok(out)
     }
+
+    fn gc_stale(&self, max_age_secs: u64) -> Result<usize> {
+        let mut p = PathBuf::from(SPIFFS_BASE);
+        p.push(REL_PATH_SESSIONS_DIR);
+        let names = match list_dir(&p) {
+            Ok(n) => n,
+            Err(_) => return Ok(0),
+        };
+        let now = std::time::SystemTime::now();
+        let mut removed = 0usize;
+        for name in &names {
+            if !name.ends_with(SESSION_FILE_EXT) {
+                continue;
+            }
+            p.push(name);
+            let stale = match std::fs::metadata(p.as_path()) {
+                Ok(meta) => match meta.modified() {
+                    Ok(mtime) => now.duration_since(mtime).map(|d| d.as_secs() > max_age_secs).unwrap_or(false),
+                    Err(_) => false,
+                },
+                Err(_) => false,
+            };
+            if stale {
+                if super::remove_file(&p).is_ok() {
+                    removed += 1;
+                    log::info!("[{}] gc: removed stale session file {:?}", TAG, name);
+                }
+            }
+            p.pop();
+        }
+        if removed > 0 {
+            log::info!("[{}] gc: cleaned {} stale session files", TAG, removed);
+        }
+        Ok(removed)
+    }
+
+    fn delete(&self, chat_id: &str) -> Result<()> {
+        let (path, _) = session_path(chat_id)?;
+        if path.exists() {
+            super::remove_file(&path)?;
+        }
+        Ok(())
+    }
 }

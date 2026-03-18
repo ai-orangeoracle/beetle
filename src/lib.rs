@@ -31,16 +31,18 @@ pub mod orchestrator;
 pub mod skills;
 
 pub use agent::{
-    build_context, run_agent_loop, AgentLoopConfig, DEFAULT_MESSAGES_MAX_LEN,
+    build_context, run_agent_loop, AgentLoopConfig, StreamEditor, DEFAULT_MESSAGES_MAX_LEN,
     DEFAULT_SYSTEM_MAX_LEN, SESSION_RECENT_N,
 };
 pub use bus::{MessageBus, PcMsg, DEFAULT_CAPACITY, MAX_CONTENT_LEN};
 pub use channels::{
-    flush_dingtalk_sends, flush_feishu_sends, flush_qq_channel_sends, flush_telegram_sends,
-    flush_wecom_sends, get_bot_username, poll_telegram_once, run_dingtalk_sender_loop,
-    run_dispatch, run_feishu_sender_loop, run_qq_sender_loop, run_telegram_poll_loop,
-    run_telegram_sender_loop, run_wecom_sender_loop, send_chat_action, ChannelHttpClient,
-    ChannelSinks, LogSink, MessageSink, QueuedSink, WebSocketSink,
+    feishu_acquire_token, feishu_edit_message, feishu_send_and_get_id, flush_dingtalk_sends,
+    flush_feishu_sends, flush_qq_channel_sends, flush_telegram_sends, flush_wecom_sends,
+    get_bot_username, poll_telegram_once, run_dingtalk_sender_loop, run_dispatch,
+    run_feishu_sender_loop, run_qq_sender_loop, run_telegram_poll_loop,
+    run_telegram_sender_loop, run_wecom_sender_loop, send_chat_action, tg_edit_message_text,
+    tg_send_and_get_id, ChannelHttpClient, ChannelSinks, LogSink, MessageSink, QueuedSink,
+    WebSocketSink,
 };
 #[cfg(all(feature = "feishu", any(target_arch = "xtensa", target_arch = "riscv32")))]
 pub use channels::run_feishu_ws_loop;

@@ -6,7 +6,7 @@ use crate::error::{Error, Result};
 use std::sync::Arc;
 use std::time::Duration;
 
-mod common;
+pub(crate) mod common;
 mod handlers;
 mod user_message;
 use common::*;
@@ -218,7 +218,7 @@ pub fn run(
         skill_meta_store: Arc::clone(&skill_meta_store),
         inbound_depth: Arc::clone(&inbound_depth),
         outbound_depth: Arc::clone(&outbound_depth),
-        wifi_connected: wifi_connected,
+        wifi_connected,
         version: Arc::from(env!("CARGO_PKG_VERSION")),
         board_id: Arc::from(crate::build_board_id()),
         http_for_fetch,
@@ -516,6 +516,36 @@ pub fn run(
         |req| -> HandlerResult { resp_options!(req) }
     );
 
+    let store_metrics = std::sync::Arc::clone(&config_store);
+    let ctx_metrics = Arc::clone(&ctx);
+    register!(
+        server,
+        "/api/metrics",
+        Method::Get,
+        move |req| -> HandlerResult { activated_get_json!(req, store_metrics, ctx_metrics, handlers::metrics::body) }
+    );
+    register!(
+        server,
+        "/api/metrics",
+        Method::Options,
+        |req| -> HandlerResult { resp_options!(req) }
+    );
+
+    let store_resource = std::sync::Arc::clone(&config_store);
+    let ctx_resource = Arc::clone(&ctx);
+    register!(
+        server,
+        "/api/resource",
+        Method::Get,
+        move |req| -> HandlerResult { activated_get_json!(req, store_resource, ctx_resource, handlers::resource::body) }
+    );
+    register!(
+        server,
+        "/api/resource",
+        Method::Options,
+        |req| -> HandlerResult { resp_options!(req) }
+    );
+
     let store_diag = std::sync::Arc::clone(&config_store);
     let ctx_diag = Arc::clone(&ctx);
     register!(
@@ -596,22 +626,69 @@ pub fn run(
         Method::Get,
         move |req| -> HandlerResult {
             require_activated!(req, store_sess);
-            match handlers::sessions::body(ctx_sess.as_ref()) {
-                Ok(body) => {
-                    let mut resp = req
-                        .into_response(200, Some("OK"), CORS_HEADERS)
-                        .map_err(to_io)?;
-                    resp.write_all(body.as_bytes()).map_err(to_io)?;
-                }
+            // ?chat_id=xxx returns detail; no param returns list.
+            let chat_id = common::name_from_uri(req.uri())
+                .or_else(|| {
+                    let uri = req.uri();
+                    let query = uri.find('?').map(|i| &uri[i + 1..]).unwrap_or("");
+                    for pair in query.split('&') {
+                        let mut it = pair.splitn(2, '=');
+                        if it.next().map_or(false, |k| k.eq_ignore_ascii_case("chat_id")) {
+                            return it.next().filter(|s| !s.is_empty()).map(String::from);
+                        }
+                    }
+                    None
+                });
+            let result = match chat_id {
+                Some(id) => handlers::sessions::detail(ctx_sess.as_ref(), &id),
+                None => handlers::sessions::body(ctx_sess.as_ref()),
+            };
+            match result {
+                Ok(body) => write_json_200!(req, body),
                 Err(msg) => {
                     let body = format!(r#"{{"error":"{}"}}"#, msg.replace('"', "\\\""));
-                    let mut resp = req
-                        .into_response(500, Some("Internal Server Error"), CORS_HEADERS)
-                        .map_err(to_io)?;
-                    resp.write_all(body.as_bytes()).map_err(to_io)?;
+                    write_response!(req, 500, "Internal Server Error", CORS_HEADERS, body.as_bytes())
                 }
             }
-            Ok(())
+        }
+    );
+
+    let store_sess_del = std::sync::Arc::clone(&config_store);
+    let ctx_sess_del = Arc::clone(&ctx);
+    register!(
+        server,
+        "/api/sessions",
+        Method::Delete,
+        move |req| -> HandlerResult {
+            require_pairing_code!(req, store_sess_del);
+            let chat_id = {
+                let uri = req.uri();
+                let query = uri.find('?').map(|i| &uri[i + 1..]).unwrap_or("");
+                let mut found = None;
+                for pair in query.split('&') {
+                    let mut it = pair.splitn(2, '=');
+                    if it.next().map_or(false, |k| k.eq_ignore_ascii_case("chat_id")) {
+                        found = it.next().filter(|s| !s.is_empty()).map(String::from);
+                        break;
+                    }
+                }
+                found
+            };
+            match chat_id {
+                Some(id) => {
+                    match handlers::sessions::delete(ctx_sess_del.as_ref(), &id) {
+                        Ok(body) => write_json_200!(req, body),
+                        Err(msg) => {
+                            let r = ApiResponse::err_500(&msg);
+                            write_api_resp!(req, r)
+                        }
+                    }
+                }
+                None => {
+                    let r = ApiResponse::err_400("missing chat_id query param");
+                    write_api_resp!(req, r)
+                }
+            }
         }
     );
 
@@ -901,6 +978,58 @@ pub fn run(
     register!(
         server,
         "/api/feishu/event",
+        Method::Options,
+        |req| -> HandlerResult { resp_options!(req) }
+    );
+
+    // --- DingTalk webhook inbound ---
+    let dingtalk_tx = inbound_tx.clone();
+    let store_dingtalk_wh = std::sync::Arc::clone(&config_store);
+    register!(
+        server,
+        "/api/dingtalk/webhook",
+        Method::Post,
+        move |mut req| -> HandlerResult {
+            let body_str = read_body_utf8!(req, POST_BODY_MAX_LEN, store_dingtalk_wh);
+            let r = handlers::dingtalk_webhook::post(&dingtalk_tx, &body_str)
+                .map_err(to_io)?;
+            write_api_resp!(req, r)
+        }
+    );
+    register!(
+        server,
+        "/api/dingtalk/webhook",
+        Method::Options,
+        |req| -> HandlerResult { resp_options!(req) }
+    );
+
+    // --- WeCom webhook inbound ---
+    register!(
+        server,
+        "/api/wecom/webhook",
+        Method::Get,
+        move |req| -> HandlerResult {
+            let r = handlers::wecom_webhook::get_verify(req.uri());
+            write_response!(req, r.status, r.status_text, CORS_HEADERS, &r.body)
+        }
+    );
+    let ctx_wecom_wh_post = Arc::clone(&ctx);
+    let store_wecom_wh_post = std::sync::Arc::clone(&config_store);
+    let wecom_tx_post = inbound_tx.clone();
+    register!(
+        server,
+        "/api/wecom/webhook",
+        Method::Post,
+        move |mut req| -> HandlerResult {
+            let body_str = read_body_utf8!(req, POST_BODY_MAX_LEN, store_wecom_wh_post);
+            let r = handlers::wecom_webhook::post(ctx_wecom_wh_post.as_ref(), &wecom_tx_post, &body_str)
+                .map_err(to_io)?;
+            write_api_resp!(req, r)
+        }
+    );
+    register!(
+        server,
+        "/api/wecom/webhook",
         Method::Options,
         |req| -> HandlerResult { resp_options!(req) }
     );

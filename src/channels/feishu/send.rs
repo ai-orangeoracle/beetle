@@ -21,7 +21,7 @@ pub struct FeishuTokenResponse {
     pub code: i32,
 }
 
-fn acquire_tenant_token<H: ChannelHttpClient>(
+pub fn acquire_tenant_token<H: ChannelHttpClient>(
     http: &mut H,
     app_id: &str,
     app_secret: &str,
@@ -178,6 +178,80 @@ pub fn run_feishu_sender_loop<H, F>(
             log::error!("[{}] message dropped after 3 retries, chat_id={}", TAG, chat_id);
         }
     }
+}
+
+/// 发送消息并返回平台侧 message_id（字符串形式）；供流式编辑使用。
+/// 需先调用 acquire_tenant_token 获取 token。
+pub fn send_and_get_id<H: ChannelHttpClient>(
+    http: &mut H,
+    token: &str,
+    chat_id: &str,
+    content: &str,
+) -> crate::error::Result<Option<String>> {
+    let text_json = serde_json::json!({ "text": content });
+    let content_str = serde_json::to_string(&text_json).unwrap_or_else(|_| "{\"text\":\"\"}".to_string());
+    let body = serde_json::json!({
+        "receive_id": chat_id,
+        "msg_type": "text",
+        "content": content_str,
+    });
+    let body_bytes = serde_json::to_vec(&body).map_err(|e| crate::error::Error::Other {
+        source: Box::new(e),
+        stage: "feishu_send",
+    })?;
+    let auth_val = format!("Bearer {}", token);
+    let headers = [
+        ("Authorization", auth_val.as_str()),
+        ("Content-Type", "application/json; charset=utf-8"),
+    ];
+    let (status, resp_body) = http.http_post_with_headers(FEISHU_SEND_URL, &headers, &body_bytes)
+        .map_err(|e| crate::error::Error::Other {
+            source: Box::new(e),
+            stage: "feishu_send",
+        })?;
+    if status >= 400 {
+        return Err(crate::error::Error::Http { status_code: status, stage: "feishu_send" });
+    }
+    #[derive(serde::Deserialize)]
+    struct R { data: Option<Inner> }
+    #[derive(serde::Deserialize)]
+    struct Inner { message_id: Option<String> }
+    let r: R = serde_json::from_slice(resp_body.as_ref()).unwrap_or(R { data: None });
+    Ok(r.data.and_then(|d| d.message_id))
+}
+
+/// 编辑已发送的飞书消息（PATCH /im/v1/messages/{message_id}）。
+pub fn edit_message<H: ChannelHttpClient>(
+    http: &mut H,
+    token: &str,
+    message_id: &str,
+    content: &str,
+) -> crate::error::Result<()> {
+    let text_json = serde_json::json!({ "text": content });
+    let content_str = serde_json::to_string(&text_json).unwrap_or_else(|_| "{\"text\":\"\"}".to_string());
+    let body = serde_json::json!({
+        "msg_type": "text",
+        "content": content_str,
+    });
+    let body_bytes = serde_json::to_vec(&body).map_err(|e| crate::error::Error::Other {
+        source: Box::new(e),
+        stage: "feishu_edit",
+    })?;
+    let url = format!("https://open.feishu.cn/open-apis/im/v1/messages/{}", message_id);
+    let auth_val = format!("Bearer {}", token);
+    let headers = [
+        ("Authorization", auth_val.as_str()),
+        ("Content-Type", "application/json; charset=utf-8"),
+    ];
+    let (status, _) = http.http_post_with_headers(&url, &headers, &body_bytes)
+        .map_err(|e| crate::error::Error::Other {
+            source: Box::new(e),
+            stage: "feishu_edit",
+        })?;
+    if status >= 400 {
+        return Err(crate::error::Error::Http { status_code: status, stage: "feishu_edit" });
+    }
+    Ok(())
 }
 
 /// 连通性检查：供 GET /api/channel_connectivity 使用。

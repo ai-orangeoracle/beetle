@@ -39,6 +39,14 @@ pub const REL_PATH_SESSION_SUMMARIES: &str = "memory/session_summaries.json";
 pub trait SessionSummaryStore: Send + Sync {
     fn get(&self, chat_id: &str) -> Result<Option<String>>;
     fn set(&self, chat_id: &str, summary: &str) -> Result<()>;
+    /// 带 message_count 的 set；实现方同时记录当时的会话消息条数。
+    fn set_with_count(&self, chat_id: &str, summary: &str, _message_count: usize) -> Result<()> {
+        self.set(chat_id, summary)
+    }
+    /// 获取摘要及其对应的 message_count；返回 (summary, last_message_count)。
+    fn get_with_count(&self, chat_id: &str) -> Result<Option<(String, usize)>> {
+        self.get(chat_id).map(|opt| opt.map(|s| (s, 0)))
+    }
 }
 
 /// 重要消息存储。offset_from_end=1 表示最后一条 user 消息。供 build_context 截断时优先保留。
@@ -151,6 +159,10 @@ pub trait SessionStore {
     fn clear(&self, chat_id: &str) -> Result<()>;
     /// 列举所有会话的 chat_id（如 sessions 目录下 *.jsonl 文件名去掉后缀）。用于 GET /api/sessions。
     fn list_chat_ids(&self) -> Result<Vec<String>>;
+    /// 清理超过 max_age_secs 未修改的会话文件，返回清理数量。默认 no-op。
+    fn gc_stale(&self, _max_age_secs: u64) -> Result<usize> { Ok(0) }
+    /// 删除指定 chat_id 的会话文件。默认调用 clear。
+    fn delete(&self, chat_id: &str) -> Result<()> { self.clear(chat_id) }
 }
 
 /// 系统提示聚合：SOUL + USER + MEMORY + 近期每日笔记，总长度不超过 max_len。

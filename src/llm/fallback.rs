@@ -68,4 +68,61 @@ impl LlmClient for FallbackLlmClient {
         *self.last_error.borrow_mut() = Some(err.to_string());
         Err(err)
     }
+
+    fn chat_with_progress(
+        &self,
+        http: &mut dyn LlmHttpClient,
+        system: &str,
+        messages: &[Message],
+        tools: Option<&[ToolSpec]>,
+        on_progress: crate::llm::StreamProgressFn,
+    ) -> Result<LlmResponse> {
+        if self.clients.is_empty() {
+            let err = crate::error::Error::config(
+                "fallback_llm",
+                "no LLM sources configured",
+            );
+            *self.last_error.borrow_mut() = Some(err.to_string());
+            return Err(err);
+        }
+        // 第一个源使用 progress 回调。
+        let first_result = self.clients[0].chat_with_progress(http, system, messages, tools, on_progress);
+        match first_result {
+            Ok(r) => {
+                crate::platform::task_wdt::feed_current_task();
+                return Ok(r);
+            }
+            Err(e) => {
+                crate::platform::task_wdt::feed_current_task();
+                if self.clients.len() > 1 {
+                    log::warn!("[fallback_llm] source 0 failed, trying next: {}", e);
+                } else {
+                    *self.last_error.borrow_mut() = Some(e.to_string());
+                    return Err(e);
+                }
+            }
+        }
+        // 后续源降级为普通 chat。
+        let mut last_err = None;
+        for (i, client) in self.clients.iter().enumerate().skip(1) {
+            match client.chat(http, system, messages, tools) {
+                Ok(r) => {
+                    crate::platform::task_wdt::feed_current_task();
+                    return Ok(r);
+                }
+                Err(e) => {
+                    crate::platform::task_wdt::feed_current_task();
+                    if i + 1 < self.clients.len() {
+                        log::warn!("[fallback_llm] source {} failed, trying next: {}", i, e);
+                    }
+                    last_err = Some(e);
+                }
+            }
+        }
+        let err = last_err.unwrap_or_else(||
+            crate::error::Error::config("fallback_llm", "llm fallback returned no result")
+        );
+        *self.last_error.borrow_mut() = Some(err.to_string());
+        Err(err)
+    }
 }

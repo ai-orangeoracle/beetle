@@ -16,7 +16,7 @@ pub use noop::NoopLlmClient;
 pub use openai_compatible::OpenAiCompatibleClient;
 
 pub use types::{
-    LlmResponse, Message, StopReason, ToolCall, ToolSpec, MAX_MESSAGE_CONTENT_LEN,
+    LlmResponse, Message, StopReason, StreamProgressFn, ToolCall, ToolSpec, MAX_MESSAGE_CONTENT_LEN,
     MAX_REQUEST_BODY_LEN,
 };
 
@@ -123,4 +123,17 @@ pub trait LlmClient {
         messages: &[Message],
         tools: Option<&[ToolSpec]>,
     ) -> Result<LlmResponse>;
+
+    /// 带流式进度回调的 chat；默认忽略 progress，走普通 chat。
+    /// on_progress(delta, accumulated) 在每次收到 text_delta 时调用。
+    fn chat_with_progress(
+        &self,
+        http: &mut dyn LlmHttpClient,
+        system: &str,
+        messages: &[Message],
+        tools: Option<&[ToolSpec]>,
+        _on_progress: StreamProgressFn,
+    ) -> Result<LlmResponse> {
+        self.chat(http, system, messages, tools)
+    }
 }

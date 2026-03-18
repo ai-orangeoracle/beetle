@@ -86,6 +86,15 @@ pub enum WorkerOutcome {
     Interrupt(String),
 }
 
+/// 流式编辑器：LLM 流式输出期间，发送占位消息并逐步编辑内容。
+/// 实现方内部自行创建/管理 HTTP 连接，不占用 agent 的 LLM HTTP 连接。
+pub trait StreamEditor {
+    /// 发送初始占位消息，返回 message_id（用于后续编辑）。
+    fn send_initial(&self, chat_id: &str, content: &str) -> Result<Option<String>>;
+    /// 编辑已发送的消息。
+    fn edit(&self, chat_id: &str, message_id: &str, content: &str) -> Result<()>;
+}
+
 /// Agent 循环的存储与运行参数，由 main 构建并传入 run_agent_loop，减少参数数量。
 pub struct AgentLoopConfig<'a> {
     pub memory_store: &'a dyn MemoryStore,
@@ -100,6 +109,10 @@ pub struct AgentLoopConfig<'a> {
     pub important_message_store: &'a dyn ImportantMessageStore,
     pub emotion_signal_store: &'a dyn EmotionSignalStore,
     pub pending_retry: &'a dyn PendingRetryStore,
+    /// 全局 LLM 流式模式；true 时 agent 使用 chat_with_progress 回调。
+    pub llm_stream: bool,
+    /// 流式编辑器；llm_stream 开且通道支持编辑时由 main 传入。
+    pub stream_editor: Option<&'a dyn StreamEditor>,
 }
 
 /// 从 inbound_rx 取一条 PcMsg，构建 context，多轮 chat（含 tool 执行），写会话并发送一条出站。
@@ -262,7 +275,7 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
                         crate::platform::task_wdt::feed_current_task();
                         let line = resp.content.trim();
                         if line.starts_with("REPLY: ") {
-                            Ok((WorkerOutcome::Content(line["REPLY: ".len()..].trim().to_string()), None))
+                            Ok((WorkerOutcome::Content(line["REPLY: ".len()..].trim().to_string()), None, false))
                         } else {
                             run_worker_path(
                                 http,
@@ -293,7 +306,7 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
             ),
         };
 
-        let (outcome, consumed_round) = match final_content {
+        let (outcome, consumed_round, streamed) = match final_content {
             Ok(ok) => ok,
             Err(e) => {
                 crate::platform::task_wdt::feed_current_task();
@@ -362,7 +375,7 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
         if !is_interrupt && config.task_continuation_max_rounds > 0 {
             match consumed_round {
                 Some(round) => {
-                    if round + 1 <= config.task_continuation_max_rounds
+                    if round < config.task_continuation_max_rounds
                         && (reply_content.contains("[CONTINUE]")
                             || reply_content.len() > TASK_CONTINUATION_CONTINUE_THRESHOLD_LEN)
                     {
@@ -408,22 +421,29 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
             llm_failure_count.retain(|_, (count, ts)| *count > 0 && now.duration_since(*ts) < Duration::from_secs(300));
         }
 
-        let out = PcMsg {
-            channel: msg.channel.clone(),
-            chat_id: msg.chat_id.clone(),
-            content: reply_content,
-            is_group: false,
-        };
-        metrics::record_message_out();
-        crate::platform::task_wdt::feed_current_task();
-        if let Err(e) = outbound_tx.try_send(out) {
-            log::warn!("[agent] outbound queue full or disconnected: {}", e);
+        // 流式编辑已发送到通道时，跳过 outbound_tx 避免重复发送。
+        if !streamed {
+            let out = PcMsg {
+                channel: msg.channel.clone(),
+                chat_id: msg.chat_id.clone(),
+                content: reply_content,
+                is_group: false,
+            };
+            metrics::record_message_out();
+            crate::platform::task_wdt::feed_current_task();
+            if let Err(e) = outbound_tx.try_send(out) {
+                log::warn!("[agent] outbound queue full or disconnected: {}", e);
+            }
+        } else {
+            metrics::record_message_out();
+            crate::platform::task_wdt::feed_current_task();
         }
     }
     Ok(())
 }
 
-/// 完整 context + worker LLM + ReAct 循环，返回 (WorkerOutcome, consumed_round)。不写 session，由调用方写。
+/// 完整 context + worker LLM + ReAct 循环，返回 (WorkerOutcome, consumed_round, streamed)。不写 session，由调用方写。
+/// streamed=true 表示已通过流式编辑发送到通道，调用方应跳过 outbound_tx。
 fn run_worker_path<H: PlatformHttpClient>(
     http: &mut H,
     worker_llm: &dyn LlmClient,
@@ -431,7 +451,7 @@ fn run_worker_path<H: PlatformHttpClient>(
     registry: &crate::tools::ToolRegistry,
     config: &AgentLoopConfig<'_>,
     tool_descriptions: &str,
-) -> Result<(WorkerOutcome, Option<u32>)> {
+) -> Result<(WorkerOutcome, Option<u32>, bool)> {
     let mut tool_ctx = AgentToolCtx {
         http,
         chat_id: msg.chat_id.clone(),
@@ -460,8 +480,9 @@ fn run_worker_path<H: PlatformHttpClient>(
                 None
             }
         });
-    let summary_opt = config.session_summary_store.get(&msg.chat_id).ok().flatten();
-    let summary_text = summary_opt.as_deref();
+    let summary_with_count = config.session_summary_store.get_with_count(&msg.chat_id).ok().flatten();
+    let summary_text = summary_with_count.as_ref().map(|(s, _)| s.as_str());
+    let summary_last_count = summary_with_count.as_ref().map(|(_, c)| *c).unwrap_or(0);
     let budget = crate::orchestrator::current_budget();
     let (system, mut messages) = build_context(
         msg,
@@ -477,10 +498,17 @@ fn run_worker_path<H: PlatformHttpClient>(
         suffix.as_deref(),
         emotion_signal_suffix,
         summary_text,
+        summary_last_count,
     )
     .map_err(|e| e.with_stage("agent_context"))?;
 
     let mut final_content = String::new();
+    // 流式编辑状态（跨 ReAct 轮次共享）。
+    let editor = if config.llm_stream { config.stream_editor } else { None };
+    let mut stream_msg_id: Option<String> = None;
+    let mut last_edit_time = Instant::now();
+    const EDIT_THROTTLE_MS: u64 = 500;
+
     for _round in 0..MAX_REACT_ROUNDS {
         // Inter-round pressure check: skip first round (already gated by caller).
         if _round > 0 {
@@ -498,7 +526,41 @@ fn run_worker_path<H: PlatformHttpClient>(
             }
         }
         let t0 = metrics::record_llm_call_start();
-        let response = match worker_llm.chat(&mut tool_ctx, &system, &messages, Some(config.tool_specs)) {
+        let response = if config.llm_stream {
+            let chat_id_for_cb = msg.chat_id.clone();
+            let mut progress_cb = |_delta: &str, accumulated: &str| {
+                crate::platform::task_wdt::feed_current_task();
+                let Some(ed) = editor else { return };
+                // Critical 压力下跳过流式编辑，节省 HTTP 连接与堆开销。
+                if matches!(crate::orchestrator::current_pressure(), crate::orchestrator::PressureLevel::Critical) {
+                    return;
+                }
+                let now = Instant::now();
+
+                if stream_msg_id.is_none() {
+                    // 首次收到文本：发送占位消息并记录 message_id。
+                    match ed.send_initial(&chat_id_for_cb, accumulated) {
+                        Ok(Some(id)) => {
+                            stream_msg_id = Some(id);
+                            last_edit_time = now;
+                        }
+                        Ok(None) => {}
+                        Err(e) => log::debug!("[agent_stream] send_initial failed: {}", e),
+                    }
+                } else if now.duration_since(last_edit_time) >= Duration::from_millis(EDIT_THROTTLE_MS) {
+                    if let Some(ref mid) = stream_msg_id {
+                        let _ = ed.edit(&chat_id_for_cb, mid, accumulated);
+                        last_edit_time = now;
+                    }
+                }
+            };
+            worker_llm.chat_with_progress(
+                &mut tool_ctx, &system, &messages, Some(config.tool_specs), &mut progress_cb,
+            )
+        } else {
+            worker_llm.chat(&mut tool_ctx, &system, &messages, Some(config.tool_specs))
+        };
+        let response = match response {
             Ok(r) => {
                 metrics::record_llm_call_end(t0);
                 r
@@ -526,7 +588,16 @@ fn run_worker_path<H: PlatformHttpClient>(
             let content = response.content;
             if content.contains(AGENT_MARKER_STOP) {
                 let confirmation = content.replace(AGENT_MARKER_STOP, "").trim().to_string();
-                return Ok((WorkerOutcome::Interrupt(confirmation), consumed_round));
+                // 流式编辑：更新为清理后的确认文案，避免用户看到原始标记。
+                let streamed = if let (Some(ref mid), Some(ed)) = (&stream_msg_id, editor) {
+                    if !confirmation.is_empty() {
+                        let _ = ed.edit(&msg.chat_id, mid, &confirmation);
+                    }
+                    true
+                } else {
+                    false
+                };
+                return Ok((WorkerOutcome::Interrupt(confirmation), consumed_round, streamed));
             }
             final_content = content;
             break;
@@ -593,17 +664,38 @@ fn run_worker_path<H: PlatformHttpClient>(
                 role: "user".to_string(),
                 content: format!("Tool results:\n{}", user_content),
             });
+            // 流式编辑：tool_use 轮进入下一轮前，更新消息提示用户正在处理中。
+            if let (Some(ref mid), Some(ed)) = (&stream_msg_id, editor) {
+                let _ = ed.edit(&msg.chat_id, mid, "正在处理中…");
+            }
             continue;
         }
 
         let content = response.content;
         if content.contains(AGENT_MARKER_STOP) {
             let confirmation = content.replace(AGENT_MARKER_STOP, "").trim().to_string();
-            return Ok((WorkerOutcome::Interrupt(confirmation), consumed_round));
+            let streamed = if let (Some(ref mid), Some(ed)) = (&stream_msg_id, editor) {
+                if !confirmation.is_empty() {
+                    let _ = ed.edit(&msg.chat_id, mid, &confirmation);
+                }
+                true
+            } else {
+                false
+            };
+            return Ok((WorkerOutcome::Interrupt(confirmation), consumed_round, streamed));
         }
         final_content = content;
         break;
     }
-    Ok((WorkerOutcome::Content(final_content), consumed_round))
+    // 流式编辑：最终确认发送完整内容（tool_use 轮后 "正在处理中…" 需更新，或最终追加截断文字）。
+    let streamed = if let (Some(ref mid), Some(ed)) = (&stream_msg_id, editor) {
+        if !final_content.is_empty() {
+            let _ = ed.edit(&msg.chat_id, mid, &final_content);
+        }
+        true
+    } else {
+        false
+    };
+    Ok((WorkerOutcome::Content(final_content), consumed_round, streamed))
 }
 

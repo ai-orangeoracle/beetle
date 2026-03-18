@@ -8,7 +8,9 @@ pub use crate::constants::MAX_REQUEST_BODY_LEN;
 /// 单条 message content 建议上界（字符），超限由调用方截断或返回 Error。
 pub const MAX_MESSAGE_CONTENT_LEN: usize = 64 * 1024;
 
-/// 对话中的一条消息（API 用）。
+/// 流式输出进度回调；delta 为本次新增文本，accumulated 为累计全文。
+/// Stream progress callback; delta = new text, accumulated = full text so far.
+pub type StreamProgressFn<'a> = &'a mut dyn FnMut(&str, &str);
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Message {
     pub role: String,

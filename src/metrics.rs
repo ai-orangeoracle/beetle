@@ -125,7 +125,7 @@ pub fn snapshot() -> MetricsSnapshot {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize)]
 pub struct MetricsSnapshot {
     pub messages_in: u64,
     pub messages_out: u64,

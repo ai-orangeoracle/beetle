@@ -64,6 +64,10 @@ impl SessionSummaryStore for SpiffsSessionSummaryStore {
     }
 
     fn set(&self, chat_id: &str, summary: &str) -> Result<()> {
+        self.set_with_count(chat_id, summary, 0)
+    }
+
+    fn set_with_count(&self, chat_id: &str, summary: &str, message_count: usize) -> Result<()> {
         let path = full_path();
         let mut map: HashMap<String, SummaryEntry> = match read_file(&path) {
             Ok(buf) => {
@@ -85,11 +89,27 @@ impl SessionSummaryStore for SpiffsSessionSummaryStore {
             chat_id.to_string(),
             SummaryEntry {
                 summary: truncate_summary(summary),
-                last_summary_at_count: 0,
+                last_summary_at_count: message_count,
             },
         );
         let json = serde_json::to_vec(&map)
             .map_err(|e| Error::config("session_summary_set", e.to_string()))?;
         write_file(path, &json)
+    }
+
+    fn get_with_count(&self, chat_id: &str) -> Result<Option<(String, usize)>> {
+        let path = full_path();
+        let buf = match read_file(&path) {
+            Ok(b) => b,
+            Err(_) => return Ok(None),
+        };
+        if buf.len() <= 2 {
+            return Ok(None);
+        }
+        let map: HashMap<String, SummaryEntry> = match serde_json::from_slice(&buf) {
+            Ok(m) => m,
+            Err(_) => return Ok(None),
+        };
+        Ok(map.get(chat_id).map(|e| (e.summary.clone(), e.last_summary_at_count)))
     }
 }

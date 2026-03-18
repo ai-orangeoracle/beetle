@@ -10,7 +10,7 @@ use super::state::OrchestratorState;
 
 /// 压力等级：Normal 全量预算，Cautious 缩减，Critical 最低预算并积极丢弃。
 /// Pressure level: Normal = full budget, Cautious = reduced, Critical = minimal + aggressive drop.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[repr(u8)]
 pub enum PressureLevel {
     Normal = 0,
@@ -30,7 +30,7 @@ impl PressureLevel {
 
 /// 当前压力下各子系统的预算与策略。由 `current_budget()` 返回，无锁只读。
 /// Budget and strategy per pressure level. Returned by `current_budget()`, lock-free read-only.
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize)]
 pub struct ResourceBudget {
     pub level: PressureLevel,
     pub system_prompt_max: usize,

@@ -15,6 +15,17 @@ use std::time::Duration;
 /// 出站发送抽象；各通道实现此 trait，由 main 注册到 ChannelSinks。
 pub trait MessageSink: Send + Sync {
     fn send(&self, chat_id: &str, content: &str) -> Result<()>;
+
+    /// 发送消息并返回平台侧 message_id（用于后续编辑）。默认回退到 send + None。
+    fn send_and_get_id(&self, chat_id: &str, content: &str) -> Result<Option<String>> {
+        self.send(chat_id, content)?;
+        Ok(None)
+    }
+
+    /// 编辑已发送的消息。默认 no-op（不支持编辑的通道直接忽略）。
+    fn edit(&self, _chat_id: &str, _message_id: &str, _content: &str) -> Result<()> {
+        Ok(())
+    }
 }
 
 /// 队列型 Sink：将 (chat_id, content) 送入 channel，由 main 的 flush_*_sends 消费。各通道仅 stage 不同。

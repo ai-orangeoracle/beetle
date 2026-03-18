@@ -90,11 +90,14 @@ impl OrchestratorState {
 
 /// 全局资源快照（无锁原子读取）。
 /// Global resource snapshot (lock-free atomic reads).
+#[derive(serde::Serialize)]
 pub struct ResourceSnapshot {
     pub pressure: super::pressure::PressureLevel,
     pub heap_free_internal: u32,
     pub heap_free_spiram: u32,
     pub active_http_count: u32,
+    pub inbound_depth: u32,
+    pub outbound_depth: u32,
     pub budget: super::pressure::ResourceBudget,
 }
 
@@ -108,6 +111,8 @@ impl ResourceSnapshot {
             heap_free_internal: state.heap_free_internal.load(Ordering::Relaxed),
             heap_free_spiram: state.heap_free_spiram.load(Ordering::Relaxed),
             active_http_count: state.active_http_count.load(Ordering::Relaxed),
+            inbound_depth: state.inbound_depth.load(Ordering::Relaxed),
+            outbound_depth: state.outbound_depth.load(Ordering::Relaxed),
             budget: super::pressure::budget_for_level(pressure),
         }
     }

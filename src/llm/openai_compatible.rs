@@ -130,6 +130,69 @@ fn finish_reason_to_stop_reason(s: Option<&str>) -> StopReason {
     }
 }
 
+fn build_request_body(
+    model: &str,
+    max_tokens: u32,
+    system: &str,
+    messages: &[Message],
+    tools: Option<&[ToolSpec]>,
+    stream: bool,
+) -> Result<Vec<u8>> {
+    let mut req_messages: Vec<OpenAiRequestMessage> = Vec::new();
+    if !system.is_empty() {
+        req_messages.push(OpenAiRequestMessage {
+            role: "system".to_string(),
+            content: system.to_string(),
+        });
+    }
+    for m in messages {
+        req_messages.push(OpenAiRequestMessage {
+            role: m.role.clone(),
+            content: m.content.clone(),
+        });
+    }
+
+    let tools_api = tools.and_then(|t| {
+        if t.is_empty() {
+            None
+        } else {
+            Some(
+                t.iter()
+                    .map(|s| OpenAiTool {
+                        tool_type: "function".to_string(),
+                        function: OpenAiFunctionSpec {
+                            name: s.name.clone(),
+                            description: s.description.clone(),
+                            parameters: Some(s.parameters.clone()),
+                        },
+                    })
+                    .collect::<Vec<_>>(),
+            )
+        }
+    });
+
+    let req = OpenAiRequest {
+        model: model.to_string(),
+        max_tokens,
+        messages: req_messages,
+        tools: tools_api,
+        stream: if stream { Some(true) } else { None },
+    };
+
+    let body = serde_json::to_vec(&req).map_err(|e| Error::Other {
+        source: Box::new(e),
+        stage: "llm_parse",
+    })?;
+
+    if body.len() > MAX_REQUEST_BODY_LEN {
+        return Err(Error::config(
+            "llm_request",
+            format!("request body exceeds {} bytes", MAX_REQUEST_BODY_LEN),
+        ));
+    }
+    Ok(body)
+}
+
 impl LlmClient for OpenAiCompatibleClient {
     fn chat(
         &self,
@@ -138,69 +201,34 @@ impl LlmClient for OpenAiCompatibleClient {
         messages: &[Message],
         tools: Option<&[ToolSpec]>,
     ) -> Result<LlmResponse> {
-        let mut req_messages: Vec<OpenAiRequestMessage> = Vec::new();
-        if !system.is_empty() {
-            req_messages.push(OpenAiRequestMessage {
-                role: "system".to_string(),
-                content: system.to_string(),
-            });
-        }
-        for m in messages {
-            req_messages.push(OpenAiRequestMessage {
-                role: m.role.clone(),
-                content: m.content.clone(),
-            });
-        }
-
-        let tools_api = tools.and_then(|t| {
-            if t.is_empty() {
-                None
-            } else {
-                Some(
-                    t.iter()
-                        .map(|s| OpenAiTool {
-                            tool_type: "function".to_string(),
-                            function: OpenAiFunctionSpec {
-                                name: s.name.clone(),
-                                description: s.description.clone(),
-                                parameters: Some(s.parameters.clone()),
-                            },
-                        })
-                        .collect::<Vec<_>>(),
-                )
-            }
-        });
-
-        let req = OpenAiRequest {
-            model: self.model.clone(),
-            max_tokens: self.max_tokens,
-            messages: req_messages,
-            tools: tools_api,
-            stream: if self.stream { Some(true) } else { None },
-        };
-
-        let body = serde_json::to_vec(&req).map_err(|e| Error::Other {
-            source: Box::new(e),
-            stage: "llm_parse",
-        })?;
-
-        if body.len() > MAX_REQUEST_BODY_LEN {
-            return Err(Error::config(
-                "llm_request",
-                format!("request body exceeds {} bytes", MAX_REQUEST_BODY_LEN),
-            ));
-        }
-
+        let body = build_request_body(&self.model, self.max_tokens, system, messages, tools, self.stream)?;
         let url = format!("{}{}", self.api_base, CHAT_PATH);
         if self.stream {
             crate::llm::retry::with_retry(2, 500, TAG, http, |http| {
-                do_request_streaming(http, &url, &self.api_key, &body)
+                do_request_streaming(http, &url, &self.api_key, &body, None)
             })
         } else {
             crate::llm::retry::with_retry(2, 500, TAG, http, |http| {
                 do_request(http, &url, &self.api_key, &body)
             })
         }
+    }
+
+    fn chat_with_progress(
+        &self,
+        http: &mut dyn LlmHttpClient,
+        system: &str,
+        messages: &[Message],
+        tools: Option<&[ToolSpec]>,
+        on_progress: crate::llm::StreamProgressFn,
+    ) -> Result<LlmResponse> {
+        if !self.stream {
+            return self.chat(http, system, messages, tools);
+        }
+        let body = build_request_body(&self.model, self.max_tokens, system, messages, tools, true)?;
+        let url = format!("{}{}", self.api_base, CHAT_PATH);
+        // Cannot use retry wrapper with mutable on_progress, so do single attempt.
+        do_request_streaming(http, &url, &self.api_key, &body, Some(on_progress))
     }
 }
 
@@ -400,11 +428,28 @@ impl OpenAiStreamAccumulator {
     }
 }
 
+/// 从 OpenAI SSE data 中提取 choices[0].delta.content 文本（用于进度回调）。
+fn extract_content_delta(data: &str) -> Option<String> {
+    if data == "[DONE]" {
+        return None;
+    }
+    let val: serde_json::Value = serde_json::from_str(data).ok()?;
+    val.get("choices")
+        .and_then(|v| v.as_array())
+        .and_then(|arr| arr.first())
+        .and_then(|c| c.get("delta"))
+        .and_then(|d| d.get("content"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+}
+
 fn do_request_streaming(
     http: &mut dyn LlmHttpClient,
     url: &str,
     api_key: &str,
     body: &[u8],
+    on_progress: Option<crate::llm::StreamProgressFn>,
 ) -> Result<LlmResponse> {
     let mut cl_buf = [0u8; 20];
     let content_length = crate::util::usize_to_decimal_buf(&mut cl_buf, body.len());
@@ -419,11 +464,19 @@ fn do_request_streaming(
 
     let mut accumulator = OpenAiStreamAccumulator::new();
     let mut sse_reader = crate::llm::sse::SseLineReader::new();
+    let mut progress_cb = on_progress;
 
     let status = http.do_post_streaming(url, &headers, body, &mut |chunk| {
         sse_reader.feed(chunk);
         while let Some(event) = sse_reader.next_event() {
+            // Extract delta text before handling, for progress callback.
+            let delta_text = extract_content_delta(&event.data);
+
             accumulator.handle_data(&event.data);
+
+            if let (Some(ref delta), Some(ref mut cb)) = (&delta_text, &mut progress_cb) {
+                cb(delta, &accumulator.content);
+            }
         }
         Ok(())
     }).map_err(|e| match e {

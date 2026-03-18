@@ -65,55 +65,11 @@ impl LlmClient for AnthropicClient {
         messages: &[Message],
         tools: Option<&[ToolSpec]>,
     ) -> Result<LlmResponse> {
-        let tools_api = tools.and_then(|t| {
-            if t.is_empty() {
-                None
-            } else {
-                Some(
-                    t.iter()
-                        .map(|s| AnthropicTool {
-                            name: s.name.clone(),
-                            description: s.description.clone(),
-                            input_schema: s.parameters.clone(),
-                        })
-                        .collect::<Vec<_>>(),
-                )
-            }
-        });
-        let req = AnthropicRequest {
-            model: self.model.clone(),
-            max_tokens: self.max_tokens,
-            system: if system.is_empty() {
-                None
-            } else {
-                Some(system.to_string())
-            },
-            messages: messages
-                .iter()
-                .map(|m| AnthropicRequestMessage {
-                    role: m.role.clone(),
-                    content: m.content.clone(),
-                })
-                .collect(),
-            tools: tools_api,
-            stream: if self.stream { Some(true) } else { None },
-        };
-
-        let body = serde_json::to_vec(&req).map_err(|e| Error::Other {
-            source: Box::new(e),
-            stage: "llm_parse",
-        })?;
-
-        if body.len() > MAX_REQUEST_BODY_LEN {
-            return Err(Error::config(
-                "llm_request",
-                format!("request body exceeds {} bytes", MAX_REQUEST_BODY_LEN),
-            ));
-        }
+        let body = build_request_body(&self.model, self.max_tokens, system, messages, tools, self.stream)?;
 
         if self.stream {
             crate::llm::retry::with_retry(2, 500, TAG, http, |http| {
-                do_request_streaming(http, &self.api_base, &self.api_key, &body)
+                do_request_streaming(http, &self.api_base, &self.api_key, &body, None)
             })
         } else {
             crate::llm::retry::with_retry(2, 500, TAG, http, |http| {
@@ -121,6 +77,76 @@ impl LlmClient for AnthropicClient {
             })
         }
     }
+
+    fn chat_with_progress(
+        &self,
+        http: &mut dyn LlmHttpClient,
+        system: &str,
+        messages: &[Message],
+        tools: Option<&[ToolSpec]>,
+        on_progress: crate::llm::StreamProgressFn,
+    ) -> Result<LlmResponse> {
+        if !self.stream {
+            return self.chat(http, system, messages, tools);
+        }
+        let body = build_request_body(&self.model, self.max_tokens, system, messages, tools, true)?;
+        // Cannot use retry wrapper with mutable on_progress, so do single attempt.
+        do_request_streaming(http, &self.api_base, &self.api_key, &body, Some(on_progress))
+    }
+}
+
+fn build_request_body(
+    model: &str,
+    max_tokens: u32,
+    system: &str,
+    messages: &[Message],
+    tools: Option<&[ToolSpec]>,
+    stream: bool,
+) -> Result<Vec<u8>> {
+    let tools_api = tools.and_then(|t| {
+        if t.is_empty() {
+            None
+        } else {
+            Some(
+                t.iter()
+                    .map(|s| AnthropicTool {
+                        name: s.name.clone(),
+                        description: s.description.clone(),
+                        input_schema: s.parameters.clone(),
+                    })
+                    .collect::<Vec<_>>(),
+            )
+        }
+    });
+    let req = AnthropicRequest {
+        model: model.to_string(),
+        max_tokens,
+        system: if system.is_empty() {
+            None
+        } else {
+            Some(system.to_string())
+        },
+        messages: messages
+            .iter()
+            .map(|m| AnthropicRequestMessage {
+                role: m.role.clone(),
+                content: m.content.clone(),
+            })
+            .collect(),
+        tools: tools_api,
+        stream: if stream { Some(true) } else { None },
+    };
+    let body = serde_json::to_vec(&req).map_err(|e| Error::Other {
+        source: Box::new(e),
+        stage: "llm_parse",
+    })?;
+    if body.len() > MAX_REQUEST_BODY_LEN {
+        return Err(Error::config(
+            "llm_request",
+            format!("request body exceeds {} bytes", MAX_REQUEST_BODY_LEN),
+        ));
+    }
+    Ok(body)
 }
 
 fn do_request(
@@ -285,6 +311,7 @@ fn do_request_streaming(
     url: &str,
     api_key: &str,
     body: &[u8],
+    on_progress: Option<crate::llm::StreamProgressFn>,
 ) -> Result<LlmResponse> {
     const ANTHROPIC_VERSION: &str = "2023-06-01";
     let mut cl_buf = [0u8; 20];
@@ -298,11 +325,32 @@ fn do_request_streaming(
 
     let mut accumulator = AnthropicStreamAccumulator::new();
     let mut sse_reader = crate::llm::sse::SseLineReader::new();
+    let mut progress_cb = on_progress;
 
     let status = http.do_post_streaming(url, &headers, body, &mut |chunk| {
         sse_reader.feed(chunk);
         while let Some(event) = sse_reader.next_event() {
+            // Check for text_delta before handling, to capture the delta for progress callback.
+            let delta_text = if event.event == "content_block_delta" {
+                if let Ok(val) = serde_json::from_str::<serde_json::Value>(&event.data) {
+                    val.get("delta")
+                        .and_then(|d| d.get("type"))
+                        .and_then(|t| t.as_str())
+                        .filter(|&t| t == "text_delta")
+                        .and_then(|_| val.get("delta").and_then(|d| d.get("text")).and_then(|t| t.as_str()))
+                        .map(|s| s.to_string())
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
             accumulator.handle_event(&event.event, &event.data);
+
+            if let (Some(ref delta), Some(ref mut cb)) = (&delta_text, &mut progress_cb) {
+                cb(delta, &accumulator.content);
+            }
         }
         Ok(())
     }).map_err(|e| match e {

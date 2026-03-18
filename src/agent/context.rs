@@ -36,6 +36,7 @@ pub fn build_context(
     system_continuation_suffix: Option<&str>,
     emotion_signal_suffix: Option<&str>,
     summary_text: Option<&str>,
+    summary_last_count: usize,
 ) -> Result<(String, Vec<Message>)> {
     let soul_res = memory.get_soul();
     state::set_soul_load_ok(soul_res.is_ok());
@@ -130,12 +131,13 @@ pub fn build_context(
 
     let n = session_max_messages.max(1).min(128);
     let recent = session.load_recent(&msg.chat_id, n).unwrap_or_else(|_| vec![]);
+    let current_message_count = recent.len();
     let cap = recent.len() + if summary_text.is_some() { 2 } else { 1 };
     let mut messages: Vec<Message> = Vec::with_capacity(cap);
     if let Some(summary) = summary_text {
         messages.push(Message {
             role: "user".to_string(),
-            content: format!("[Previous conversation summary]\n{}", summary),
+            content: format!("[CONTEXT_SUMMARY]\n{}\n[/CONTEXT_SUMMARY]", summary),
         });
     }
     messages.extend(recent.into_iter().map(|m| Message {
@@ -146,6 +148,19 @@ pub fn build_context(
         role: "user".to_string(),
         content: msg.content.clone(),
     });
+
+    // Session maintenance: inject summary trigger when messages accumulate.
+    let needs_summary_update = current_message_count >= 20
+        && (summary_text.is_none() || current_message_count.saturating_sub(summary_last_count) >= 10);
+    if needs_summary_update {
+        let maintenance_hint = format!(
+            "\n\n[SESSION MAINTENANCE] 当前会话已有 {} 条消息。请在回复用户后，调用 update_session_summary 工具将关键上下文压缩为摘要，以防止旧消息被截断丢失。",
+            current_message_count
+        );
+        if system.len().saturating_add(maintenance_hint.len()) <= system_max_len {
+            system.push_str(&maintenance_hint);
+        }
+    }
     let important_offset = important_message_store.get_important_offset(&msg.chat_id).ok().flatten();
     truncate_messages_to_len(&mut messages, messages_max_len, important_offset);
     if important_offset.is_some() {
