@@ -8,11 +8,13 @@
 
 ## 板型与资源
 
-| 板型 | Flash | PSRAM | CPU | 备注 |
-|------|-------|-------|-----|------|
-| ESP32-S3 16MB | 16MB | 8MB Octal | 240MHz | 唯一支持板型，大响应体/LLM 请求体优先使用 PSRAM |
+| 板型 (BOARD=) | Flash | PSRAM | CPU | 备注 |
+|---------------|-------|-------|-----|------|
+| `esp32-s3-8mb` | 8MB | 8MB Octal | 240MHz | N8R8；构建时用 `BOARD=esp32-s3-8mb ./build.sh` |
+| `esp32-s3-16mb` | 16MB | 8MB Octal | 240MHz | N16R8；未设 BOARD 时默认 |
+| `esp32-s3-32mb` | 32MB | 16MB Octal | 240MHz | N32R16；构建时用 `BOARD=esp32-s3-32mb ./build.sh` |
 
-- 板型通过 `BOARD=esp32-s3-16mb` 选择（可省略，为默认）；`board_presets.toml` 决定 target。
+- 板型通过 `BOARD=esp32-s3-8mb` | `esp32-s3-16mb` | `esp32-s3-32mb` 选择（可省略，默认 `esp32-s3-16mb`）；`board_presets.toml` 决定 target 与分区表。
 - **仅支持带 PSRAM 的 ESP32-S3**；C3/S2 已不再支持。
 
 ---

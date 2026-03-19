@@ -107,11 +107,13 @@ cargo build --release
 
 ## 支持板型
 
-| BOARD | 说明 |
-|-------|------|
-| `esp32-s3-16mb` | ESP32-S3，16MB Flash + PSRAM（默认，当前唯一支持板型） |
+| BOARD | Flash | PSRAM | 说明 |
+|-------|-------|-------|------|
+| `esp32-s3-8mb` | 8MB | 8MB | N8R8；`BOARD=esp32-s3-8mb ./build.sh` |
+| `esp32-s3-16mb` | 16MB | 8MB | N16R8；未设 BOARD 时默认 |
+| `esp32-s3-32mb` | 32MB | 16MB | N32R16；`BOARD=esp32-s3-32mb ./build.sh` |
 
-分区表由 `board_presets.toml` 与 `sdkconfig.defaults.esp32s3` 决定，**须使用项目自带分区表**，否则会报 `spiffs partition could not be found`。
+分区表与 Flash 大小由 `board_presets.toml` 及构建脚本写入的 `sdkconfig.defaults.esp32s3.board` 决定，**须使用项目自带分区表**，否则会报 `spiffs partition could not be found`。
 
 ---
 

@@ -296,7 +296,7 @@ The device firmware exposes only HTTP APIs and **does not** ship a built-in conf
 - **Response**: Success 200, `{"ok": true}`, then device runs OTA and restarts; invalid or missing url 400, `{"error": "invalid url"}`; OTA download, verify, or write failure 500, `{"error": "human-readable message"}` (e.g. “Network or download failed, check network and retry”, “Firmware verification failed, try another source”, “Write failed, do not power off and retry”). Response includes CORS headers.
 - **Note**: On failure the current running partition is not overwritten; device keeps running; caller can retry or use another URL.
 
-**OTA channel manifest format** (produced by CI/Release and served at `OTA_MANIFEST_URL`): JSON root has `boards`; keys are board IDs (e.g. `esp32-s3-16mb`), values are channel objects; each channel (e.g. `stable`) has `version`, `url` (required), optional `release_notes`. Example: `{"boards":{"esp32-s3-16mb":{"stable":{"version":"0.2.0","url":"https://...","release_notes":"..."}}}}`. Board and manifest URL are set at build time via `BOARD`, `OTA_MANIFEST_URL`.
+**OTA channel manifest format** (produced by CI/Release and served at `OTA_MANIFEST_URL`): JSON root has `boards`; keys are board IDs (`esp32-s3-8mb`, `esp32-s3-16mb`, `esp32-s3-32mb`), values are channel objects; each channel (e.g. `stable`) has `version`, `url` (required), optional `release_notes`. Example: `{"boards":{"esp32-s3-16mb":{"stable":{"version":"0.2.0","url":"https://...","release_notes":"..."}}}}`. Board and manifest URL are set at build time via `BOARD`, `OTA_MANIFEST_URL`.
 
 ### POST /api/config_reset
 

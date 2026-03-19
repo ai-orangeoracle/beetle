@@ -49,6 +49,16 @@ if [[ -n "${BOARD:-}" ]]; then
   fi
   BUILD_TARGET=$(echo "$block" | grep -E '^target\s*=' | head -1 | sed 's/.*"\([^"]*\)".*/\1/')
   [[ -z "$BUILD_TARGET" ]] && { echo "Error: board $BOARD has no 'target' in board_presets.toml" >&2; exit 1; }
+  PARTITION_TABLE=$(echo "$block" | grep -E '^partition_table\s*=' | head -1 | sed 's/.*"\([^"]*\)".*/\1/')
+  if [[ -z "$PARTITION_TABLE" ]]; then
+    case "$BOARD" in
+      esp32-s3-8mb)  PARTITION_TABLE=partitions_8mb.csv ;;
+      esp32-s3-32mb) PARTITION_TABLE=partitions_32mb.csv ;;
+      *)             PARTITION_TABLE=partitions.csv ;;
+    esac
+  fi
+else
+  PARTITION_TABLE=partitions.csv
 fi
 # Command-line --target overrides BOARD (same as build.ps1)
 for (( i=0; i < ${#BUILD_ARGS[@]}; i++ )); do
@@ -75,6 +85,7 @@ echo "========== Detected hardware / build config =========="
 echo "  Project root:      $SCRIPT_ROOT"
 echo "  Build target:      $BUILD_TARGET"
 echo "  BOARD (optional):  ${BOARD:-(not set)}"
+echo "  Partition table:   $PARTITION_TABLE"
 echo "  Chip (for flash):  ${FLASH_CHIP:-(N/A)}"
 echo "  Features:          ${BUILD_FEATURES:-(none)}"
 echo ""
@@ -95,7 +106,7 @@ RELEASE_DIR="$EFFECTIVE_TARGET_DIR/$BUILD_TARGET/release"
 BIN="$RELEASE_DIR/beetle"
 BOOTLOADER_BIN="$RELEASE_DIR/bootloader.bin"
 PARTITION_TABLE_BIN="$RELEASE_DIR/partition-table.bin"
-PARTITION_CSV="$SCRIPT_ROOT/partitions.csv"
+PARTITION_CSV="$SCRIPT_ROOT/$PARTITION_TABLE"
 if [[ -n "$DO_FLASH" ]] && [[ -z "$FLASH_CHIP" ]]; then
   echo "Error: Cannot derive chip from target for flash: $BUILD_TARGET" >&2
   exit 1
@@ -204,6 +215,20 @@ if ! command -v ldproxy &>/dev/null; then
   RUSTUP_TOOLCHAIN=stable cargo install ldproxy
   export PATH="${HOME}/.cargo/bin:${PATH}"
 fi
+
+# --- Write sdkconfig board overlay so esp-idf-sys uses correct partition table and flash size ---
+BOARD_SDKCONFIG="$SCRIPT_ROOT/sdkconfig.defaults.esp32s3.board"
+case "$PARTITION_TABLE" in
+  partitions_8mb.csv)
+    printf '%s\n' 'CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y' '# CONFIG_ESPTOOLPY_FLASHSIZE_16MB is not set' 'CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions_8mb.csv"' > "$BOARD_SDKCONFIG"
+    ;;
+  partitions_32mb.csv)
+    printf '%s\n' 'CONFIG_ESPTOOLPY_FLASHSIZE_32MB=y' '# CONFIG_ESPTOOLPY_FLASHSIZE_16MB is not set' 'CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions_32mb.csv"' > "$BOARD_SDKCONFIG"
+    ;;
+  *)
+    printf '%s\n' 'CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y' 'CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"' > "$BOARD_SDKCONFIG"
+    ;;
+esac
 
 # --- Build args: if BOARD or --flash, use resolved target/features + buildArgs (same as build.ps1) ---
 RELEASE_ARGS=()

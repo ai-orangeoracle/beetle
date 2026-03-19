@@ -107,11 +107,13 @@ Flash: use `--flash` to flash; `./build.sh clean` to clean; `--no-monitor` to sk
 
 ## Supported boards
 
-| BOARD | Description |
-|-------|-------------|
-| `esp32-s3-16mb` | ESP32-S3, 16MB Flash + PSRAM (default; only supported board) |
+| BOARD | Flash | PSRAM | Description |
+|-------|-------|-------|-------------|
+| `esp32-s3-8mb` | 8MB | 8MB | N8R8; `BOARD=esp32-s3-8mb ./build.sh` |
+| `esp32-s3-16mb` | 16MB | 8MB | N16R8; default when BOARD unset |
+| `esp32-s3-32mb` | 32MB | 16MB | N32R16; `BOARD=esp32-s3-32mb ./build.sh` |
 
-Partition table is defined by `board_presets.toml` and `sdkconfig.defaults.esp32s3`. **Use the project partition table** or you will get `spiffs partition could not be found`.
+Partition table and flash size are chosen by `board_presets.toml` and the board overlay `sdkconfig.defaults.esp32s3.board` (written by the build script). **Use the project partition table** or you will get `spiffs partition could not be found`.
 
 ---
 

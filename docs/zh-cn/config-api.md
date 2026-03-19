@@ -296,7 +296,7 @@
 - **响应**：成功 200，`{"ok": true}`，随后设备执行 OTA 并在完成后重启；无效或缺失 url 返回 400，`{"error": "invalid url"}`；OTA 下载、校验或写入失败返回 500，`{"error": "可读人话"}`（如「网络或下载失败，请检查网络后重试」「固件校验失败，请更换固件来源」「写入失败，请勿断电并重试」）。响应带 CORS 头。
 - **说明**：更新失败时不会写入当前运行分区，设备可继续使用；可重试或更换 URL。
 
-**OTA 渠道 manifest 格式**（由 CI/Release 产出并上传至 `OTA_MANIFEST_URL`）：JSON 根含 `boards`，键为板型 ID（如 `esp32-s3-16mb`），值为渠道对象；各渠道（如 `stable`）含 `version`、`url`（必填）、可选 `release_notes`。例：`{"boards":{"esp32-s3-16mb":{"stable":{"version":"0.2.0","url":"https://...","release_notes":"..."}}}}`。设备构建时通过 `BOARD`、`OTA_MANIFEST_URL` 指定板型与清单地址。
+**OTA 渠道 manifest 格式**（由 CI/Release 产出并上传至 `OTA_MANIFEST_URL`）：JSON 根含 `boards`，键为板型 ID（`esp32-s3-8mb`、`esp32-s3-16mb`、`esp32-s3-32mb`），值为渠道对象；各渠道（如 `stable`）含 `version`、`url`（必填）、可选 `release_notes`。例：`{"boards":{"esp32-s3-16mb":{"stable":{"version":"0.2.0","url":"https://...","release_notes":"..."}}}}`。设备构建时通过 `BOARD`、`OTA_MANIFEST_URL` 指定板型与清单地址。
 
 ### POST /api/config_reset
 

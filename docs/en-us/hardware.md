@@ -8,11 +8,13 @@ This doc is for users and developers: supported boards, memory, and build option
 
 ## Boards and resources
 
-| Board | Flash | PSRAM | CPU | Notes |
-|-------|-------|-------|-----|-------|
-| ESP32-S3 16MB | 16MB | 8MB Octal | 240MHz | Only supported board; large response/LLM request buffers prefer PSRAM |
+| Board (BOARD=) | Flash | PSRAM | CPU | Notes |
+|----------------|-------|-------|-----|-------|
+| `esp32-s3-8mb` | 8MB | 8MB Octal | 240MHz | N8R8; use `BOARD=esp32-s3-8mb ./build.sh` |
+| `esp32-s3-16mb` | 16MB | 8MB Octal | 240MHz | N16R8; default when BOARD unset |
+| `esp32-s3-32mb` | 32MB | 16MB Octal | 240MHz | N32R16; use `BOARD=esp32-s3-32mb ./build.sh` |
 
-- Board is selected via `BOARD=esp32-s3-16mb` (optional; default); `board_presets.toml` defines the target.
+- Board is selected via `BOARD=esp32-s3-8mb` | `esp32-s3-16mb` | `esp32-s3-32mb` (optional; default `esp32-s3-16mb`); `board_presets.toml` defines target and partition table.
 - **Only ESP32-S3 with PSRAM is supported**; C3/S2 are no longer supported.
 
 ---

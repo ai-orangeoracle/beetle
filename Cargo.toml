@@ -8,8 +8,8 @@ license = "MIT OR Apache-2.0"
 repository = ""
 
 [package.metadata.esp-idf-sys]
-sdkconfig-defaults = "sdkconfig.defaults"
-sdkconfig-defaults-esp32s3 = "sdkconfig.defaults.esp32s3"
+# Board overlay (last) is written by build.sh/build.ps1 from BOARD; default 16MB in repo.
+esp_idf_sdkconfig_defaults = ["sdkconfig.defaults", "sdkconfig.defaults.esp32s3", "sdkconfig.defaults.esp32s3.board"]
 
 [[package.metadata.esp-idf-sys.extra_components]]
 remote_component = { name = "espressif/mdns", version = "1.2" }

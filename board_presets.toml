@@ -1,5 +1,17 @@
-# 板型预设：BOARD=xxx 时 build.sh / build.ps1 据此选择 target 与 features。
-# 分区表由 sdkconfig.defaults.esp32s3 决定；仅支持带 PSRAM 的 S3。
+# 板型预设：BOARD=xxx 时 build.sh / build.ps1 据此选择 target、分区表与 sdkconfig 覆盖。
+# 仅支持带 PSRAM 的 ESP32-S3（N8R8 / N16R8 / N32R16）。
+
+[boards.esp32-s3-8mb]
+target = "xtensa-esp32s3-espidf"
+partition_table = "partitions_8mb.csv"
+flash_size = "8MB"
 
 [boards.esp32-s3-16mb]
 target = "xtensa-esp32s3-espidf"
+partition_table = "partitions.csv"
+flash_size = "16MB"
+
+[boards.esp32-s3-32mb]
+target = "xtensa-esp32s3-espidf"
+partition_table = "partitions_32mb.csv"
+flash_size = "32MB"

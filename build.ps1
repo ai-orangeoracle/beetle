@@ -30,13 +30,24 @@ if ($env:BOARD) {
     exit 1
   }
   $inSection = $false
+  $partitionTable = ""
   foreach ($line in (Get-Content $presetsPath)) {
     if ($line -match '^\[boards\.(.+)\]') {
       $inSection = ($matches[1] -eq $env:BOARD)
     } elseif ($inSection) {
       if ($line -match 'target\s*=\s*"([^"]+)"') { $buildTarget = $matches[1] }
+      if ($line -match 'partition_table\s*=\s*"([^"]+)"') { $partitionTable = $matches[1] }
     }
   }
+  if (-not $partitionTable) {
+    switch ($env:BOARD) {
+      "esp32-s3-8mb"  { $partitionTable = "partitions_8mb.csv" }
+      "esp32-s3-32mb" { $partitionTable = "partitions_32mb.csv" }
+      default         { $partitionTable = "partitions.csv" }
+    }
+  }
+} else {
+  $partitionTable = "partitions.csv"
 }
 # 若命令行已传 --target，以命令行为准
 for ($i = 0; $i -lt $buildArgs.Count; $i++) {
@@ -68,6 +79,7 @@ function Write-BuildStatus {
   Write-Host "  Build target:      $buildTarget"
   Write-Host "  BOARD (optional):  $(if ($env:BOARD) { $env:BOARD } else { '(not set)' })"
   Write-Host "  Chip (for flash): $(if ($flashChipDerived) { $flashChipDerived } else { '(N/A)' })"
+  Write-Host "  Partition table:   $partitionTable"
   Write-Host "  Features:          $(if ($buildFeatures) { $buildFeatures } else { '(none)' })"
   if ($BeforeFlash -and $ChosenPort) {
     Write-Host "  Serial port:        $ChosenPort"
@@ -157,7 +169,7 @@ $effectiveTargetDir = if ($env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR } else 
 $releaseDir = Join-Path $effectiveTargetDir "$buildTarget\release"
 $bootloaderBin = Join-Path $releaseDir "bootloader.bin"
 $partitionTableBin = Join-Path $releaseDir "partition-table.bin"
-$partitionCsv = Join-Path $BuildRoot "partitions.csv"
+$partitionCsv = Join-Path $BuildRoot $partitionTable
 $flashExtra = @()
 $partitionTableForFlash = $null
 if (Test-Path $bootloaderBin) {
@@ -480,6 +492,20 @@ cargo build --release $argStr
         }
       }
     }
+  }
+}
+
+# Write sdkconfig board overlay so esp-idf-sys uses correct partition table and flash size
+$boardSdkconfig = Join-Path $BuildRoot "sdkconfig.defaults.esp32s3.board"
+switch ($partitionTable) {
+  "partitions_8mb.csv"  {
+    @('CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y', '# CONFIG_ESPTOOLPY_FLASHSIZE_16MB is not set', 'CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions_8mb.csv"') | Set-Content -Path $boardSdkconfig -Encoding UTF8
+  }
+  "partitions_32mb.csv" {
+    @('CONFIG_ESPTOOLPY_FLASHSIZE_32MB=y', '# CONFIG_ESPTOOLPY_FLASHSIZE_16MB is not set', 'CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions_32mb.csv"') | Set-Content -Path $boardSdkconfig -Encoding UTF8
+  }
+  default {
+    @('CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y', 'CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"') | Set-Content -Path $boardSdkconfig -Encoding UTF8
   }
 }
 
