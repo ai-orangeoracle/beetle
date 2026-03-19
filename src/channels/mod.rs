@@ -23,15 +23,17 @@ pub use feishu::{
     feishu_edit_message, feishu_send_and_get_id, flush_feishu_sends, handle_http_event,
     run_feishu_sender_loop, FeishuEventResponse,
 };
-#[cfg(all(feature = "feishu", any(target_arch = "xtensa", target_arch = "riscv32")))]
+#[cfg(feature = "feishu")]
 pub use feishu::run_feishu_ws_loop;
 pub use qq::{
     flush_qq_channel_sends, handle_webhook, run_qq_sender_loop, QqHandlerResult, QqMsgIdCache,
     QQ_WEBHOOK_BODY_MAX,
 };
-#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 pub use qq::run_qq_ws_loop;
 pub use http_client::ChannelHttpClient;
+
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+pub use wss_gateway::{connect_esp_wss, EspWssConnection};
 pub use telegram::{
     edit_message_text as tg_edit_message_text, flush_telegram_sends, get_bot_username,
     poll_telegram_once, run_telegram_poll_loop, run_telegram_sender_loop, send_chat_action,

@@ -10,7 +10,6 @@ pub mod fetch_url;
 pub mod files;
 pub mod get_time;
 pub mod hardware;
-pub mod hardware_drivers;
 pub mod http_post;
 pub mod kv_store;
 pub mod remind_at;

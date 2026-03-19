@@ -25,7 +25,7 @@ pub mod tools;
 #[cfg(feature = "cli")]
 pub mod cli;
 
-#[cfg(feature = "ota")]
+#[cfg(all(feature = "ota", any(target_arch = "xtensa", target_arch = "riscv32")))]
 pub mod ota;
 
 pub mod cron;
@@ -47,9 +47,8 @@ pub use channels::{
     tg_send_and_get_id, ChannelHttpClient, ChannelSinks, LogSink, MessageSink, QueuedSink,
     WebSocketSink,
 };
-#[cfg(all(feature = "feishu", any(target_arch = "xtensa", target_arch = "riscv32")))]
+#[cfg(feature = "feishu")]
 pub use channels::run_feishu_ws_loop;
-#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 pub use channels::run_qq_ws_loop;
 pub use config::{
     parse_allowed_chat_ids, LlmSource, AppConfig,
@@ -60,13 +59,12 @@ pub use llm::{
     AnthropicClient, FallbackLlmClient, LlmClient, LlmHttpClient, LlmResponse, Message,
     OpenAiCompatibleClient, build_llm_clients,
 };
-pub use platform::{
-    connect_wifi, init_nvs, init_spiffs, spiffs_usage, EspHttpClient, SpiffsMemoryStore,
-    SpiffsSessionStore, SPIFFS_BASE,
-};
 pub use platform::{ConfigStore, Platform, SkillStorage};
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
-pub use platform::Esp32Platform;
+pub use platform::{
+    connect_wifi, init_nvs, init_spiffs, spiffs_usage, EspHttpClient, Esp32Platform,
+    SpiffsMemoryStore, SpiffsSessionStore, SPIFFS_BASE,
+};
 pub use tools::{
     CronTool, DeviceControlTool, FetchUrlTool, FilesTool, GetTimeTool, HttpPostTool, KvStoreTool,
     RemindAtTool, Tool, ToolContext, ToolRegistry, UpdateSessionSummaryTool, WebSearchTool,

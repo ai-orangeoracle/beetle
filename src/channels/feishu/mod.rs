@@ -16,7 +16,7 @@ pub use event::{handle_http_event, FeishuEventResponse};
 mod frame;
 // pbbp2 仅 ws 使用，不对外 re-export
 
-#[cfg(all(feature = "feishu", any(target_arch = "xtensa", target_arch = "riscv32")))]
+#[cfg(feature = "feishu")]
 mod ws;
-#[cfg(all(feature = "feishu", any(target_arch = "xtensa", target_arch = "riscv32")))]
+#[cfg(feature = "feishu")]
 pub use ws::run_feishu_ws_loop;

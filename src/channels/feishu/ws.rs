@@ -1,19 +1,13 @@
 //! 飞书长连接入站：HTTP 取 wss URL，建 WSS，收 protobuf 帧，解析 EVENT 入队。
-//! 仅 ESP + feature feishu 时编译；与 POST /api/feishu/event HTTP 回调并存。
+//! 与 POST /api/feishu/event HTTP 回调并存。
 //! 委托 wss_gateway 统一循环，本模块实现 FeishuWssDriver。
-
-#![cfg(all(
-    feature = "feishu",
-    any(target_arch = "xtensa", target_arch = "riscv32")
-))]
 
 use crate::bus::InboundTx;
 use crate::channels::ChannelHttpClient;
 use crate::channels::wss_gateway::{
-    run_wss_gateway_loop, connect_esp_wss, WssGatewayDriver, WssRecvAction, WssSessionState,
+    run_wss_gateway_loop, WssConnection, WssGatewayDriver, WssRecvAction, WssSessionState,
 };
 use crate::error::{Error, Result};
-use crate::platform::EspHttpClient;
 use prost::Message;
 
 use super::frame::pbbp2;
@@ -228,20 +222,26 @@ impl WssGatewayDriver for FeishuWssDriver {
     }
 }
 
-/// 长连接循环：委托 run_wss_gateway_loop，使用 FeishuWssDriver 与 ESP 连接。
-pub fn run_feishu_ws_loop(
+/// 长连接循环：委托 run_wss_gateway_loop，使用 FeishuWssDriver。
+/// create_http 与 connect 由调用方（main）注入，本模块不依赖具体平台类型。
+pub fn run_feishu_ws_loop<H, C, CreateHttp, Conn>(
     app_id: String,
     app_secret: String,
     allowed_chat_ids: Vec<String>,
     inbound_tx: InboundTx,
-) {
+    create_http: CreateHttp,
+    connect: Conn,
+) where
+    H: ChannelHttpClient,
+    C: WssConnection,
+    CreateHttp: FnMut() -> Result<H>,
+    Conn: FnMut(&str) -> Result<C>,
+{
     let driver = FeishuWssDriver {
         app_id,
         app_secret,
         allowed_chat_ids,
         dedup: DeduplicateRing::new(DEDUP_CACHE_CAPACITY),
     };
-    let create_http = || EspHttpClient::new();
-    let connect = |url: &str| connect_esp_wss(url);
     run_wss_gateway_loop(TAG, driver, inbound_tx, create_http, connect);
 }

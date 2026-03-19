@@ -2,6 +2,7 @@
 //! Outbound dispatch: recv from outbound_rx, send via MessageSink; per-channel circuit breaker.
 
 use crate::bus::{OutboundRx, MAX_CONTENT_LEN};
+use crate::channels::ChannelHttpClient;
 use crate::config::AppConfig;
 use crate::util::truncate_content_to_max;
 use crate::error::Result;
@@ -320,9 +321,10 @@ pub fn build_channel_sinks(
 
 /// 启动各通道的 sender 线程。rx_set 中有值的通道 `.take()` 后 spawn 线程。
 /// `create_http` 工厂闭包在每个线程内调用以创建独立 HTTP 客户端。
-pub fn spawn_sender_threads<F>(rx_set: &mut ChannelRxSet, tg_token: &str, create_http: F)
+pub fn spawn_sender_threads<H, F>(rx_set: &mut ChannelRxSet, tg_token: &str, create_http: F)
 where
-    F: Fn() -> crate::Result<crate::platform::EspHttpClient> + Send + 'static + Clone,
+    H: ChannelHttpClient + 'static,
+    F: Fn() -> crate::Result<H> + Send + 'static + Clone,
 {
     const TAG: &str = "beetle";
 

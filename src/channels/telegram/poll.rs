@@ -7,7 +7,6 @@ use crate::bus::{InboundTx, OutboundTx, PcMsg, MAX_CONTENT_LEN};
 use crate::channels::ChannelHttpClient;
 use crate::error::{Error, Result};
 use crate::memory::SessionStore;
-use crate::platform::EspHttpClient;
 
 use super::send::set_message_reaction;
 
@@ -250,8 +249,8 @@ pub fn poll_telegram_once<H: ChannelHttpClient>(
 }
 
 /// 启动 Telegram 长轮询循环（阻塞，应在独立线程调用）。
-/// 内部创建 EspHttpClient、TelegramCommandCtx，执行轮询循环。
-pub fn run_telegram_poll_loop(
+/// 内部通过 create_http 工厂创建 HTTP 客户端，执行轮询循环。
+pub fn run_telegram_poll_loop<H, F>(
     token: String,
     allowed_chat_ids: Vec<String>,
     group_activation: String,
@@ -262,7 +261,11 @@ pub fn run_telegram_poll_loop(
     inbound_depth: Arc<std::sync::atomic::AtomicUsize>,
     outbound_depth: Arc<std::sync::atomic::AtomicUsize>,
     config_store: Arc<dyn crate::platform::ConfigStore>,
-) {
+    mut create_http: F,
+) where
+    H: ChannelHttpClient,
+    F: FnMut() -> Result<H>,
+{
     const TAG_TG: &str = "telegram_poll";
 
     #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
@@ -279,10 +282,10 @@ pub fn run_telegram_poll_loop(
         }),
     };
 
-    let mut http = match EspHttpClient::new() {
+    let mut http = match create_http() {
         Ok(h) => h,
         Err(e) => {
-            log::warn!("[{}] EspHttpClient::new failed: {}", TAG_TG, e);
+            log::warn!("[{}] create_http failed: {}", TAG_TG, e);
             return;
         }
     };

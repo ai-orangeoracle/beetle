@@ -201,13 +201,6 @@ pub fn run(
         stage: "http_server_new",
     })?;
 
-    #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
-    let http_for_fetch = std::sync::RwLock::new(Some(()));
-    #[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
-    let http_for_fetch = match crate::platform::EspHttpClient::new() {
-        Ok(c) => std::cell::RefCell::new(Some(c)),
-        Err(e) => return Err(e.with_stage("http_server_fetch_client")),
-    };
     let ctx = Arc::new(handlers::HandlerContext {
         config_store: Arc::clone(&config_store),
         config_file_store: Arc::clone(&config_file_store),
@@ -221,7 +214,6 @@ pub fn run(
         wifi_connected,
         version: Arc::from(env!("CARGO_PKG_VERSION")),
         board_id: Arc::from(crate::build_board_id()),
-        http_for_fetch,
     });
 
     let store_root = std::sync::Arc::clone(&config_store);
@@ -369,9 +361,10 @@ pub fn run(
             let should_restart = r.status == 200 && common::restart_requested_from_uri(req.uri());
             write_api_resp!(req, r)?;
             if should_restart {
-                std::thread::spawn(|| {
+                let platform = Arc::clone(&ctx_config_wifi.platform);
+                std::thread::spawn(move || {
                     std::thread::sleep(Duration::from_millis(300));
-                    unsafe { esp_idf_svc::sys::esp_restart() };
+                    platform.request_restart();
                 });
             }
             Ok(())
@@ -929,9 +922,10 @@ pub fn run(
             let (r, do_restart) = handlers::restart::post(ctx_restart.as_ref()).map_err(to_io)?;
             write_api_resp!(req, r)?;
             if do_restart {
-                std::thread::spawn(|| {
+                let platform = Arc::clone(&ctx_restart.platform);
+                std::thread::spawn(move || {
                     std::thread::sleep(Duration::from_millis(300));
-                    unsafe { esp_idf_svc::sys::esp_restart() };
+                    platform.request_restart();
                 });
             }
             Ok(())
@@ -1180,9 +1174,10 @@ pub fn run(
                     handlers::ota::post(ctx_ota.as_ref(), &body).map_err(to_io)?;
                 write_api_resp!(req, r)?;
                 if do_restart {
-                    std::thread::spawn(|| {
+                    let platform = Arc::clone(&ctx_ota.platform);
+                    std::thread::spawn(move || {
                         std::thread::sleep(Duration::from_millis(300));
-                        unsafe { esp_idf_svc::sys::esp_restart() };
+                        platform.request_restart();
                     });
                 }
                 Ok(())
