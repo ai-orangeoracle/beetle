@@ -2,7 +2,7 @@
 
 [中文](../zh-cn/tools.md) | **English**
 
-The device runs an AI Agent that can use the following **tools** when you chat with it. You do not need to call them yourself—the Agent chooses when to use a tool based on your message.
+This doc is for **users of a Beetle device**: it describes the **tools** the on-device AI Agent can use during a conversation, what each does, and the limits. You do not call these tools yourself—the Agent decides when to use one based on your message. If a call fails (e.g. network error, invalid args), the Agent reports it in natural language.
 
 ---
 
@@ -39,4 +39,4 @@ The device runs an AI Agent that can use the following **tools** when you chat w
 - **Web / HTTP**: Under low memory the Agent may avoid or delay network tools (web_search, fetch_url, http_post, analyze_image) to keep the device stable.
 - **board_info**: Gives a snapshot of memory, pressure, WiFi, and SPIFFS so you can see if the device is healthy or under load.
 
-If a tool fails (e.g. network error, invalid args), the Agent will report it in natural language.
+To control on-board hardware (GPIO, PWM, buzzer, etc.) via config and have the Agent call it by meaning, see [Hardware device config](hardware-device-config.md) and the “Hardware” section in the config page.

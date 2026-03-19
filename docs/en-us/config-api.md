@@ -2,12 +2,12 @@
 
 [中文](../zh-cn/config-api.md) | **English**
 
-The device firmware exposes only HTTP APIs and **does not** ship a built-in config UI. The config UI is implemented by an external frontend (e.g. a separate repo or GitHub Pages). After connecting to the device hotspot or the same LAN, the user enters the **device IP** in that page to call the APIs below.
+This doc is for **developers integrating with the device HTTP API** (e.g. custom config UI, scripts, or third-party apps). The device firmware exposes only HTTP APIs and **does not** ship a built-in config UI; the config UI is implemented by an external frontend (e.g. this repo’s `configure-ui` or a GitHub Pages deployment). After connecting to the device hotspot or the same LAN, the user enters the **device address** in that page (recommended **http://beetle.local/**; if that fails, **http://192.168.4.1** or the router-assigned IP) to call the APIs below.
 
 ## Network and access
 
-- **SoftAP**: After power-on the device starts a hotspot; SSID is fixed as `PocketCrayfish` (no password). When connected to this hotspot, the device IP is **192.168.4.1**.
-- **STA**: If WiFi is configured and the device is connected to the user’s router, the same HTTP service is reachable on the STA network; the device IP is the LAN address assigned by the router, or **http://pocketcrayfish.local** (mDNS is supported).
+- **SoftAP**: After power-on the device starts a hotspot; SSID is fixed as **Beetle** (no password). When connected to this hotspot, use **http://beetle.local/** first; if unavailable, use device IP **http://192.168.4.1** (matches firmware).
+- **STA**: If WiFi is configured and the device is connected to the user’s router, the same HTTP service is reachable on the STA network. Prefer **http://beetle.local/** (mDNS); if unavailable, use the LAN address assigned by the router.
 - **CORS**: All responses for `/api/*` and `GET /` must include `Access-Control-Allow-Origin: *`. OPTIONS preflight for the listed paths returns 200 with `Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS` and `Access-Control-Allow-Headers: Content-Type, X-Pairing-Code`, so the external config UI can call the API cross-origin.
 
 ## Pairing code and auth
@@ -306,8 +306,9 @@ The device firmware exposes only HTTP APIs and **does not** ship a built-in conf
 
 ## How to get the device IP
 
-- When connected to hotspot `PocketCrayfish`: use **192.168.4.1**.
-- When on STA and device is on the same LAN: use the IP assigned by the router to the device, or **http://pocketcrayfish.local** (mDNS supported).
+- **Recommended**: Use **http://beetle.local/** first (usually works when connected to the device hotspot or same LAN; matches firmware mDNS).
+- When connected to hotspot **Beetle** and beetle.local is unavailable: use **http://192.168.4.1** (firmware SoftAP fixed address).
+- When on STA and device is on the same LAN and beetle.local is unavailable: use the IP assigned by the router to the device.
 
 ## Config UI ownership
 
