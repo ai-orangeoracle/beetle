@@ -1036,12 +1036,17 @@ pub fn run(
     );
 
     // --- WeCom webhook inbound ---
+    let ctx_wecom_wh_get = Arc::clone(&ctx);
     register!(
         server,
         "/api/wecom/webhook",
         Method::Get,
         move |req| -> HandlerResult {
-            let r = handlers::wecom_webhook::get_verify(req.uri());
+            let config = crate::config::AppConfig::load(
+                ctx_wecom_wh_get.config_store.as_ref(),
+                Some(ctx_wecom_wh_get.config_file_store.as_ref()),
+            );
+            let r = handlers::wecom_webhook::get_verify(req.uri(), &config.wecom_token);
             write_response!(req, r.status, r.status_text, CORS_HEADERS, &r.body)
         }
     );
@@ -1053,8 +1058,9 @@ pub fn run(
         "/api/wecom/webhook",
         Method::Post,
         move |mut req| -> HandlerResult {
+            let uri = req.uri().to_string();
             let body_str = read_body_utf8!(req, POST_BODY_MAX_LEN, store_wecom_wh_post);
-            let r = handlers::wecom_webhook::post(ctx_wecom_wh_post.as_ref(), &wecom_tx_post, &body_str)
+            let r = handlers::wecom_webhook::post(ctx_wecom_wh_post.as_ref(), &uri, &wecom_tx_post, &body_str)
                 .map_err(to_io)?;
             write_api_resp!(req, r)
         }

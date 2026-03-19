@@ -7,12 +7,34 @@ use crate::error::Result;
 
 const TAG: &str = "wecom_webhook";
 
+/// 验证企微回调签名。算法：SHA1(sort([token, timestamp, nonce]))。
+/// Verify WeCom callback signature: SHA1(sort([token, timestamp, nonce])).
+pub fn verify_signature(token: &str, timestamp: &str, nonce: &str, expected_sig: &str) -> bool {
+    if token.is_empty() || expected_sig.is_empty() {
+        // Token 未配置时跳过验签（向后兼容，但记录警告）。
+        log::warn!("[{}] signature verification skipped: token or signature empty", TAG);
+        return true;
+    }
+    let mut parts = [token, timestamp, nonce];
+    parts.sort();
+    let combined = format!("{}{}{}", parts[0], parts[1], parts[2]);
+    let computed = crate::util::sha1_hex(combined.as_bytes());
+    // Constant-time comparison to prevent timing attacks.
+    crate::util::constant_time_eq(&computed, expected_sig)
+}
+
 /// 解析企微消息回调 XML body，提取 Content 和 FromUserName。
 /// 企微回调 body 格式为 XML：
 /// ```xml
 /// <xml><ToUserName>...</ToUserName><FromUserName>...</FromUserName><Content>...</Content>...</xml>
 /// ```
-pub fn handle_message(body: &str, _wecom_token: &str, inbound_tx: &InboundTx) -> Result<()> {
+pub fn handle_message(body: &str, wecom_token: &str, timestamp: &str, nonce: &str, msg_signature: &str, inbound_tx: &InboundTx) -> Result<()> {
+    // 验签
+    if !verify_signature(wecom_token, timestamp, nonce, msg_signature) {
+        log::warn!("[{}] invalid signature, rejecting message", TAG);
+        return Err(crate::error::Error::config("wecom_webhook", "invalid signature"));
+    }
+
     // Parse simple XML fields without full XML parser.
     let content = extract_xml_field(body, "Content").unwrap_or_default();
     let from_user = extract_xml_field(body, "FromUserName").unwrap_or("wecom_default".to_string());

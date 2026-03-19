@@ -217,6 +217,20 @@ pub fn weekday_name(days_since_epoch: u64) -> &'static str {
 
 // ---------- 脱敏 ----------
 
+/// 常量时间比较，避免 token 时序侧信道。
+/// Constant-time string comparison to prevent timing side-channel attacks.
+pub fn constant_time_eq(a: &str, b: &str) -> bool {
+    let a = a.as_bytes();
+    let b = b.as_bytes();
+    if a.len() != b.len() {
+        return false;
+    }
+    a.iter()
+        .zip(b.iter())
+        .fold(0u8, |acc, (x, y)| acc | (x ^ y))
+        == 0
+}
+
 /// 将 usize 十进制写入缓冲区，返回有效区间的 &str。调用方应传入至少 20 字节（如 `[0u8; 20]`）。
 /// 供 content-length 等 header 使用，避免 format! 堆分配。
 /// Caller must only write ASCII digits (b'0'+n%10); buf[i..max] is therefore valid UTF-8.
@@ -224,10 +238,12 @@ pub fn weekday_name(days_since_epoch: u64) -> &'static str {
 pub fn usize_to_decimal_buf(buf: &mut [u8], n: usize) -> &str {
     let max = buf.len().min(20);
     if max == 0 {
+        // SAFETY: empty slice is trivially valid UTF-8.
         return std::str::from_utf8(&[]).unwrap();
     }
     if n == 0 {
         buf[0] = b'0';
+        // SAFETY: single ASCII digit byte is valid UTF-8.
         return std::str::from_utf8(&buf[..1]).unwrap();
     }
     let mut i = max;
@@ -237,5 +253,122 @@ pub fn usize_to_decimal_buf(buf: &mut [u8], n: usize) -> &str {
         buf[i] = b'0' + (n % 10) as u8;
         n /= 10;
     }
+    // SAFETY: all bytes in buf[i..max] are ASCII digits (0x30..0x39), which is valid UTF-8.
     std::str::from_utf8(&buf[i..max]).unwrap()
+}
+
+// ---------- SHA-1（企微验签用，纯 Rust，无外部依赖） ----------
+
+/// SHA-1 哈希，返回 40 字符十六进制小写字符串。
+/// Pure-Rust SHA-1 for WeChat Work (WeCom) callback signature verification.
+pub fn sha1_hex(data: &[u8]) -> String {
+    let (mut h0, mut h1, mut h2, mut h3, mut h4): (u32, u32, u32, u32, u32) =
+        (0x67452301, 0xEFCDAB89, 0x98BADCFE, 0x10325476, 0xC3D2E1F0);
+
+    let bit_len = (data.len() as u64) * 8;
+    // Pad: original + 0x80 + zeros + 8-byte big-endian bit length, total % 64 == 0
+    let mut padded = data.to_vec();
+    padded.push(0x80);
+    while padded.len() % 64 != 56 {
+        padded.push(0);
+    }
+    padded.extend_from_slice(&bit_len.to_be_bytes());
+
+    for chunk in padded.chunks_exact(64) {
+        let mut w = [0u32; 80];
+        for i in 0..16 {
+            w[i] = u32::from_be_bytes([
+                chunk[i * 4],
+                chunk[i * 4 + 1],
+                chunk[i * 4 + 2],
+                chunk[i * 4 + 3],
+            ]);
+        }
+        for i in 16..80 {
+            w[i] = (w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16]).rotate_left(1);
+        }
+
+        let (mut a, mut b, mut c, mut d, mut e) = (h0, h1, h2, h3, h4);
+        #[allow(clippy::needless_range_loop)]
+        for i in 0..80 {
+            let (f, k) = match i {
+                0..=19 => ((b & c) | ((!b) & d), 0x5A827999u32),
+                20..=39 => (b ^ c ^ d, 0x6ED9EBA1u32),
+                40..=59 => ((b & c) | (b & d) | (c & d), 0x8F1BBCDCu32),
+                _ => (b ^ c ^ d, 0xCA62C1D6u32),
+            };
+            let temp = a
+                .rotate_left(5)
+                .wrapping_add(f)
+                .wrapping_add(e)
+                .wrapping_add(k)
+                .wrapping_add(w[i]);
+            e = d;
+            d = c;
+            c = b.rotate_left(30);
+            b = a;
+            a = temp;
+        }
+        h0 = h0.wrapping_add(a);
+        h1 = h1.wrapping_add(b);
+        h2 = h2.wrapping_add(c);
+        h3 = h3.wrapping_add(d);
+        h4 = h4.wrapping_add(e);
+    }
+
+    format!("{:08x}{:08x}{:08x}{:08x}{:08x}", h0, h1, h2, h3, h4)
+}
+
+// ---------- SSRF 防护 ----------
+
+/// 检查 URL 的 host 部分是否指向私有/本地网络地址，用于 SSRF 防护。
+/// Returns true if the URL host appears to be a private/loopback address.
+pub fn is_private_url(url: &str) -> bool {
+    // Strip scheme
+    let after_scheme = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))
+        .unwrap_or(url);
+    // Extract host (before '/' or ':' port)
+    let host = after_scheme
+        .split('/')
+        .next()
+        .unwrap_or("")
+        .split(':')
+        .next()
+        .unwrap_or("");
+    let host = host.trim();
+    if host.is_empty() {
+        return true; // empty host is invalid, block it
+    }
+    // Loopback & special
+    if host == "localhost"
+        || host == "0.0.0.0"
+        || host.starts_with("127.")
+        || host == "[::1]"
+        || host.starts_with("[::ffff:127.")
+    {
+        return true;
+    }
+    // RFC 1918 private ranges
+    if host.starts_with("10.") || host.starts_with("192.168.") {
+        return true;
+    }
+    // 172.16.0.0/12 — 172.16.x.x through 172.31.x.x
+    if host.starts_with("172.") {
+        if let Some(second) = host.split('.').nth(1).and_then(|s| s.parse::<u8>().ok()) {
+            if (16..=31).contains(&second) {
+                return true;
+            }
+        }
+    }
+    // Link-local
+    if host.starts_with("169.254.") || host.starts_with("[fe80:") {
+        return true;
+    }
+    // mDNS / internal hostnames
+    if host.ends_with(".local") || host.ends_with(".internal") {
+        return true;
+    }
+    false
 }
