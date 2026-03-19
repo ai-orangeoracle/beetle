@@ -37,8 +37,8 @@ You must have both of the following:
    The config page only talks to a device running the Beetle (甲虫) firmware. If you have not flashed the firmware yet, build and flash it first (see the **parent repo’s README or docs** for build and flash instructions). This UI does not replace the need for a flashed device.
 
 2. **The device powered on and reachable.**  
-   - **First use / not yet on your WiFi:** The device will open a **WiFi hotspot** with SSID **Beetle** (no password). Your phone or PC must **connect to this hotspot** so the browser can reach the device at `http://192.168.4.1`.  
-   - **After WiFi is configured:** The device joins your router. Your phone or PC must be on the **same LAN** as the device; then you can use `http://beetle.local` (mDNS).
+   - **First use / not yet on your WiFi:** The device will open a **WiFi hotspot** with SSID **Beetle** (no password). Your phone or PC must **connect to this hotspot**; then use **http://beetle.local/** (recommended), or **http://192.168.4.1** if beetle.local does not work (matches firmware SoftAP address).  
+   - **After WiFi is configured:** The device joins your router. Your phone or PC must be on the **same LAN** as the device; use **http://beetle.local/** (recommended), or the router-assigned IP if beetle.local is unavailable.
 
 **Important:** Whether you open the config page from the device URL or from the GitHub Pages URL, your browser must be on the same network as the device (Beetle hotspot or same LAN). Otherwise the page cannot talk to the device.
 
@@ -52,13 +52,13 @@ You use the device’s own address in the browser; the device serves the UI (or 
 
 1. Power on the device → it opens hotspot **Beetle** (no password).
 2. On your phone or PC, **connect to the WiFi “Beetle”**.
-3. In the browser open **http://192.168.4.1** (port 80; no need to type the port).
+3. In the browser open **http://beetle.local/** (recommended; matches firmware mDNS). If it doesn’t load, open **http://192.168.4.1** (port 80; firmware SoftAP address).
 
-Only the device is on that hotspot; `192.168.4.1` is the device’s address.
+Only the device is on that hotspot; the firmware uses 192.168.4.1 for the SoftAP.
 
 **When the device is already on your WiFi:**
 
-- From any device on the **same LAN**, open **http://beetle.local** (mDNS). No need to look up the device’s IP.
+- From any device on the **same LAN**, open **http://beetle.local/** first (mDNS). If unavailable, use the router-assigned IP.
 
 **First time on the config page:** Set a **6-digit pairing code**. It protects all write operations; secrets stay on the device. If you forget it, use **Factory reset** from the config page (you must still be able to open the page).
 
@@ -84,15 +84,15 @@ You open the **same UI** from the internet (e.g. **https://ai-orangeoracle.githu
 
 4. **Enter the device address in the page**  
    - In the config UI, find the **“Device URL”** (设备地址) field.  
-   - **If you are connected to the device’s hotspot “Beetle”:** enter **http://192.168.4.1**  
-   - **If you and the device are on the same LAN (e.g. after WiFi is set):** enter **http://beetle.local**  
+   - **Recommended:** Enter **http://beetle.local/** first (works on both device hotspot and same LAN; matches firmware).  
+   - If beetle.local does not work, use **http://192.168.4.1** when connected to the device’s hotspot (firmware SoftAP address), or the router-assigned IP when on the same LAN.  
    - Save. The page will then talk to the device at that address.
 
 5. **Set pairing code and configure**  
    - On first use, set a **6-digit pairing code** on the config page.  
    - After that, you can configure WiFi, channels, LLM, etc. All write operations use this code (the UI sends it for you).
 
-**If the page says it cannot reach the device:** Check that (1) the device is powered on, (2) you are connected to the **Beetle** hotspot or the **same LAN** as the device, and (3) the device address you entered is correct (`http://192.168.4.1` on hotspot, `http://beetle.local` on LAN).
+**If the page says it cannot reach the device:** Check that (1) the device is powered on, (2) you are connected to the **Beetle** hotspot or the **same LAN** as the device, and (3) the device address you entered is correct—try **http://beetle.local/** first; if it fails, use **http://192.168.4.1** (hotspot) or the device’s LAN IP (same LAN).
 
 **Using the online URL only to preview:** You can open the GitHub Pages URL without a device to see the UI; to actually read or change config, you must have a device and be on its network as above.
 
@@ -103,7 +103,7 @@ You open the **same UI** from the internet (e.g. **https://ai-orangeoracle.githu
 - **First access:** Set a **6-digit pairing code** on the config page. It protects save/restart/OTA/factory reset; secrets are stored on the device only.
 - **Forgot the code:** Use **Factory reset** from the config page (you must still be able to open the page and run the action).
 
-More details (config keys, health API, etc.): parent repo **docs** (e.g. `docs/en-us/configuration.md`).
+More detail (config keys, health API, provisioning): see the parent repo’s **docs** directory (e.g. `docs/en-us/configuration.md`).
 
 ---
 
@@ -141,4 +141,4 @@ Dev server runs with base path `/`; the app will call the device API at the host
 
 ### Deployment
 
-A built version is published to GitHub Pages on push to `main` when `configure-ui/**` or the Pages workflow changes. See repo **dev-docs/CONFIGURE_UI_PAGES.md** (if present) for custom domain and one-time setup.
+A built version is published to GitHub Pages on push to `main` when `configure-ui/**` or the Pages workflow changes. One-time setup: in the repo **Settings → Pages**, set **Source** to **GitHub Actions**. To use a custom domain, set it in **Settings → Pages → Custom domain** and add the required DNS record (CNAME to `<owner>.github.io` for a subdomain, or A records for apex).

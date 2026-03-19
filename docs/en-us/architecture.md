@@ -2,7 +2,7 @@
 
 **English** | [中文](../zh-cn/architecture.md)
 
-This doc is for external readers: module layout, data flow, and how to extend. No internal implementation detail.
+This doc is for **readers who want to understand module layout, data flow, or how to add channels/tools/LLM**: it summarizes each module’s role, message flow, and extension points. No internal implementation detail.
 
 ---
 

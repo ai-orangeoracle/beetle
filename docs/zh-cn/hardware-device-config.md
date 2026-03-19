@@ -2,7 +2,7 @@
 
 [English](../en-us/hardware-device-config.md) | **中文**
 
-本文档描述 Beetle 的**里程碑式设计**：通过一份 JSON 配置即可让 LLM 按语义控制板载硬件（GPIO、PWM、ADC、蜂鸣器等），**零代码、配置即用**。LLM 只看到「设备叫什么、能做什么、怎么用」，不接触引脚号与底层协议。
+本文档面向**需要配置板载硬件并由 Agent 按语义调用的用户与开发者**，描述 Beetle 的**里程碑式设计**：通过一份 JSON 配置（`config/hardware.json`）即可让 LLM 按语义控制板载硬件（GPIO、PWM、ADC、蜂鸣器等），**零代码、配置即用**。LLM 只看到「设备叫什么、能做什么、怎么用」，不接触引脚号与底层协议。配置方式与校验规则见 [配置 API - GET/POST /api/config/hardware](config-api.md)；配置页中可在「硬件」相关项编辑。
 
 ---
 

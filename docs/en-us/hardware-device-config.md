@@ -2,7 +2,7 @@
 
 **English** | [中文](../zh-cn/hardware-device-config.md)
 
-This document describes a **milestone design** in Beetle: a single JSON config lets the LLM control on-board hardware (GPIO, PWM, ADC, buzzer, etc.) by **semantics only—zero code, config-only**. The LLM sees only “what the device is called, what it can do, and how to use it”; it never sees pin numbers or low-level protocols.
+This doc is for **users and developers** who want to configure on-board hardware and have the Agent control it by meaning. It describes a **milestone design** in Beetle: a single JSON config (`config/hardware.json`) lets the LLM control on-board hardware (GPIO, PWM, ADC, buzzer, etc.) by **semantics only—zero code, config-only**. The LLM sees only “what the device is called, what it can do, and how to use it”; it never sees pin numbers or low-level protocols. For how to read/write the config and validation rules, see [Config API – GET/POST /api/config/hardware](config-api.md); in the config page, use the “Hardware” section to edit.
 
 ---
 

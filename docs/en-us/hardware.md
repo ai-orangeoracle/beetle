@@ -2,7 +2,7 @@
 
 **English** | [中文](../zh-cn/hardware.md)
 
-This doc is for users and developers: supported boards, memory, and build options for selection and troubleshooting.
+This doc is for **users and developers** doing board selection or troubleshooting: supported boards, memory and build options, observability, and where to find configurable hardware (GPIO/PWM/ADC/buzzer) documentation.
 
 ---
 
