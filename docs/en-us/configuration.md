@@ -36,6 +36,10 @@ No need to remember or look up the device IP.
 
 ## Config page features
 
+An online copy of the config UI (same as on the device) is available at:
+
+- **https://ai-orangeoracle.github.io/beetle/** (or your custom domain if configured for the repo)
+
 The config page provides:
 
 - Set or change the pairing code
