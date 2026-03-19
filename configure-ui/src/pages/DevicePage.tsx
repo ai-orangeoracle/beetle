@@ -25,8 +25,7 @@ import {
   type ChannelConnectivityItem,
 } from "../api/endpoints/system";
 
-/** 与固件 mDNS 一致，默认用域名而非 IP */
-const DEFAULT_DEVICE_BASE_URL = "http://beetle.local";
+const DEFAULT_DEVICE_BASE_URL = "http://192.168.4.1";
 
 export function DevicePage() {
   const { t } = useTranslation();

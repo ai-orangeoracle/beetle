@@ -152,9 +152,4 @@ pub trait Platform: Send + Sync {
     fn remove_config_file(&self, _rel_path: &str) -> Result<()> {
         Ok(())
     }
-
-    /// mDNS 初始化（WiFi 就绪后调用）。默认 no-op；ESP32 在启用 mdns 组件时注册 beetle.local。
-    fn init_mdns(&self) -> Result<()> {
-        Ok(())
-    }
 }

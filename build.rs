@@ -88,8 +88,6 @@ fn main() {
 
     // 声明自定义 cfg，避免 unexpected_cfgs 警告（http_client 等处使用）。
     println!("cargo:rustc-check-cfg=cfg(esp_idf_version_major, values(\"4\"))");
-    // mDNS 组件由 esp-idf-sys 在构建时按 extra_components 设置，此处声明以消除 unexpected_cfgs。
-    println!("cargo:rustc-check-cfg=cfg(esp_idf_comp_espressif__mdns_enabled)");
 
     // 为看门狗 API 选择提供 esp_idf_version_major：IDF 4.x 用 esp_task_wdt_feed，5.x 用 esp_task_wdt_reset。
     // 从 IDF_PATH/version.txt 解析；未设置 IDF_PATH 时默认 5（常见于 espup 等）。

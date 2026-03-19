@@ -189,11 +189,4 @@ impl Platform for Esp32Platform {
         let _ = remove_file(&p);
         Ok(())
     }
-
-    fn init_mdns(&self) -> crate::error::Result<()> {
-        #[cfg(esp_idf_comp_espressif__mdns_enabled)]
-        return crate::platform::mdns::init();
-        #[cfg(not(esp_idf_comp_espressif__mdns_enabled))]
-        Ok(())
-    }
 }

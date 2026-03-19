@@ -18,11 +18,8 @@ pub mod response;
 pub mod sntp;
 pub mod spiffs;
 pub mod wifi;
-#[cfg(all(
-    any(target_arch = "xtensa", target_arch = "riscv32"),
-    esp_idf_comp_espressif__mdns_enabled
-))]
-pub mod mdns;
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+pub mod softap_ip;
 
 pub use abstraction::{ConfigStore, Platform, PlatformHttpClient, SkillMetaStore, SkillStorage};
 pub use response_body::ResponseBody;

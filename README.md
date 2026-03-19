@@ -34,7 +34,7 @@ Feishu, DingTalk, WeCom, QQ Channel, Telegram, and WebSocket converge on one ESP
 
 - **Board as Agent**: ReAct, tools, and memory run entirely on the ESP32; no cloud inference.
 - **Unified multi-channel**: All channels share one queue and one Agent; new channels register by implementing a trait.
-- **Browser provisioning**: When unprovisioned, the device opens hotspot **Beetle** (no password); open **http://beetle.local/** (recommended) or **http://192.168.4.1** if that fails. After WiFi is set, use **http://beetle.local/** (mDNS); pairing code protects write operations.
+- **Browser provisioning**: When unprovisioned, the device opens hotspot **Beetle** (no password); open **http://192.168.4.1**. After WiFi is set, use the router-assigned device IP; pairing code protects write operations.
 - Inspired by [OpenClaw](https://github.com/openclaw/openclaw); type-safe full-stack Agent on MCU in Rust.
 
 **System topology:**
@@ -87,7 +87,7 @@ $env:ESPFLASH_PORT="COM3"; .\build.ps1 --flash
 
 If path is too long, run `.\build.ps1 clean` then build again.
 
-**First use**: Device powers on with hotspot **Beetle**; open **http://beetle.local/** in a browser (or **http://192.168.4.1** if beetle.local doesn’t work) to set WiFi and pairing code.
+**First use**: Device powers on with hotspot **Beetle**; open **http://192.168.4.1** in a browser to set WiFi and pairing code.
 
 ---
 
@@ -143,7 +143,7 @@ Full key names and validation: `src/config.rs`. Runtime config segments (LLM, ch
 |------|-------------|
 | Board as Agent | ReAct, tools, memory on ESP32 |
 | Unified channels | Feishu / DingTalk / WeCom / QQ Channel / Telegram / WebSocket, same queue, same Agent |
-| Browser provisioning | Hotspot Beetle → http://beetle.local/ (recommended) or 192.168.4.1; after WiFi → http://beetle.local/ (mDNS), pairing code for writes |
+| Browser provisioning | Hotspot Beetle → http://192.168.4.1; after WiFi → router-assigned IP, pairing code for writes |
 | Rust stack | Type-safe, unified errors and resource limits; new channel/tool/LLM via trait |
 | Memory & tools | Long-term memory, session summary, reminders; GetTime, Cron, Files, WebSearch, AnalyzeImage, FetchUrl, HttpPost, RemindAt, KvStore, UpdateSessionSummary; **board_info** for device status (chip, heap, uptime, pressure, WiFi, SPIFFS); **device_control** for GPIO/PWM/ADC/buzzer per config/hardware.json; Skills in system prompt |
 | Resource & health | Orchestrator: heap/queue pressure, HTTP admission, channel circuit breaker; health and resource snapshot via API |
@@ -162,7 +162,7 @@ Full key names and validation: `src/config.rs`. Runtime config segments (LLM, ch
 
 | Doc | Description |
 |-----|-------------|
-| [Configuration](docs/en-us/configuration.md) | Provisioning, config page, mDNS, common config |
+| [Configuration](docs/en-us/configuration.md) | Provisioning, config page, common config |
 | [Config API contract](docs/en-us/config-api.md) | HTTP API: pairing, config segments, health, OTA, webhook |
 | [Agent tools](docs/en-us/tools.md) | User-facing guide: what tools the Agent can use (get_time, web_search, board_info, etc.) |
 | [Hardware & resources](docs/en-us/hardware.md) | Boards, memory, PSRAM, watchdog, build options, troubleshooting |

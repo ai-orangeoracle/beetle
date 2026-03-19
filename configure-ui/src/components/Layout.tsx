@@ -15,7 +15,13 @@ import { TopBar } from './TopBar'
 import { NavBlockerContext } from '../contexts/NavBlockerContext'
 import { UnsavedContext } from '../contexts/UnsavedContext'
 import { useConfig } from '../hooks/useConfig'
-import { useDeviceConnected } from '../store/deviceStatusStore'
+import { useToast } from '../hooks/useToast'
+import {
+  useDeviceConnected,
+  useRestartPhase,
+  consumeReconnectedAfterRestart,
+  consumeRestartTimeout,
+} from '../store/deviceStatusStore'
 import WarningAmberRounded from '@mui/icons-material/WarningAmberRounded'
 
 interface LayoutProps {
@@ -29,9 +35,13 @@ export function Layout({ onOpenSettings }: LayoutProps) {
   const location = useLocation()
   const { dirty } = useContext(UnsavedContext)
   const { config, clearCachedConfig } = useConfig()
+  const { showToast } = useToast()
   const deviceConnected = useDeviceConnected()
+  const restartPhase = useRestartPhase()
   const [pendingPath, setPendingPath] = useState<string | null>(null)
-  const showDisconnectedCacheBanner = !deviceConnected && config != null
+  const showRestartBanner = restartPhase !== 'idle'
+  const showDisconnectedCacheBanner =
+    !deviceConnected && config != null && !showRestartBanner
   const sidebarAsDrawer = useMediaQuery(theme.breakpoints.down(SIDEBAR_DRAWER_BREAKPOINT))
   const [drawerOpen, setDrawerOpen] = useState(false)
 
@@ -61,6 +71,15 @@ export function Layout({ onOpenSettings }: LayoutProps) {
     return () => window.removeEventListener('beforeunload', onBeforeUnload)
   }, [dirty])
 
+  useEffect(() => {
+    if (consumeReconnectedAfterRestart()) {
+      showToast(t('device.restartComplete'), { variant: 'success' })
+    }
+    if (consumeRestartTimeout()) {
+      showToast(t('device.restartTimeout'), { variant: 'error' })
+    }
+  })
+
   const showUnsavedDialog = dirty && pendingPath != null
 
   const handleUnsavedConfirm = useCallback(() => {
@@ -81,6 +100,34 @@ export function Layout({ onOpenSettings }: LayoutProps) {
         confirmLabel={t('common.confirm')}
         onConfirm={handleUnsavedConfirm}
       />
+      {showRestartBanner && (
+        <Box
+          role="status"
+          sx={{
+            flexShrink: 0,
+            display: 'flex',
+            alignItems: 'center',
+            px: 2,
+            py: 1.25,
+            borderBottom: '1px solid var(--border-subtle)',
+            borderLeft: 'var(--accent-line-width, 3px) solid var(--muted)',
+            backgroundColor: 'color-mix(in srgb, var(--muted) 8%, var(--surface))',
+          }}
+        >
+          <Typography
+            variant="body2"
+            sx={{
+              color: 'var(--foreground-soft)',
+              fontWeight: 600,
+              fontSize: 'var(--font-size-body-sm)',
+            }}
+          >
+            {restartPhase === 'pending'
+              ? t('device.restartPhasePending')
+              : t('device.restartPhaseRestarting')}
+          </Typography>
+        </Box>
+      )}
       {showDisconnectedCacheBanner && (
         <Box
           role="status"

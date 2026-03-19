@@ -366,9 +366,5 @@ pub fn is_private_url(url: &str) -> bool {
     if host.starts_with("169.254.") || host.starts_with("[fe80:") {
         return true;
     }
-    // mDNS / internal hostnames
-    if host.ends_with(".local") || host.ends_with(".internal") {
-        return true;
-    }
     false
 }
