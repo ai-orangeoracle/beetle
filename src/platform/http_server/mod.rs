@@ -191,8 +191,8 @@ pub fn run(
 
     let mut server_config = Configuration::default();
     server_config.max_open_sockets = MAX_OPEN_SOCKETS;
-    // 路由多（每 URI 常含 Get+Options，部分有 Post），默认 32 槽位不足导致 ESP_ERR_HTTPD_HANDLERS_FULL
-    server_config.max_uri_handlers = 64;
+    // 路由多（每 URI 常含 Get+Options，部分有 Post），需 ≥ 实际 register! 数量，否则 ESP_ERR_HTTPD_HANDLERS_FULL
+    server_config.max_uri_handlers = 96;
     // 默认 6KB 栈在 Rust handler（闭包+JSON+深层调用）下易溢出；GET /api/channel_connectivity 在任务内串行执行多次外网 HTTP，栈压力大，故提高到 12KB
     server_config.stack_size = 12 * 1024;
 

@@ -204,13 +204,17 @@ pub fn drive_pwm_out(
     Ok(format!(r#"{{"ok":true,"duty":{},"duty_raw":{}}}"#, duty, duty_raw))
 }
 
+/// ADC1 使用 oneshot 驱动（esp_adc/adc_oneshot.h），替代已弃用的 driver/adc.h legacy API。
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 pub fn drive_adc_in(pins: &PinConfig, _params: &Value, options: &Value) -> Result<String> {
     use esp_idf_svc::sys::{
-        adc1_config_channel_atten, adc1_config_width, adc1_get_raw,
-        adc_bits_width_t_ADC_WIDTH_BIT_12,
         adc_atten_t_ADC_ATTEN_DB_0, adc_atten_t_ADC_ATTEN_DB_2_5,
         adc_atten_t_ADC_ATTEN_DB_6, adc_atten_t_ADC_ATTEN_DB_11,
+        adc_bitwidth_t_ADC_BITWIDTH_12, adc_oneshot_chan_cfg_t,
+        adc_oneshot_config_channel, adc_oneshot_del_unit, adc_oneshot_new_unit,
+        adc_oneshot_read, adc_oneshot_unit_init_cfg_t,
+        adc_unit_t_ADC_UNIT_1, adc_ulp_mode_t_ADC_ULP_MODE_DISABLE,
+        soc_periph_adc_rtc_clk_src_t_ADC_RTC_CLK_SRC_DEFAULT,
         ESP_OK,
     };
 
@@ -223,7 +227,7 @@ pub fn drive_adc_in(pins: &PinConfig, _params: &Value, options: &Value) -> Resul
             format!("pin {} not in ADC1 range (GPIO 1–10)", pin),
         ));
     }
-    let adc_channel = (pin - 1) as u32;
+    let channel = (pin - 1) as u32;
 
     let atten_str = options
         .get("atten")
@@ -237,29 +241,42 @@ pub fn drive_adc_in(pins: &PinConfig, _params: &Value, options: &Value) -> Resul
     };
 
     unsafe {
-        let ret = adc1_config_width(adc_bits_width_t_ADC_WIDTH_BIT_12);
+        let init_cfg = adc_oneshot_unit_init_cfg_t {
+            unit_id: adc_unit_t_ADC_UNIT_1,
+            clk_src: soc_periph_adc_rtc_clk_src_t_ADC_RTC_CLK_SRC_DEFAULT,
+            ulp_mode: adc_ulp_mode_t_ADC_ULP_MODE_DISABLE,
+        };
+        let mut handle = core::ptr::null_mut();
+        let ret = adc_oneshot_new_unit(&init_cfg, &mut handle);
         if ret != ESP_OK {
             return Err(Error::Other {
                 source: Box::new(std::io::Error::other(
-                    format!("adc1_config_width failed: {}", ret),
+                    format!("adc_oneshot_new_unit failed: {}", ret),
                 )),
                 stage: "adc_in",
             });
         }
-        let ret = adc1_config_channel_atten(adc_channel, atten);
+        let chan_cfg = adc_oneshot_chan_cfg_t {
+            atten,
+            bitwidth: adc_bitwidth_t_ADC_BITWIDTH_12,
+        };
+        let ret = adc_oneshot_config_channel(handle, channel, &chan_cfg);
         if ret != ESP_OK {
+            let _ = adc_oneshot_del_unit(handle);
             return Err(Error::Other {
                 source: Box::new(std::io::Error::other(
-                    format!("adc1_config_channel_atten failed: {}", ret),
+                    format!("adc_oneshot_config_channel failed: {}", ret),
                 )),
                 stage: "adc_in",
             });
         }
-        let raw = adc1_get_raw(adc_channel);
-        if raw < 0 {
+        let mut raw: i32 = 0;
+        let ret = adc_oneshot_read(handle, channel, &mut raw);
+        let _ = adc_oneshot_del_unit(handle);
+        if ret != ESP_OK {
             return Err(Error::Other {
                 source: Box::new(std::io::Error::other(
-                    format!("adc1_get_raw returned error: {}", raw),
+                    format!("adc_oneshot_read failed: {}", ret),
                 )),
                 stage: "adc_in",
             });
