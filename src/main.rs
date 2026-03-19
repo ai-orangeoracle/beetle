@@ -143,12 +143,6 @@ fn main() {
         }
     };
 
-    if let Err(e) = platform.init_mdns() {
-        log::warn!("[{}] mDNS init failed: {}", TAG, e);
-    } else {
-        log::info!("[{}] mDNS hostname: beetle.local", TAG);
-    }
-
     run_app(platform, Arc::new(config), wifi_connected);
 }
 

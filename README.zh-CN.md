@@ -34,7 +34,7 @@
 
 - **单板即 Agent**：ReAct、工具、记忆均在 ESP32 内完成，无云端推理依赖。
 - **多通道统一**：各通道同队列、同一 Agent；新通道实现 trait 即注册。
-- **浏览器配网**：未配网时设备开热点 **Beetle**（无密码），浏览器优先打开 **http://beetle.local/**（推荐），打不开再用 **http://192.168.4.1**；已连 WiFi 后使用 **http://beetle.local/**（mDNS），配对码保护写操作。
+- **浏览器配网**：未配网时设备开热点 **Beetle**（无密码），浏览器打开 **http://192.168.4.1**；已连 WiFi 后使用路由器分配的设备 IP，配对码保护写操作。
 - 受 [OpenClaw](https://github.com/openclaw/openclaw) 启发，用 Rust 在 MCU 上跑类型安全的全栈 Agent。
 
 **系统拓扑：**
@@ -87,7 +87,7 @@ $env:ESPFLASH_PORT="COM3"; .\build.ps1 --flash
 
 路径过长时可先 `.\build.ps1 clean` 再构建。
 
-**首次使用**：设备上电后开热点 **Beetle**，浏览器打开 **http://beetle.local/**（推荐；若打不开再用 **http://192.168.4.1**）填写 WiFi 与配对码。
+**首次使用**：设备上电后开热点 **Beetle**，浏览器打开 **http://192.168.4.1** 填写 WiFi 与配对码。
 
 ---
 
@@ -143,7 +143,7 @@ cargo build --release
 |------|------|
 | 板子即 Agent | ReAct、工具、记忆均在 ESP32 内完成 |
 | 多通道统一 | 飞书 / 钉钉 / 企微 / QQ 频道 / Telegram / WebSocket 同队列、同一 Agent |
-| 浏览器配网 | 热点 Beetle → http://beetle.local/（推荐）或 192.168.4.1；已连 WiFi → http://beetle.local/（mDNS），配对码保护写操作 |
+| 浏览器配网 | 热点 Beetle → http://192.168.4.1；已连 WiFi → 路由器分配 IP，配对码保护写操作 |
 | Rust 全栈 | 类型安全、统一错误与资源上界；新通道/工具/LLM 实现 trait 即注册 |
 | 记忆与工具 | 长期记忆、会话摘要、到点提醒；GetTime、Cron、Files、WebSearch、AnalyzeImage、FetchUrl、HttpPost、RemindAt、KvStore、UpdateSessionSummary；**board_info** 查设备状态（芯片、堆、运行时间、压力、WiFi、SPIFFS）；**device_control** 按 config/hardware.json 控制 GPIO/PWM/ADC/蜂鸣器等；Skills 注入系统提示 |
 | 资源与健康 | 编排器：堆/队列压力、HTTP 准入、通道熔断；健康与资源快照通过 API 暴露 |
@@ -162,7 +162,7 @@ cargo build --release
 
 | 文档 | 说明 |
 |------|------|
-| [配置与使用](docs/zh-cn/configuration.md) | 配网、配置页、mDNS、常用配置 |
+| [配置与使用](docs/zh-cn/configuration.md) | 配网、配置页、常用配置 |
 | [配置 API 契约](docs/zh-cn/config-api.md) | HTTP API：配对、配置分段、健康、OTA、webhook |
 | [Agent 工具说明](docs/zh-cn/tools.md) | 面向用户：Agent 可用工具说明（get_time、web_search、board_info 等） |
 | [硬件与资源](docs/zh-cn/hardware.md) | 板型、内存、PSRAM、看门狗、编译选项、排错 |

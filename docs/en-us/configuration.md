@@ -8,22 +8,19 @@ This doc is for **end users**: how to access the device, provision WiFi, use the
 
 ## Accessing the device
 
-**Recommended:** Whether or not the device is on your WiFi yet, open **http://beetle.local/** first (mDNS; usually works when connected to the device hotspot or on the same LAN). If that fails, use the device IP **http://192.168.4.1** (matches firmware; only when connected to the device hotspot).
+**Recommended:** When connected to the device hotspot, open **http://192.168.4.1/** in the browser; when on the same LAN, use the IP assigned to the device by your router.
 
 ### Unprovisioned (first use)
 
 1. Device powers on and opens a hotspot; SSID is **Beetle** (no password).
 2. Connect your phone or PC to that hotspot.
-3. In a browser open **http://beetle.local/**; if it doesn’t load, open **http://192.168.4.1** (port 80; no need to type the port).
+3. In a browser open **http://192.168.4.1** (port 80; no need to type the port).
 
 Only the device is on that hotspot; the firmware SoftAP address is 192.168.4.1 and does not conflict with your home router.
 
 ### After WiFi is set
 
-Once the device is connected to your router, as long as your phone/PC and the device are on the same LAN:
-
-- **http://beetle.local/** (recommended; mDNS; works regardless of subnet)
-- If beetle.local is unavailable, use the IP assigned to the device by your router
+Once the device is connected to your router, as long as your phone/PC and the device are on the same LAN, use the IP assigned to the device by your router.
 
 ---
 
@@ -39,8 +36,8 @@ Once the device is connected to your router, as long as your phone/PC and the de
 
 You can open the config page in two ways:
 
-1. **From the device**: After connecting to the device hotspot or the same LAN, open **http://beetle.local/** (recommended) or **http://192.168.4.1** in the browser; the device serves or redirects to the config UI.
-2. **Online**: Open **https://ai-orangeoracle.github.io/beetle/** (or the repo’s custom domain if set). You still need a flashed device and your browser on the same network; then enter the device address in the page (**http://beetle.local/** or **http://192.168.4.1**) to read or write config.
+1. **From the device**: After connecting to the device hotspot or the same LAN, open **http://192.168.4.1** (when on the device hotspot) or the router-assigned device IP (when on the same LAN) in the browser; the device serves or redirects to the config UI.
+2. **Online**: Open **https://ai-orangeoracle.github.io/beetle/** (or the repo’s custom domain if set). You still need a flashed device and your browser on the same network; then enter the device address in the page (**http://192.168.4.1** or the router-assigned IP) to read or write config.
 
 The config page provides:
 
@@ -77,5 +74,5 @@ Build-time env vars `BEETLE_*` can prefill; at runtime the config page (NVS) win
 
 ## Health and observability
 
-- **GET /api/health**: No pairing code required. Returns WiFi status, inbound/outbound queue depth, recent error summary, and a **metrics** snapshot (messages in/out, LLM/tool calls and errors, WDT feed, per-stage error counts, etc.; no sensitive data). Call it at **http://beetle.local/api/health** (or replace with the device IP). Useful for ops checks and before/after tuning.
+- **GET /api/health**: No pairing code required. Returns WiFi status, inbound/outbound queue depth, recent error summary, and a **metrics** snapshot (messages in/out, LLM/tool calls and errors, WDT feed, per-stage error counts, etc.; no sensitive data). Call it at **http://192.168.4.1/api/health** (when on the device hotspot) or the device’s LAN IP. Useful for ops checks and before/after tuning.
 - **Serial**: Heartbeat logs a metrics baseline every 30 seconds (`msg_in`, `llm_calls`, `err_*`, etc.) for long-run comparison.

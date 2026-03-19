@@ -308,6 +308,9 @@ fn do_connect(
         }) {
             return send_err(e);
         }
+        if let Err(e) = crate::platform::softap_ip::set_softap_ip_192_168_4_1() {
+            log::warn!("[{}] SoftAP IP set failed: {}", TAG, e);
+        }
         log::info!("[{}] SoftAP started (SSID: {})", TAG, SOFTAP_SSID);
         let _ = result_tx.send(Ok(()));
         run_scan_loop(&mut wifi, &scan_req_rx, &scan_resp_tx, false);
@@ -365,6 +368,9 @@ fn do_connect(
         stage: "wifi_start",
     }) {
         return send_err(e);
+    }
+    if let Err(e) = crate::platform::softap_ip::set_softap_ip_192_168_4_1() {
+        log::warn!("[{}] SoftAP IP set failed: {}", TAG, e);
     }
     log::info!("[{}] SoftAP started (SSID: {}), connecting STA...", TAG, SOFTAP_SSID);
     if let Err(e) = wifi.connect().map_err(|e| Error::Other {

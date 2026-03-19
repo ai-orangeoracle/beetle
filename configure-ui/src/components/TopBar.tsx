@@ -8,6 +8,7 @@ import SettingsRounded from "@mui/icons-material/SettingsRounded";
 import { useTranslation } from "react-i18next";
 import { useLocation } from "react-router-dom";
 import * as systemApi from "../api/endpoints/system";
+import { setRestartPending } from "../store/deviceStatusStore";
 import { useDevice } from "../hooks/useDevice";
 import { useDeviceApi } from "../hooks/useDeviceApi";
 import { useToast } from "../hooks/useToast";
@@ -63,7 +64,9 @@ export function TopBar({ onMenuClick, onOpenSettings }: TopBarProps) {
     setRestarting(true);
     const res = await systemApi.postRestart(baseUrl, pairingCode);
     setRestarting(false);
+    setRestartConfirmOpen(false);
     if (res.ok) {
+      setRestartPending();
       showToast(t("device.restartSent"), { variant: "success" });
     } else {
       showToast(res.error ?? t("device.restartFail"), { variant: "error" });
