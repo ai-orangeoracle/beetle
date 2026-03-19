@@ -2,14 +2,11 @@
 //! 仅依赖 trait；HTTP/Tool 由 main 注入同一实现（如 EspHttpClient）。
 
 use crate::agent::context::build_context;
-use crate::orchestrator::admission::{AdmissionDecision, LlmDecision, ToolDecision};
 use crate::bus::{InboundTx, OutboundTx, PcMsg, MAX_CONTENT_LEN};
-use crate::util::{truncate_content_to_max, truncate_to_byte_len};
 use crate::constants::{
     AGENT_MARKER_MARK_IMPORTANT, AGENT_MARKER_SIGNAL_COMFORT, AGENT_MARKER_STOP,
     AGENT_RETRY_BASE_MS, AGENT_RETRY_MAX_MS, INBOUND_RECV_TIMEOUT_SECS,
-    MAX_TOOL_RESULTS_USER_MESSAGE_LEN,
-    TASK_CONTINUATION_CONTINUE_THRESHOLD_LEN,
+    MAX_TOOL_RESULTS_USER_MESSAGE_LEN, TASK_CONTINUATION_CONTINUE_THRESHOLD_LEN,
 };
 use crate::error::Result;
 use crate::llm::{LlmClient, LlmHttpClient, Message, StopReason, ToolSpec};
@@ -17,15 +14,17 @@ use crate::memory::{
     EmotionSignalStore, ImportantMessageStore, MemoryStore, PendingRetryStore, SessionStore,
     SessionSummaryStore, TaskContinuationStore,
 };
-use std::collections::HashMap;
+use crate::metrics;
+use crate::orchestrator::admission::{AdmissionDecision, LlmDecision, ToolDecision};
+use crate::state;
+use crate::tools::ToolContext;
+use crate::util::{truncate_content_to_max, truncate_to_byte_len};
+use crate::PlatformHttpClient;
 use std::collections::hash_map::DefaultHasher;
+use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::sync::mpsc::RecvTimeoutError;
 use std::time::{Duration, Instant};
-use crate::metrics;
-use crate::PlatformHttpClient;
-use crate::state;
-use crate::tools::ToolContext;
 /// 最大 ReAct 轮数（含首轮 chat），防止无限 tool 循环。
 const MAX_REACT_ROUNDS: usize = 10;
 
@@ -164,8 +163,11 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
             hasher.finish()
         };
         let now_for_key = Instant::now();
-        if llm_failure_count.get(&msg_key)
-            .map(|(count, ts)| *count >= 3 && now_for_key.duration_since(*ts) < Duration::from_secs(300))
+        if llm_failure_count
+            .get(&msg_key)
+            .map(|(count, ts)| {
+                *count >= 3 && now_for_key.duration_since(*ts) < Duration::from_secs(300)
+            })
             .unwrap_or(false)
         {
             let out = PcMsg {
@@ -198,7 +200,9 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
                         let now = Instant::now();
                         let should_log = low_mem_defer_log
                             .as_ref()
-                            .map(|(id, t)| id != &chat_id || t.elapsed() >= LOW_MEM_DEFER_LOG_INTERVAL)
+                            .map(|(id, t)| {
+                                id != &chat_id || t.elapsed() >= LOW_MEM_DEFER_LOG_INTERVAL
+                            })
                             .unwrap_or(true);
                         if should_log {
                             log::warn!("[agent] admission defer chat_id={}", chat_id);
@@ -275,7 +279,11 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
                         crate::platform::task_wdt::feed_current_task();
                         let line = resp.content.trim();
                         if line.starts_with("REPLY: ") {
-                            Ok((WorkerOutcome::Content(line["REPLY: ".len()..].trim().to_string()), None, false))
+                            Ok((
+                                WorkerOutcome::Content(line["REPLY: ".len()..].trim().to_string()),
+                                None,
+                                false,
+                            ))
                         } else {
                             run_worker_path(
                                 http,
@@ -296,14 +304,7 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
                     }
                 }
             }
-            None => run_worker_path(
-                http,
-                worker_llm,
-                &msg,
-                registry,
-                config,
-                &tool_descriptions,
-            ),
+            None => run_worker_path(http, worker_llm, &msg, registry, config, &tool_descriptions),
         };
 
         let (outcome, consumed_round, streamed) = match final_content {
@@ -314,7 +315,9 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
                 log::warn!("[agent] chat loop failed: {}", e);
                 state::set_last_error(&e);
 
-                let (counter, _) = llm_failure_count.entry(msg_key).or_insert((0, Instant::now()));
+                let (counter, _) = llm_failure_count
+                    .entry(msg_key)
+                    .or_insert((0, Instant::now()));
                 *counter = counter.saturating_add(1);
 
                 if *counter < 3 {
@@ -331,7 +334,8 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
                             log::error!("[agent] inbound_tx disconnected during llm retry");
                         }
                     }
-                    let delay_ms = (AGENT_RETRY_BASE_MS * (1 << (*counter as u64).min(4))).min(AGENT_RETRY_MAX_MS);
+                    let delay_ms = (AGENT_RETRY_BASE_MS * (1 << (*counter as u64).min(4)))
+                        .min(AGENT_RETRY_MAX_MS);
                     std::thread::sleep(std::time::Duration::from_millis(delay_ms));
                     continue;
                 }
@@ -348,10 +352,14 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
             }
         };
         let (mut reply_content, is_interrupt) = match &outcome {
-            WorkerOutcome::Interrupt(confirm) => {
-                (truncate_content_to_max(confirm, MAX_CONTENT_LEN).into_owned(), true)
-            }
-            WorkerOutcome::Content(s) => (truncate_content_to_max(s, MAX_CONTENT_LEN).into_owned(), false),
+            WorkerOutcome::Interrupt(confirm) => (
+                truncate_content_to_max(confirm, MAX_CONTENT_LEN).into_owned(),
+                true,
+            ),
+            WorkerOutcome::Content(s) => (
+                truncate_content_to_max(s, MAX_CONTENT_LEN).into_owned(),
+                false,
+            ),
         };
         let mark_important = !is_interrupt && reply_content.contains(AGENT_MARKER_MARK_IMPORTANT);
         if !is_interrupt {
@@ -360,14 +368,16 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
                     .replace(AGENT_MARKER_MARK_IMPORTANT, "")
                     .trim()
                     .to_string();
-                reply_content = truncate_content_to_max(&reply_content, MAX_CONTENT_LEN).into_owned();
+                reply_content =
+                    truncate_content_to_max(&reply_content, MAX_CONTENT_LEN).into_owned();
             }
             if reply_content.contains(AGENT_MARKER_SIGNAL_COMFORT) {
                 reply_content = reply_content
                     .replace(AGENT_MARKER_SIGNAL_COMFORT, "")
                     .trim()
                     .to_string();
-                reply_content = truncate_content_to_max(&reply_content, MAX_CONTENT_LEN).into_owned();
+                reply_content =
+                    truncate_content_to_max(&reply_content, MAX_CONTENT_LEN).into_owned();
                 let _ = config.emotion_signal_store.set(&msg.chat_id, "comfort");
             }
         }
@@ -385,11 +395,15 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
                             &reply_content,
                         );
                     } else {
-                        let _ = config.task_continuation.clear_task_continuation(&msg.chat_id);
+                        let _ = config
+                            .task_continuation
+                            .clear_task_continuation(&msg.chat_id);
                     }
                 }
                 None => {
-                    let _ = config.task_continuation.clear_task_continuation(&msg.chat_id);
+                    let _ = config
+                        .task_continuation
+                        .clear_task_continuation(&msg.chat_id);
                 }
             }
         }
@@ -399,26 +413,38 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
             llm_failure_count.remove(&msg_key);
             if llm_failure_count.len() > 64 {
                 let now = Instant::now();
-                llm_failure_count.retain(|_, (count, ts)| *count > 0 && now.duration_since(*ts) < Duration::from_secs(300));
+                llm_failure_count.retain(|_, (count, ts)| {
+                    *count > 0 && now.duration_since(*ts) < Duration::from_secs(300)
+                });
             }
             continue;
         }
 
-        if let Err(e) = config.session_store.append(&msg.chat_id, "user", &msg.content) {
+        if let Err(e) = config
+            .session_store
+            .append(&msg.chat_id, "user", &msg.content)
+        {
             log::warn!("[agent_session] append user failed: {}", e);
             metrics::record_error_by_stage("session_append");
         }
-        if let Err(e) = config.session_store.append(&msg.chat_id, "assistant", &reply_content) {
+        if let Err(e) = config
+            .session_store
+            .append(&msg.chat_id, "assistant", &reply_content)
+        {
             log::warn!("[agent_session] append assistant failed: {}", e);
             metrics::record_error_by_stage("session_append");
         }
         if mark_important {
-            let _ = config.important_message_store.set_important_offset_from_end(&msg.chat_id, 1);
+            let _ = config
+                .important_message_store
+                .set_important_offset_from_end(&msg.chat_id, 1);
         }
         llm_failure_count.remove(&msg_key);
         if llm_failure_count.len() > 64 {
             let now = Instant::now();
-            llm_failure_count.retain(|_, (count, ts)| *count > 0 && now.duration_since(*ts) < Duration::from_secs(300));
+            llm_failure_count.retain(|_, (count, ts)| {
+                *count > 0 && now.duration_since(*ts) < Duration::from_secs(300)
+            });
         }
 
         // 流式编辑已发送到通道时，跳过 outbound_tx 避免重复发送。
@@ -457,19 +483,23 @@ fn run_worker_path<H: PlatformHttpClient>(
         chat_id: msg.chat_id.clone(),
         channel: msg.channel.clone(),
     };
-    let (suffix, consumed_round) = match config.task_continuation.get_task_continuation(&msg.chat_id) {
-        Ok(Some((r, out))) => {
-            let _ = config.task_continuation.clear_task_continuation(&msg.chat_id);
-            let s = format!(
-                "上一轮产出（第{}轮）：\n{}\n\n本轮请在此基础上继续。",
-                r, out
-            );
-            (Some(s), Some(r))
-        }
-        _ => (None, None),
-    };
+    let (suffix, consumed_round) =
+        match config.task_continuation.get_task_continuation(&msg.chat_id) {
+            Ok(Some((r, out))) => {
+                let _ = config
+                    .task_continuation
+                    .clear_task_continuation(&msg.chat_id);
+                let s = format!(
+                    "上一轮产出（第{}轮）：\n{}\n\n本轮请在此基础上继续。",
+                    r, out
+                );
+                (Some(s), Some(r))
+            }
+            _ => (None, None),
+        };
     let skill_descriptions = (config.get_skill_descriptions)();
-    let emotion_signal_suffix = config.emotion_signal_store
+    let emotion_signal_suffix = config
+        .emotion_signal_store
         .get_then_clear(&msg.chat_id)
         .ok()
         .flatten()
@@ -480,7 +510,11 @@ fn run_worker_path<H: PlatformHttpClient>(
                 None
             }
         });
-    let summary_with_count = config.session_summary_store.get_with_count(&msg.chat_id).ok().flatten();
+    let summary_with_count = config
+        .session_summary_store
+        .get_with_count(&msg.chat_id)
+        .ok()
+        .flatten();
     let summary_text = summary_with_count.as_ref().map(|(s, _)| s.as_str());
     let summary_last_count = summary_with_count.as_ref().map(|(_, c)| *c).unwrap_or(0);
     let budget = crate::orchestrator::current_budget();
@@ -504,7 +538,11 @@ fn run_worker_path<H: PlatformHttpClient>(
 
     let mut final_content = String::new();
     // 流式编辑状态（跨 ReAct 轮次共享）。
-    let editor = if config.llm_stream { config.stream_editor } else { None };
+    let editor = if config.llm_stream {
+        config.stream_editor
+    } else {
+        None
+    };
     let mut stream_msg_id: Option<String> = None;
     let mut last_edit_time = Instant::now();
     let mut stream_edit_disabled = false; // send_initial 失败后禁用流式编辑
@@ -536,7 +574,10 @@ fn run_worker_path<H: PlatformHttpClient>(
                 let Some(ed) = editor else { return };
                 // Critical 压力下跳过流式编辑，节省 HTTP 连接与堆开销。
                 if stream_edit_disabled
-                    || matches!(crate::orchestrator::current_pressure(), crate::orchestrator::PressureLevel::Critical)
+                    || matches!(
+                        crate::orchestrator::current_pressure(),
+                        crate::orchestrator::PressureLevel::Critical
+                    )
                 {
                     return;
                 }
@@ -551,17 +592,30 @@ fn run_worker_path<H: PlatformHttpClient>(
                         }
                         Ok(None) => {}
                         Err(e) => {
-                            log::warn!("[agent_stream] send_initial failed, disabling stream edit: {}", e);
+                            log::warn!(
+                                "[agent_stream] send_initial failed, disabling stream edit: {}",
+                                e
+                            );
                             stream_edit_disabled = true;
                         }
                     }
-                } else if now.duration_since(last_edit_time) >= Duration::from_millis(EDIT_THROTTLE_MS) {
+                } else if now.duration_since(last_edit_time)
+                    >= Duration::from_millis(EDIT_THROTTLE_MS)
+                {
                     if let Some(ref mid) = stream_msg_id {
                         if let Err(e) = ed.edit(&chat_id_for_cb, mid, accumulated) {
                             stream_edit_fail_count += 1;
-                            log::debug!("[agent_stream] edit failed ({}/{}): {}", stream_edit_fail_count, MAX_EDIT_FAILURES, e);
+                            log::debug!(
+                                "[agent_stream] edit failed ({}/{}): {}",
+                                stream_edit_fail_count,
+                                MAX_EDIT_FAILURES,
+                                e
+                            );
                             if stream_edit_fail_count >= MAX_EDIT_FAILURES {
-                                log::warn!("[agent_stream] edit failed {} times, disabling stream edit", MAX_EDIT_FAILURES);
+                                log::warn!(
+                                    "[agent_stream] edit failed {} times, disabling stream edit",
+                                    MAX_EDIT_FAILURES
+                                );
                                 stream_edit_disabled = true;
                             }
                         } else {
@@ -572,7 +626,11 @@ fn run_worker_path<H: PlatformHttpClient>(
                 }
             };
             worker_llm.chat_with_progress(
-                &mut tool_ctx, &system, &messages, Some(config.tool_specs), &mut progress_cb,
+                &mut tool_ctx,
+                &system,
+                &messages,
+                Some(config.tool_specs),
+                &mut progress_cb,
             )
         } else {
             worker_llm.chat(&mut tool_ctx, &system, &messages, Some(config.tool_specs))
@@ -614,7 +672,11 @@ fn run_worker_path<H: PlatformHttpClient>(
                 } else {
                     false
                 };
-                return Ok((WorkerOutcome::Interrupt(confirmation), consumed_round, streamed));
+                return Ok((
+                    WorkerOutcome::Interrupt(confirmation),
+                    consumed_round,
+                    streamed,
+                ));
             }
             final_content = content;
             break;
@@ -635,9 +697,9 @@ fn run_worker_path<H: PlatformHttpClient>(
                     response.content
                 },
             });
-            let mut user_content_raw = String::with_capacity(MAX_TOOL_RESULTS_USER_MESSAGE_LEN.min(
-                tool_calls.len() * 256,
-            ));
+            let mut user_content_raw = String::with_capacity(
+                MAX_TOOL_RESULTS_USER_MESSAGE_LEN.min(tool_calls.len() * 256),
+            );
             for (i, tc) in tool_calls.iter().enumerate() {
                 // 工具执行门控
                 let needs_net = registry.is_network_tool(&tc.name);
@@ -646,24 +708,26 @@ fn run_worker_path<H: PlatformHttpClient>(
                         log::info!("[agent_tool] {} denied: {}", tc.name, reason);
                         serde_json::json!({ "error": reason }).to_string()
                     }
-                    ToolDecision::Allow => match registry.execute(&tc.name, &tc.input, &mut tool_ctx) {
-                        Ok(s) => {
-                            metrics::record_tool_call(true);
-                            s
+                    ToolDecision::Allow => {
+                        match registry.execute(&tc.name, &tc.input, &mut tool_ctx) {
+                            Ok(s) => {
+                                metrics::record_tool_call(true);
+                                s
+                            }
+                            Err(e) => {
+                                metrics::record_tool_call(false);
+                                metrics::record_error_by_stage(e.stage());
+                                log::error!(
+                                    "[agent_tool] {} execute failed: {} (stage: {})",
+                                    tc.name,
+                                    e,
+                                    e.stage()
+                                );
+                                state::set_last_error(&e);
+                                format!("[tool error] {} (stage: {})", e, e.stage())
+                            }
                         }
-                        Err(e) => {
-                            metrics::record_tool_call(false);
-                            metrics::record_error_by_stage(e.stage());
-                            log::error!(
-                                "[agent_tool] {} execute failed: {} (stage: {})",
-                                tc.name,
-                                e,
-                                e.stage()
-                            );
-                            state::set_last_error(&e);
-                            format!("[tool error] {} (stage: {})", e, e.stage())
-                        }
-                    },
+                    }
                 };
                 crate::platform::task_wdt::feed_current_task();
                 if i > 0 {
@@ -674,10 +738,8 @@ fn run_worker_path<H: PlatformHttpClient>(
                 user_content_raw.push_str("]: ");
                 user_content_raw.push_str(&result);
             }
-            let user_content = truncate_to_byte_len(
-                &user_content_raw,
-                MAX_TOOL_RESULTS_USER_MESSAGE_LEN,
-            );
+            let user_content =
+                truncate_to_byte_len(&user_content_raw, MAX_TOOL_RESULTS_USER_MESSAGE_LEN);
             messages.push(Message {
                 role: "user".to_string(),
                 content: format!("Tool results:\n{}", user_content),
@@ -700,7 +762,11 @@ fn run_worker_path<H: PlatformHttpClient>(
             } else {
                 false
             };
-            return Ok((WorkerOutcome::Interrupt(confirmation), consumed_round, streamed));
+            return Ok((
+                WorkerOutcome::Interrupt(confirmation),
+                consumed_round,
+                streamed,
+            ));
         }
         final_content = content;
         break;
@@ -714,6 +780,9 @@ fn run_worker_path<H: PlatformHttpClient>(
     } else {
         false
     };
-    Ok((WorkerOutcome::Content(final_content), consumed_round, streamed))
+    Ok((
+        WorkerOutcome::Content(final_content),
+        consumed_round,
+        streamed,
+    ))
 }
-
