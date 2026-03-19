@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
-use super::hardware_drivers;
+use crate::platform::hardware_drivers;
 
 /// 输出类设备最小操作间隔（ms）。
 const DEVICE_MIN_INTERVAL_MS: u64 = 2000;

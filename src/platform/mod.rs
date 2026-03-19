@@ -9,6 +9,7 @@ pub mod task_wdt;
 pub mod esp32;
 pub mod fetch_url;
 pub mod heap;
+pub mod hardware_drivers;
 pub mod heartbeat_file;
 pub mod http_client;
 pub mod http_server;
@@ -17,6 +18,7 @@ pub mod pairing;
 pub mod response;
 pub mod sntp;
 pub mod spiffs;
+pub mod time;
 pub mod wifi;
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 pub mod softap_ip;
@@ -25,7 +27,7 @@ pub use abstraction::{ConfigStore, Platform, PlatformHttpClient, SkillMetaStore,
 pub use response_body::ResponseBody;
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 pub use esp32::Esp32Platform;
-pub use fetch_url::fetch_url_to_bytes;
+pub use fetch_url::fetch_url_with_client;
 pub use heartbeat_file::read_heartbeat_file;
 pub use http_client::EspHttpClient;
 pub use nvs::{

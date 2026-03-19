@@ -1,16 +1,13 @@
 //! QQ WSS 入站：取 gateway URL → Hello/Identify → 心跳 → Dispatch 入队。
 //! 支持频道 AT_MESSAGE_CREATE、群聊 GROUP_AT_MESSAGE_CREATE、私聊 C2C_MESSAGE_CREATE。
-//! 仅 ESP 编译；与 HTTP webhook 可并存，由 main 按配置决定是否 spawn。
-
-#![cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+//! 与 HTTP webhook 可并存，由 main 按配置决定是否 spawn。
 
 use crate::bus::PcMsg;
 use crate::channels::ChannelHttpClient;
 use crate::channels::wss_gateway::{
-    connect_esp_wss, run_wss_gateway_loop, WssGatewayDriver, WssRecvAction, WssSessionState,
+    run_wss_gateway_loop, WssConnection, WssGatewayDriver, WssRecvAction, WssSessionState,
 };
 use crate::error::{Error, Result};
-use crate::platform::EspHttpClient;
 
 use super::send::{QqMsgIdCache, QqTokenRequest, QqTokenResponse, QQ_GET_APP_ACCESS_TOKEN_URL};
 
@@ -293,15 +290,21 @@ impl WssGatewayDriver for QqWssDriver {
     }
 }
 
-/// 长连接循环：委托 run_wss_gateway_loop，使用 QqWssDriver 与 ESP 连接。
-pub fn run_qq_ws_loop(
+/// 长连接循环：委托 run_wss_gateway_loop，使用 QqWssDriver。
+/// create_http 与 connect 由调用方（main）注入，本模块不依赖具体平台类型。
+pub fn run_qq_ws_loop<H, C, CreateHttp, Conn>(
     app_id: String,
     client_secret: String,
     inbound_tx: crate::bus::InboundTx,
     msg_id_cache: QqMsgIdCache,
-) {
+    create_http: CreateHttp,
+    connect: Conn,
+) where
+    H: ChannelHttpClient,
+    C: WssConnection,
+    CreateHttp: FnMut() -> Result<H>,
+    Conn: FnMut(&str) -> Result<C>,
+{
     let driver = QqWssDriver::new(app_id, client_secret, msg_id_cache);
-    let create_http = || EspHttpClient::new();
-    let connect = |url: &str| connect_esp_wss(url);
     run_wss_gateway_loop(TAG, driver, inbound_tx, create_http, connect);
 }

@@ -1,5 +1,5 @@
-//! board_info 工具：返回设备状态 JSON（芯片、堆、运行时间、IDF 版本、压力、WiFi、SPIFFS）；ESP 用 platform/heap 与 esp_idf_svc::sys，host 返回占位。
-//! board_info tool: device status JSON — chip, heap, uptime, IDF version, pressure, WiFi, SPIFFS; ESP uses platform/heap and esp_idf_svc::sys, host placeholder.
+//! board_info 工具：返回设备状态 JSON（芯片、堆、运行时间、IDF 版本、压力、WiFi、SPIFFS）；通过 platform/heap 获取堆信息，host 返回占位。
+//! board_info tool: device status JSON — chip, heap, uptime, IDF version, pressure, WiFi, SPIFFS; uses platform/heap, host placeholder.
 
 use crate::error::Result;
 use crate::tools::{Tool, ToolContext};
@@ -48,19 +48,9 @@ fn collect_esp() -> String {
     let psram_free = heap_free_spiram();
     let heap_free = heap_internal.saturating_add(psram_free);
 
-    let heap_min_free = unsafe {
-        esp_idf_svc::sys::heap_caps_get_minimum_free_size(esp_idf_svc::sys::MALLOC_CAP_INTERNAL)
-            as u64
-    };
+    let heap_min_free = crate::platform::heap::heap_min_free_internal() as u64;
 
-    let uptime_secs = unsafe {
-        let us = esp_idf_svc::sys::esp_timer_get_time();
-        if us >= 0 {
-            (us as u64) / 1_000_000
-        } else {
-            0
-        }
-    };
+    let uptime_secs = crate::platform::time::uptime_secs();
 
     // 编译时由 build.rs 从 IDF_PATH/version.txt 注入；未设置 IDF_PATH 时为 "unknown"
     let idf_version = option_env!("IDF_VERSION").unwrap_or("unknown");

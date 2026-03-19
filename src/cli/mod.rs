@@ -25,6 +25,7 @@ pub struct CliContext {
     pub config_store: Arc<dyn ConfigStore + Send + Sync>,
     pub memory: Arc<dyn MemoryStore + Send + Sync>,
     pub session: Arc<dyn SessionStore + Send + Sync>,
+    pub platform: Arc<dyn crate::platform::Platform>,
     pub wifi_connected: bool,
     /// 入站/出站队列深度（实时读取）；None 表示 bus 未暴露深度。
     pub inbound_depth: Option<Arc<std::sync::atomic::AtomicUsize>>,
@@ -38,6 +39,7 @@ impl CliContext {
         config_store: Arc<dyn ConfigStore + Send + Sync>,
         memory: Arc<dyn MemoryStore + Send + Sync>,
         session: Arc<dyn SessionStore + Send + Sync>,
+        platform: Arc<dyn crate::platform::Platform>,
         wifi_connected: bool,
         inbound_depth: Option<Arc<std::sync::atomic::AtomicUsize>>,
         outbound_depth: Option<Arc<std::sync::atomic::AtomicUsize>>,
@@ -47,6 +49,7 @@ impl CliContext {
             config_store,
             memory,
             session,
+            platform,
             wifi_connected,
             inbound_depth,
             outbound_depth,
@@ -80,13 +83,13 @@ pub fn run_command(ctx: &CliContext, line: &str) -> String {
         "session_list" => cmd_session_list(ctx),
         "session_clear" => cmd_session_clear(ctx, args),
         "heap_info" => cmd_heap_info(),
-        "restart" => cmd_restart(),
+        "restart" => cmd_restart(ctx),
         "health" => cmd_health(ctx),
         "config_show" => cmd_config_show(ctx),
         "config_reset" => cmd_config_reset(ctx, args),
         "help" | "?" => cmd_help(),
         #[cfg(feature = "ota")]
-        "ota" => cmd_ota(args),
+        "ota" => cmd_ota(ctx, args),
         #[cfg(not(feature = "ota"))]
         "ota" => "OTA not enabled (build with --features ota).\n".into(),
         _ => format!("Unknown command: {}. Use 'help' for list.\n", cmd),
@@ -161,32 +164,19 @@ fn cmd_session_clear(ctx: &CliContext, args: Vec<&str>) -> String {
 }
 
 fn cmd_heap_info() -> String {
-    #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
-    {
-        let internal = unsafe { esp_idf_svc::sys::heap_caps_get_free_size(esp_idf_svc::sys::MALLOC_CAP_INTERNAL) };
-        let spiram = unsafe { esp_idf_svc::sys::heap_caps_get_free_size(esp_idf_svc::sys::MALLOC_CAP_SPIRAM) };
-        let total = unsafe { esp_idf_svc::sys::esp_get_free_heap_size() };
-        format!(
-            "Internal free: {} bytes\nPSRAM free:    {} bytes\nTotal free:    {} bytes\n",
-            internal, spiram, total
-        )
-    }
-    #[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
-    {
-        "heap_info: N/A (host)\n".into()
-    }
+    let internal = crate::platform::heap::heap_free_internal();
+    let spiram = crate::platform::heap::heap_free_spiram();
+    let total = crate::platform::heap::heap_free_total();
+    format!(
+        "Internal free: {} bytes\nPSRAM free:    {} bytes\nTotal free:    {} bytes\n",
+        internal, spiram, total
+    )
 }
 
-fn cmd_restart() -> String {
-    #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
-    {
-        log::info!("[{}] Restarting...", TAG);
-        unsafe { esp_idf_svc::sys::esp_restart() };
-    }
-    #[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
-    {
-        "restart: N/A (host)\n".into()
-    }
+fn cmd_restart(ctx: &CliContext) -> String {
+    log::info!("[{}] Restarting...", TAG);
+    ctx.platform.request_restart();
+    "restart: requested\n".into()
 }
 
 fn cmd_config_show(ctx: &CliContext) -> String {
@@ -239,21 +229,15 @@ fn cmd_help() -> String {
 }
 
 #[cfg(feature = "ota")]
-fn cmd_ota(args: Vec<&str>) -> String {
+fn cmd_ota(ctx: &CliContext, args: Vec<&str>) -> String {
     let url = match args.first().copied() {
         Some(u) => u,
         None => return "Usage: ota <url>\n".into(),
     };
-    match crate::ota::ota_update_from_url(url) {
+    match ctx.platform.ota_from_url(url) {
         Ok(()) => {
             log::info!("[{}] OTA done, restarting", TAG);
-            #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
-            unsafe {
-                esp_idf_svc::sys::esp_restart();
-            }
-            #[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
-            return "OTA successful (restart N/A on host).\n".into();
-            #[allow(unreachable_code)]
+            ctx.platform.request_restart();
             "OTA successful. Restarting...\n".into()
         }
         Err(e) => format!("OTA failed: {}\n", state::sanitize_error_for_log(&e)),

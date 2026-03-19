@@ -41,6 +41,31 @@ pub fn heap_largest_free_block_internal() -> usize {
     usize::MAX
 }
 
+/// 返回当前总空闲堆字节数。仅 ESP 目标有效；非 ESP 返回 usize::MAX。
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+pub fn heap_free_total() -> usize {
+    unsafe { esp_idf_svc::sys::esp_get_free_heap_size() as usize }
+}
+
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+pub fn heap_free_total() -> usize {
+    usize::MAX
+}
+
+/// 返回内部堆历史最小空闲字节数。仅 ESP 目标有效；非 ESP 返回 usize::MAX。
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+pub fn heap_min_free_internal() -> usize {
+    unsafe {
+        esp_idf_svc::sys::heap_caps_get_minimum_free_size(esp_idf_svc::sys::MALLOC_CAP_INTERNAL)
+            as usize
+    }
+}
+
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+pub fn heap_min_free_internal() -> usize {
+    usize::MAX
+}
+
 /// S3 上从 PSRAM 分配大块缓冲区；无 PSRAM 或失败返回 None。调用方负责 heap_caps_free。
 #[cfg(target_arch = "xtensa")]
 pub fn alloc_spiram_buffer(size: usize) -> Option<*mut u8> {

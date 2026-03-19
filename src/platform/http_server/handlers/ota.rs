@@ -165,7 +165,7 @@ pub fn post(ctx: &HandlerContext, body: &str) -> Result<(ApiResponse, bool), std
     if !valid {
         return Ok((ApiResponse::err_400(&user_message::from_api_key("invalid_url", &locale)), false));
     }
-    match crate::ota::ota_update_from_url(url) {
+    match ctx.platform.ota_from_url(url) {
         Ok(()) => Ok((ApiResponse::ok_200_json("{\"ok\":true}"), true)),
         Err(e) => {
             let msg = match &e {

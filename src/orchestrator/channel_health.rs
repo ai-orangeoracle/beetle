@@ -33,23 +33,8 @@ impl ChannelHealthSlot {
 }
 
 /// 系统启动后经过的秒数（单调递增）。
-/// Seconds since system boot (monotonically increasing).
-#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 fn uptime_secs() -> u32 {
-    let us = unsafe { esp_idf_svc::sys::esp_timer_get_time() };
-    if us >= 0 {
-        (us as u64 / 1_000_000) as u32
-    } else {
-        0
-    }
-}
-
-#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
-fn uptime_secs() -> u32 {
-    use std::sync::OnceLock;
-    use std::time::Instant;
-    static BOOT: OnceLock<Instant> = OnceLock::new();
-    BOOT.get_or_init(Instant::now).elapsed().as_secs() as u32
+    crate::platform::time::uptime_secs() as u32
 }
 
 /// 记录通道发送结果（成功/失败）。

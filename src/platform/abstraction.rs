@@ -116,6 +116,10 @@ impl PlatformHttpClient for Box<dyn PlatformHttpClient + '_> {
 
 /// 平台能力聚合。main 只依赖当前平台的 Platform 实现。Send + Sync 以便跨线程传入 run_http_server。
 pub trait Platform: Send + Sync {
+    /// 平台初始化（link_patches、日志、NVS、SPIFFS 等）。main 在构造后首先调用。
+    fn init(&self) -> Result<()> {
+        Ok(())
+    }
     fn init_nvs(&self) -> Result<()>;
     fn init_spiffs(&self) -> Result<()>;
     fn config_store(&self) -> Arc<dyn ConfigStore + Send + Sync>;
@@ -151,5 +155,20 @@ pub trait Platform: Send + Sync {
     /// 删除 SPIFFS 上的配置文件（相对路径如 config/skills_meta.json）。用于 config reset 时清理。默认 no-op。
     fn remove_config_file(&self, _rel_path: &str) -> Result<()> {
         Ok(())
+    }
+
+    /// 请求设备重启。ESP 实现调用 esp_restart()；host 默认 no-op。
+    fn request_restart(&self) {
+        log::warn!("request_restart: not implemented on this platform");
+    }
+
+    /// 启动 SNTP 时间同步。WiFi 连接后调用。
+    fn init_sntp(&self) {
+        log::info!("init_sntp: no-op on this platform");
+    }
+
+    /// OTA 固件升级。ESP 实现调用 ota_update_from_url；非 ESP 返回错误。
+    fn ota_from_url(&self, _url: &str) -> Result<()> {
+        Err(crate::error::Error::config("ota", "OTA not supported on this platform"))
     }
 }

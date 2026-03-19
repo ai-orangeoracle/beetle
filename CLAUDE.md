@@ -17,6 +17,7 @@
 ## 架构原则
 
 - **依赖倒置**：核心模块（agent、bus、llm、tools、memory）只依赖 trait，不依赖 `platform` 或 `channels`。具体实现由 `main` / `run_app` 注入。
+- **平台隔离**：`esp_idf_svc` 及任何硬件专有调用**仅**出现在 `platform/` 目录或带 `#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]` 守卫的文件/块中。业务层（agent、bus、llm、tools、channels、config、error、memory、doctor、skills、orchestrator、heartbeat、cron、state、cli）**禁止**直接引用 `esp_idf_svc`。新增功能涉及硬件时，必须在 `Platform` trait 上扩展方法（默认 no-op 或返回错误），由 `Esp32Platform` 实现，业务层通过 `platform.xxx()` 调用。
 - **单一错误类型**：公共 API 返回 `Result<T, beetle::Error>`，使用 `?` 传播；错误带上下文（stage、status_code 等），禁止在生产路径使用 `unwrap()`/`expect()`。
 - **配置显式下传**：通过参数传递 `AppConfig`，禁止全局可变静态保存配置或密钥。
 - **通过通信共享**：任务间用 channel 传递 `PcMsg`，避免不必要的 `Arc<Mutex<T>>`；队列与缓冲区有固定容量与背压约定。
@@ -47,6 +48,7 @@
 - 新工具：实现 `Tool` trait 并注册到 `ToolRegistry`。
 - 新 LLM：实现 `LlmClient` trait 并注入。
 - 新流式编辑通道：实现 `StreamEditor` trait（`send_initial` + `edit`），在 `main.rs` 根据 `enabled_channel` 创建并注入 `AgentLoopConfig.stream_editor`。实现方自行创建 HTTP 连接，不依赖 agent 的 LLM 连接。
+- 新平台：实现 `Platform` trait（含 `init`、`init_nvs`、`init_spiffs`、`connect_wifi`、`create_http_client`、`request_restart`、`init_sntp`、`ota_from_url` 等）及 `PlatformHttpClient`、`ChannelHttpClient`、`WssConnection` 等 trait，在 main 中替换平台实例与工厂闭包。业务层代码无需改动。
 
 ---
 
@@ -57,7 +59,7 @@
 - **WiFi**：`connect_wifi(config: &AppConfig) -> Result<()>`。调用前对 config 做 `validate_for_wifi()`；连接超时 15s；错误 stage 为 `wifi_connect`。
 - **HTTP 客户端**：由 **main 构造一次**，LLM、工具、通道均**注入**同一 `EspHttpClient`，不在各处再 `EspHttpClient::new()`。直连用 `new()`，走 proxy 用 `new_with_config(&config)`。响应体上限 512KB，请求超时 30s。**例外**：`StreamEditor` 实现和 sender 线程需自行创建独立 HTTP 连接（主连接被 LLM 流占用或运行在独立线程）。
 - **Error stage**：网络/HTTP 错误带 stage（`wifi_connect`、`http_client_new`、`http_get_request`、`http_get_submit`、`proxy_connect`）；不新增未使用 Error 变体。
-- **platform 边界**：platform 是唯一依赖 esp-idf-svc 的模块；核心域（llm、agent、tools、channels）不直接依赖 platform，通过 main 注入的客户端或 trait 使用。
+- **platform 边界**：platform 是唯一依赖 esp-idf-svc 的模块；核心域（llm、agent、tools、channels）不直接依赖 platform，通过 main 注入的客户端或 trait 使用。硬件驱动（GPIO/LEDC/ADC/buzzer）位于 `platform/hardware_drivers.rs`，tools 通过 `crate::platform::hardware_drivers` 调用。`lib.rs` 中 ESP 专有类型的 re-export 均有 `#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]` 守卫。
 
 ### LLM
 

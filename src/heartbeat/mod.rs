@@ -42,20 +42,15 @@ pub fn run_heartbeat_loop(version: &'static str, interval_secs: u64) {
             std::thread::sleep(interval);
             crate::orchestrator::update_heap_state();
             let uptime_secs = START.get().map(|s| s.elapsed().as_secs()).unwrap_or(0);
-            #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
             {
-                let internal_free =
-                    unsafe { esp_idf_svc::sys::heap_caps_get_free_size(esp_idf_svc::sys::MALLOC_CAP_INTERNAL) };
-                let spiram_free =
-                    unsafe { esp_idf_svc::sys::heap_caps_get_free_size(esp_idf_svc::sys::MALLOC_CAP_SPIRAM) };
-                let total_free = unsafe { esp_idf_svc::sys::esp_get_free_heap_size() };
+                let internal_free = crate::platform::heap::heap_free_internal();
+                let spiram_free = crate::platform::heap::heap_free_spiram();
+                let total_free = crate::platform::heap::heap_free_total();
                 log::info!(
                     "[{}] HEARTBEAT version={} uptime_secs={} heap_internal={} heap_spiram={} heap_total={}",
                     TAG, v, uptime_secs, internal_free, spiram_free, total_free
                 );
             }
-            #[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
-            log::info!("[{}] HEARTBEAT version={} uptime_secs={}", TAG, v, uptime_secs);
         }
     });
     log::info!("[{}] heartbeat loop started (interval {}s)", TAG, interval_secs);
@@ -102,20 +97,15 @@ pub fn run_heartbeat_loop_with_tasks(
             crate::orchestrator::update_queue_depth(in_d, out_d);
             crate::orchestrator::update_heap_state();
             let uptime_secs = START.get().map(|s| s.elapsed().as_secs()).unwrap_or(0);
-            #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
             {
-                let internal_free =
-                    unsafe { esp_idf_svc::sys::heap_caps_get_free_size(esp_idf_svc::sys::MALLOC_CAP_INTERNAL) };
-                let spiram_free =
-                    unsafe { esp_idf_svc::sys::heap_caps_get_free_size(esp_idf_svc::sys::MALLOC_CAP_SPIRAM) };
-                let total_free = unsafe { esp_idf_svc::sys::esp_get_free_heap_size() };
+                let internal_free = crate::platform::heap::heap_free_internal();
+                let spiram_free = crate::platform::heap::heap_free_spiram();
+                let total_free = crate::platform::heap::heap_free_total();
                 log::info!(
                     "[{}] HEARTBEAT version={} uptime_secs={} heap_internal={} heap_spiram={} heap_total={}",
                     TAG, version, uptime_secs, internal_free, spiram_free, total_free
                 );
             }
-            #[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
-            log::info!("[{}] HEARTBEAT version={} uptime_secs={}", TAG, version, uptime_secs);
             let baseline = crate::metrics::snapshot().to_baseline_log_line();
             log::info!("[{}] {}", TAG, baseline);
 

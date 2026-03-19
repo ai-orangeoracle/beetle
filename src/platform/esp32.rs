@@ -5,7 +5,7 @@
 use crate::platform::abstraction::Platform;
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 use crate::platform::{
-    fetch_url::fetch_url_to_bytes,
+    fetch_url::fetch_url_with_client,
     heartbeat_file::read_heartbeat_file,
     spiffs::{
         read_file, remove_file, spiffs_usage, write_file, SpiffsImportantMessageStore,
@@ -71,6 +71,16 @@ impl Default for Esp32Platform {
 
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 impl Platform for Esp32Platform {
+    fn init(&self) -> crate::error::Result<()> {
+        esp_idf_svc::sys::link_patches();
+        esp_idf_svc::log::EspLogger::initialize_default();
+        // 屏蔽 HTTP 服务器每个 URI 注册的 Info 日志，减少刷屏
+        let _ = esp_idf_svc::log::set_target_level("esp_idf_svc::http::server", log::LevelFilter::Warn);
+        self.init_nvs()?;
+        self.init_spiffs()?;
+        Ok(())
+    }
+
     fn init_nvs(&self) -> crate::error::Result<()> {
         crate::platform::nvs::init_nvs()
     }
@@ -165,7 +175,9 @@ impl Platform for Esp32Platform {
     }
 
     fn fetch_url_to_bytes(&self, url: &str, max_len: usize) -> crate::error::Result<Vec<u8>> {
-        fetch_url_to_bytes(url, max_len)
+        let config = AppConfig::load(self.config_store.as_ref(), None);
+        let mut client = self.create_http_client(&config)?;
+        fetch_url_with_client(client.as_mut(), url, max_len)
     }
 
     fn read_config_file(&self, rel_path: &str) -> crate::error::Result<Option<Vec<u8>>> {
@@ -188,5 +200,18 @@ impl Platform for Esp32Platform {
         p.push(rel_path);
         let _ = remove_file(&p);
         Ok(())
+    }
+
+    fn request_restart(&self) {
+        unsafe { esp_idf_svc::sys::esp_restart() };
+    }
+
+    fn init_sntp(&self) {
+        crate::platform::sntp::init_sntp();
+    }
+
+    #[cfg(feature = "ota")]
+    fn ota_from_url(&self, url: &str) -> crate::error::Result<()> {
+        crate::ota::ota_update_from_url(url)
     }
 }
