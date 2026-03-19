@@ -23,7 +23,7 @@ use std::hash::{Hash, Hasher};
 use std::sync::mpsc::RecvTimeoutError;
 use std::time::{Duration, Instant};
 use crate::metrics;
-use crate::platform::PlatformHttpClient;
+use crate::PlatformHttpClient;
 use crate::state;
 use crate::tools::ToolContext;
 /// 最大 ReAct 轮数（含首轮 chat），防止无限 tool 循环。
@@ -484,22 +484,22 @@ fn run_worker_path<H: PlatformHttpClient>(
     let summary_text = summary_with_count.as_ref().map(|(s, _)| s.as_str());
     let summary_last_count = summary_with_count.as_ref().map(|(_, c)| *c).unwrap_or(0);
     let budget = crate::orchestrator::current_budget();
-    let (system, mut messages) = build_context(
+    let (system, mut messages) = build_context(&super::ContextParams {
         msg,
-        config.memory_store,
-        config.session_store,
-        config.important_message_store,
+        memory: config.memory_store,
+        session: config.session_store,
+        important_message_store: config.important_message_store,
         tool_descriptions,
-        &skill_descriptions,
-        budget.system_prompt_max,
-        budget.messages_max,
-        config.session_max_messages,
-        config.tg_group_activation,
-        suffix.as_deref(),
+        skill_descriptions: &skill_descriptions,
+        system_max_len: budget.system_prompt_max,
+        messages_max_len: budget.messages_max,
+        session_max_messages: config.session_max_messages,
+        group_activation: config.tg_group_activation,
+        system_continuation_suffix: suffix.as_deref(),
         emotion_signal_suffix,
         summary_text,
         summary_last_count,
-    )
+    })
     .map_err(|e| e.with_stage("agent_context"))?;
 
     let mut final_content = String::new();
@@ -507,7 +507,10 @@ fn run_worker_path<H: PlatformHttpClient>(
     let editor = if config.llm_stream { config.stream_editor } else { None };
     let mut stream_msg_id: Option<String> = None;
     let mut last_edit_time = Instant::now();
+    let mut stream_edit_disabled = false; // send_initial 失败后禁用流式编辑
+    let mut stream_edit_fail_count: u8 = 0; // edit 连续失败计数
     const EDIT_THROTTLE_MS: u64 = 500;
+    const MAX_EDIT_FAILURES: u8 = 3;
 
     for _round in 0..MAX_REACT_ROUNDS {
         // Inter-round pressure check: skip first round (already gated by caller).
@@ -532,7 +535,9 @@ fn run_worker_path<H: PlatformHttpClient>(
                 crate::platform::task_wdt::feed_current_task();
                 let Some(ed) = editor else { return };
                 // Critical 压力下跳过流式编辑，节省 HTTP 连接与堆开销。
-                if matches!(crate::orchestrator::current_pressure(), crate::orchestrator::PressureLevel::Critical) {
+                if stream_edit_disabled
+                    || matches!(crate::orchestrator::current_pressure(), crate::orchestrator::PressureLevel::Critical)
+                {
                     return;
                 }
                 let now = Instant::now();
@@ -545,11 +550,23 @@ fn run_worker_path<H: PlatformHttpClient>(
                             last_edit_time = now;
                         }
                         Ok(None) => {}
-                        Err(e) => log::debug!("[agent_stream] send_initial failed: {}", e),
+                        Err(e) => {
+                            log::warn!("[agent_stream] send_initial failed, disabling stream edit: {}", e);
+                            stream_edit_disabled = true;
+                        }
                     }
                 } else if now.duration_since(last_edit_time) >= Duration::from_millis(EDIT_THROTTLE_MS) {
                     if let Some(ref mid) = stream_msg_id {
-                        let _ = ed.edit(&chat_id_for_cb, mid, accumulated);
+                        if let Err(e) = ed.edit(&chat_id_for_cb, mid, accumulated) {
+                            stream_edit_fail_count += 1;
+                            log::debug!("[agent_stream] edit failed ({}/{}): {}", stream_edit_fail_count, MAX_EDIT_FAILURES, e);
+                            if stream_edit_fail_count >= MAX_EDIT_FAILURES {
+                                log::warn!("[agent_stream] edit failed {} times, disabling stream edit", MAX_EDIT_FAILURES);
+                                stream_edit_disabled = true;
+                            }
+                        } else {
+                            stream_edit_fail_count = 0;
+                        }
                         last_edit_time = now;
                     }
                 }
@@ -627,7 +644,7 @@ fn run_worker_path<H: PlatformHttpClient>(
                 let result = match crate::orchestrator::can_execute_tool_pub(&tc.name, needs_net) {
                     ToolDecision::Deny { reason } => {
                         log::info!("[agent_tool] {} denied: {}", tc.name, reason);
-                        format!("{{\"error\": \"{}\"}}", reason)
+                        serde_json::json!({ "error": reason }).to_string()
                     }
                     ToolDecision::Allow => match registry.execute(&tc.name, &tc.input, &mut tool_ctx) {
                         Ok(s) => {

@@ -167,7 +167,7 @@ pub fn run_wss_gateway_loop<D, H, C, CreateHttp, Conn>(
                         Ok(WssRecvAction::Dispatch(Some(msg))) => {
                             let chat_id = msg.chat_id.clone();
                             if crate::orchestrator::current_pressure() == crate::orchestrator::PressureLevel::Critical {
-                                log::debug!("[{}] pressure critical, drop msg chat_id={}", tag, chat_id);
+                                log::warn!("[{}] pressure critical, dropping msg chat_id={}", tag, chat_id);
                             } else if inbound_tx.try_send(msg).is_err() {
                                 log::warn!(
                                     "[{}] inbound queue full, dropping msg chat_id={}",
@@ -185,7 +185,7 @@ pub fn run_wss_gateway_loop<D, H, C, CreateHttp, Conn>(
                             let enqueued = if let Some(msg) = msg {
                                 let chat_id = msg.chat_id.clone();
                                 if crate::orchestrator::current_pressure() == crate::orchestrator::PressureLevel::Critical {
-                                    log::debug!("[{}] pressure critical, drop msg chat_id={}", tag, chat_id);
+                                    log::warn!("[{}] pressure critical, dropping msg chat_id={}", tag, chat_id);
                                     true
                                 } else {
                                     match inbound_tx.try_send(msg) {

@@ -16,6 +16,15 @@ pub trait ChannelHttpClient {
         headers: &[(&str, &str)],
         body: &[u8],
     ) -> Result<(u16, crate::platform::ResponseBody)>;
+    /// HTTP PATCH with custom headers; default falls back to POST (override for real PATCH support).
+    fn http_patch_with_headers(
+        &mut self,
+        url: &str,
+        headers: &[(&str, &str)],
+        body: &[u8],
+    ) -> Result<(u16, crate::platform::ResponseBody)> {
+        self.http_post_with_headers(url, headers, body)
+    }
 
     fn reset_connection_for_retry(&mut self) {}
 }

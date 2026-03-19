@@ -7,6 +7,8 @@ use crate::config::AppConfig;
 pub const FEISHU_TOKEN_URL: &str = "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal";
 const FEISHU_SEND_URL: &str = "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id";
 const FEISHU_MAX_MESSAGE_LEN: usize = 4096;
+/// Token 缓存提前刷新余量（秒），避免使用即将过期的 token。
+const TOKEN_REFRESH_MARGIN_SECS: u64 = 300;
 
 #[derive(serde::Serialize)]
 pub struct FeishuTokenRequest {
@@ -136,6 +138,9 @@ pub fn run_feishu_sender_loop<H, F>(
     log::info!("[{}] sender loop started", TAG);
 
     let recv_timeout = std::time::Duration::from_secs(30);
+    // 飞书 tenant_access_token 有效期 2h，缓存避免每批消息都请求。
+    let token_ttl = std::time::Duration::from_secs(7200 - TOKEN_REFRESH_MARGIN_SECS);
+    let mut cached_token: Option<(String, std::time::Instant)> = None;
     loop {
         let (chat_id, content) = match rx.recv_timeout(recv_timeout) {
             Ok(item) => item,
@@ -163,9 +168,21 @@ pub fn run_feishu_sender_loop<H, F>(
                     continue;
                 }
             };
-            let token = match acquire_tenant_token(&mut http, app_id, app_secret) {
-                Some(t) => t,
-                None => continue,
+            let token = if let Some((ref t, acquired_at)) = cached_token {
+                if acquired_at.elapsed() < token_ttl {
+                    t.clone()
+                } else {
+                    cached_token = None;
+                    match acquire_tenant_token(&mut http, app_id, app_secret) {
+                        Some(t) => { cached_token = Some((t.clone(), std::time::Instant::now())); t }
+                        None => continue,
+                    }
+                }
+            } else {
+                match acquire_tenant_token(&mut http, app_id, app_secret) {
+                    Some(t) => { cached_token = Some((t.clone(), std::time::Instant::now())); t }
+                    None => continue,
+                }
             };
             send_feishu_message(&mut http, &token, &chat_id, &content);
             while let Ok((cid, cnt)) = rx.try_recv() {
@@ -176,6 +193,7 @@ pub fn run_feishu_sender_loop<H, F>(
         }
         if !sent {
             log::error!("[{}] message dropped after 3 retries, chat_id={}", TAG, chat_id);
+            cached_token = None; // 连续失败后清除缓存，下次强制刷新
         }
     }
 }
@@ -216,7 +234,13 @@ pub fn send_and_get_id<H: ChannelHttpClient>(
     struct R { data: Option<Inner> }
     #[derive(serde::Deserialize)]
     struct Inner { message_id: Option<String> }
-    let r: R = serde_json::from_slice(resp_body.as_ref()).unwrap_or(R { data: None });
+    let r: R = match serde_json::from_slice(resp_body.as_ref()) {
+        Ok(parsed) => parsed,
+        Err(e) => {
+            log::warn!("[feishu_send] failed to parse send response: {}", e);
+            R { data: None }
+        }
+    };
     Ok(r.data.and_then(|d| d.message_id))
 }
 
@@ -243,7 +267,7 @@ pub fn edit_message<H: ChannelHttpClient>(
         ("Authorization", auth_val.as_str()),
         ("Content-Type", "application/json; charset=utf-8"),
     ];
-    let (status, _) = http.http_post_with_headers(&url, &headers, &body_bytes)
+    let (status, _) = http.http_patch_with_headers(&url, &headers, &body_bytes)
         .map_err(|e| crate::error::Error::Other {
             source: Box::new(e),
             stage: "feishu_edit",

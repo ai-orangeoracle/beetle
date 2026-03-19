@@ -15,10 +15,15 @@ const QQ_MAX_MESSAGE_LEN: usize = 4096;
 const QQ_MSG_ID_TTL_SECS: u64 = 300;
 
 /// 将 Bot Secret 字符串重复至 32 字节作为 Ed25519 种子；不足则循环填充。
+/// Panics if secret is empty — caller must validate.
 fn secret_to_seed(secret: &str) -> [u8; 32] {
     let mut seed = [0u8; 32];
     let bytes = secret.as_bytes();
+    // Empty secret produces all-zero seed which is cryptographically weak;
+    // callers (sign/verify/flush) already guard with is_empty() checks,
+    // but log a warning as defence-in-depth.
     if bytes.is_empty() {
+        log::warn!("[qq_send] secret_to_seed called with empty secret");
         return seed;
     }
     for (i, b) in seed.iter_mut().enumerate() {
@@ -58,8 +63,11 @@ pub fn verify_qq_signature(
     Ok(())
 }
 
-/// msg_id 缓存类型：channel_id -> (msg_id, unix_ts)。
+/// msg_id 缓存类型：channel_id -> (msg_id, unix_ts)。上限 QQ_MSG_ID_CACHE_MAX 条。
 pub type QqMsgIdCache = Arc<Mutex<HashMap<String, (String, u64)>>>;
+
+/// msg_id 缓存最大条目数。
+const QQ_MSG_ID_CACHE_MAX: usize = 64;
 
 pub const QQ_GET_APP_ACCESS_TOKEN_URL: &str = "https://bots.qq.com/app/getAppAccessToken";
 const QQ_MESSAGES_BASE: &str = "https://api.sgroup.qq.com/channels";
@@ -260,12 +268,18 @@ fn pop_msg_id(cache: &QqMsgIdCache, chat_id: &str) -> Option<String> {
         .unwrap_or_default()
         .as_secs();
     cache.lock().ok().and_then(|mut c| {
+        // Evict expired entries to prevent unbounded growth.
+        if c.len() > QQ_MSG_ID_CACHE_MAX / 2 {
+            c.retain(|_, (_, ts)| now.saturating_sub(*ts) <= QQ_MSG_ID_TTL_SECS);
+        }
         let entry = c.get(chat_id).map(|(id, ts)| (id.clone(), *ts));
         if let Some((id_clone, ts)) = entry {
             if now.saturating_sub(ts) <= QQ_MSG_ID_TTL_SECS {
                 c.remove(chat_id);
                 return Some(id_clone);
             }
+            // Expired — remove stale entry.
+            c.remove(chat_id);
         }
         None
     })

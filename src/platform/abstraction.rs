@@ -55,6 +55,15 @@ pub trait PlatformHttpClient {
         headers: &[(&str, &str)],
         body: &[u8],
     ) -> Result<(u16, ResponseBody)>;
+    /// HTTP PATCH; default implementation falls back to POST.
+    fn patch(
+        &mut self,
+        url: &str,
+        headers: &[(&str, &str)],
+        body: &[u8],
+    ) -> Result<(u16, ResponseBody)> {
+        self.post(url, headers, body)
+    }
     /// SSE 流式 POST：发送请求后逐块回调 on_chunk，不将响应体读入内存。
     /// 默认实现回退到 post()，将完整响应体一次性传给 on_chunk。
     fn post_streaming(
@@ -94,6 +103,14 @@ impl PlatformHttpClient for Box<dyn PlatformHttpClient + '_> {
     }
     fn reset_connection_for_retry(&mut self) {
         (**self).reset_connection_for_retry()
+    }
+    fn patch(
+        &mut self,
+        url: &str,
+        headers: &[(&str, &str)],
+        body: &[u8],
+    ) -> Result<(u16, ResponseBody)> {
+        (**self).patch(url, headers, body)
     }
 }
 

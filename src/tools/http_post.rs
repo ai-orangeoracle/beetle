@@ -57,6 +57,12 @@ impl Tool for HttpPostTool {
                 "url must start with http:// or https://",
             ));
         }
+        if crate::util::is_private_url(url) {
+            return Err(Error::config(
+                "tool_http_post",
+                "access to private/internal addresses is not allowed",
+            ));
+        }
 
         let body = m
             .get("body")

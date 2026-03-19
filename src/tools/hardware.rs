@@ -145,7 +145,7 @@ impl DeviceControlTool {
             DEVICE_MIN_INTERVAL_MS
         };
         let state = &self.states[idx];
-        let mut last = state.last_op.lock().unwrap_or_else(|e| e.into_inner());
+        let last = state.last_op.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(t) = *last {
             let elapsed = t.elapsed().as_millis() as u64;
             if elapsed < interval_ms {

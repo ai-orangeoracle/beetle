@@ -3,11 +3,13 @@
 
 use crate::error::Result;
 use crate::llm::{LlmClient, LlmHttpClient, LlmResponse, Message, ToolSpec};
+use std::sync::Mutex;
 
-/// 多源回退客户端；持有一组 LlmClient，chat 时按序尝试。单线程消费，last_error 用 Cell 避免 Mutex。
+/// 多源回退客户端；持有一组 LlmClient，chat 时按序尝试。
+/// last_error 用 Mutex 以支持多线程安全访问。
 pub struct FallbackLlmClient {
     clients: Vec<Box<dyn LlmClient>>,
-    last_error: std::cell::RefCell<Option<String>>,
+    last_error: Mutex<Option<String>>,
 }
 
 impl FallbackLlmClient {
@@ -15,7 +17,7 @@ impl FallbackLlmClient {
     pub fn new(clients: Vec<Box<dyn LlmClient>>) -> Self {
         Self {
             clients,
-            last_error: std::cell::RefCell::new(None),
+            last_error: Mutex::new(None),
         }
     }
 
@@ -26,7 +28,16 @@ impl FallbackLlmClient {
 
     /// 最近一次失败错误。
     pub fn last_error(&self) -> Option<String> {
-        self.last_error.borrow().clone()
+        self.last_error
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
+    fn set_last_error(&self, err: &str) {
+        if let Ok(mut g) = self.last_error.lock() {
+            *g = Some(err.to_string());
+        }
     }
 }
 
@@ -43,7 +54,7 @@ impl LlmClient for FallbackLlmClient {
                 "fallback_llm",
                 "no LLM sources configured",
             );
-            *self.last_error.borrow_mut() = Some(err.to_string());
+            self.set_last_error(&err.to_string());
             return Err(err);
         }
         let mut last_err = None;
@@ -65,7 +76,7 @@ impl LlmClient for FallbackLlmClient {
         let err = last_err.unwrap_or_else(||
             crate::error::Error::config("fallback_llm", "llm fallback returned no result")
         );
-        *self.last_error.borrow_mut() = Some(err.to_string());
+        self.set_last_error(&err.to_string());
         Err(err)
     }
 
@@ -82,7 +93,7 @@ impl LlmClient for FallbackLlmClient {
                 "fallback_llm",
                 "no LLM sources configured",
             );
-            *self.last_error.borrow_mut() = Some(err.to_string());
+            self.set_last_error(&err.to_string());
             return Err(err);
         }
         // 第一个源使用 progress 回调。
@@ -97,7 +108,7 @@ impl LlmClient for FallbackLlmClient {
                 if self.clients.len() > 1 {
                     log::warn!("[fallback_llm] source 0 failed, trying next: {}", e);
                 } else {
-                    *self.last_error.borrow_mut() = Some(e.to_string());
+                    self.set_last_error(&e.to_string());
                     return Err(e);
                 }
             }
@@ -122,7 +133,7 @@ impl LlmClient for FallbackLlmClient {
         let err = last_err.unwrap_or_else(||
             crate::error::Error::config("fallback_llm", "llm fallback returned no result")
         );
-        *self.last_error.borrow_mut() = Some(err.to_string());
+        self.set_last_error(&err.to_string());
         Err(err)
     }
 }

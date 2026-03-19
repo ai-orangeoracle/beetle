@@ -170,15 +170,16 @@ impl EspHttpClient {
         })
     }
 
-    fn do_post_inner(
+    fn do_request_with_body(
         &mut self,
+        method: Method,
         url: &str,
         headers: &[(&str, &str)],
         body: &[u8],
     ) -> Result<(u16, ResponseBody)> {
         self.execute_request(|conn| {
             let mut client = HttpClient::wrap(conn);
-            let mut request = client.post(url, headers).map_err(|e| Error::Other {
+            let mut request = client.request(method, url, headers).map_err(|e| Error::Other {
                 source: Box::new(e),
                 stage: "http_post_request",
             })?;
@@ -226,7 +227,7 @@ impl EspHttpClient {
             ("content-type", "application/json"),
             ("content-length", content_length),
         ];
-        self.do_post_inner(url, &headers, body)
+        self.do_request_with_body(Method::Post, url, &headers, body)
     }
 
     /// POST 请求，自定义 headers（须含 content-type、content-length）；供 LlmHttpClient 使用。
@@ -237,7 +238,18 @@ impl EspHttpClient {
         body: &[u8],
     ) -> Result<(u16, ResponseBody)> {
         self.check_proxy_and_watchdog()?;
-        self.do_post_inner(url, headers, body)
+        self.do_request_with_body(Method::Post, url, headers, body)
+    }
+
+    /// PATCH 请求，自定义 headers；供飞书编辑消息等使用。
+    pub fn patch_with_headers(
+        &mut self,
+        url: &str,
+        headers: &[(&str, &str)],
+        body: &[u8],
+    ) -> Result<(u16, ResponseBody)> {
+        self.check_proxy_and_watchdog()?;
+        self.do_request_with_body(Method::Patch, url, headers, body)
     }
 
     /// SSE 流式 POST：发送请求后循环 read + 回调 on_chunk，不将完整响应体读入内存。
@@ -426,7 +438,7 @@ impl crate::platform::PlatformHttpClient for EspHttpClient {
                 ("content-type", "application/json"),
                 ("content-length", content_length),
             ];
-            self.do_post_inner(url, &default_headers, body)
+            self.do_request_with_body(Method::Post, url, &default_headers, body)
         } else {
             self.post_with_headers(url, headers, body)
         }
@@ -439,6 +451,14 @@ impl crate::platform::PlatformHttpClient for EspHttpClient {
         on_chunk: &mut dyn FnMut(&[u8]) -> Result<()>,
     ) -> Result<u16> {
         EspHttpClient::do_post_streaming(self, url, headers, body, on_chunk)
+    }
+    fn patch(
+        &mut self,
+        url: &str,
+        headers: &[(&str, &str)],
+        body: &[u8],
+    ) -> Result<(u16, ResponseBody)> {
+        self.patch_with_headers(url, headers, body)
     }
     fn reset_connection_for_retry(&mut self) {
         let _ = self.replace_connection();

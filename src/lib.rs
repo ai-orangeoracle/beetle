@@ -7,6 +7,9 @@ mod metrics;
 mod util;
 
 pub use build_info::{build_board_id, ota_manifest_url};
+/// Re-export PlatformHttpClient at crate root so core modules (agent, tools) can depend on
+/// `crate::PlatformHttpClient` without importing `crate::platform` directly.
+pub use platform::PlatformHttpClient;
 pub mod agent;
 pub mod bus;
 pub mod config;
@@ -31,7 +34,7 @@ pub mod orchestrator;
 pub mod skills;
 
 pub use agent::{
-    build_context, run_agent_loop, AgentLoopConfig, StreamEditor, DEFAULT_MESSAGES_MAX_LEN,
+    build_context, run_agent_loop, AgentLoopConfig, ContextParams, StreamEditor, DEFAULT_MESSAGES_MAX_LEN,
     DEFAULT_SYSTEM_MAX_LEN, SESSION_RECENT_N,
 };
 pub use bus::{MessageBus, PcMsg, DEFAULT_CAPACITY, MAX_CONTENT_LEN};
@@ -61,7 +64,7 @@ pub use platform::{
     connect_wifi, init_nvs, init_spiffs, spiffs_usage, EspHttpClient, SpiffsMemoryStore,
     SpiffsSessionStore, SPIFFS_BASE,
 };
-pub use platform::{ConfigStore, Platform, PlatformHttpClient, SkillStorage};
+pub use platform::{ConfigStore, Platform, SkillStorage};
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 pub use platform::Esp32Platform;
 pub use tools::{
@@ -134,6 +137,14 @@ impl<T: platform::PlatformHttpClient> channels::ChannelHttpClient for T {
     ) -> Result<(u16, platform::ResponseBody)> {
         platform::PlatformHttpClient::post(self, url, headers, body)
     }
+    fn http_patch_with_headers(
+        &mut self,
+        url: &str,
+        headers: &[(&str, &str)],
+        body: &[u8],
+    ) -> Result<(u16, platform::ResponseBody)> {
+        platform::PlatformHttpClient::patch(self, url, headers, body)
+    }
     fn reset_connection_for_retry(&mut self) {
         platform::PlatformHttpClient::reset_connection_for_retry(self);
     }
@@ -160,6 +171,14 @@ impl channels::ChannelHttpClient for dyn platform::PlatformHttpClient + '_ {
         body: &[u8],
     ) -> Result<(u16, platform::ResponseBody)> {
         platform::PlatformHttpClient::post(self, url, headers, body)
+    }
+    fn http_patch_with_headers(
+        &mut self,
+        url: &str,
+        headers: &[(&str, &str)],
+        body: &[u8],
+    ) -> Result<(u16, platform::ResponseBody)> {
+        platform::PlatformHttpClient::patch(self, url, headers, body)
     }
     fn reset_connection_for_retry(&mut self) {
         platform::PlatformHttpClient::reset_connection_for_retry(self);

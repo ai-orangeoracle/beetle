@@ -87,7 +87,13 @@ impl SseLineReader {
         }
 
         // 解析 field: value
-        let line_str = core::str::from_utf8(line).unwrap_or("");
+        let line_str = match core::str::from_utf8(line) {
+            Ok(s) => s,
+            Err(_) => {
+                log::debug!("[sse] skipping line with invalid UTF-8 ({} bytes)", line.len());
+                return;
+            }
+        };
         if let Some(colon_pos) = line_str.find(':') {
             let field = &line_str[..colon_pos];
             // SSE 规范：冒号后的第一个空格是可选前缀，应跳过。

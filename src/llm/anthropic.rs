@@ -179,8 +179,7 @@ fn do_request(
     })?;
 
     if status == 429 {
-        log::warn!("[{}] rate limited (429), backing off", TAG);
-        std::thread::sleep(std::time::Duration::from_secs(5));
+        log::warn!("[{}] rate limited (429)", TAG);
         return Err(Error::Http {
             status_code: 429,
             stage: "llm_request",
@@ -368,8 +367,7 @@ fn do_request_streaming(
     })?;
 
     if status == 429 {
-        log::warn!("[{}] rate limited (429), backing off", TAG);
-        std::thread::sleep(std::time::Duration::from_secs(5));
+        log::warn!("[{}] rate limited (429)", TAG);
         return Err(Error::Http {
             status_code: 429,
             stage: "llm_request",

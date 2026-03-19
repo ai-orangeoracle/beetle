@@ -14,6 +14,24 @@ pub const SESSION_RECENT_N: usize = 32;
 /// 每日笔记取最近条数。
 const DAILY_RECENT_N: usize = 5;
 
+/// build_context 参数聚合，减少函数签名复杂度。
+pub struct ContextParams<'a> {
+    pub msg: &'a PcMsg,
+    pub memory: &'a dyn MemoryStore,
+    pub session: &'a dyn SessionStore,
+    pub important_message_store: &'a dyn ImportantMessageStore,
+    pub tool_descriptions: &'a str,
+    pub skill_descriptions: &'a str,
+    pub system_max_len: usize,
+    pub messages_max_len: usize,
+    pub session_max_messages: usize,
+    pub group_activation: &'a str,
+    pub system_continuation_suffix: Option<&'a str>,
+    pub emotion_signal_suffix: Option<&'a str>,
+    pub summary_text: Option<&'a str>,
+    pub summary_last_count: usize,
+}
+
 /// 根据入站 PcMsg 与 store 构建 (system, messages)，供 LlmClient.chat 使用。
 ///
 /// **system 组成顺序**：SOUL → USER → MEMORY → daily_notes → tool_descriptions → skill_descriptions → 群组/SILENT 约定；总长 ≤ system_max_len。
@@ -22,84 +40,69 @@ const DAILY_RECENT_N: usize = 5;
 ///
 /// **messages**：历史会话（最近 session_max_messages 条）+ 当前用户 content，总长 ≤ messages_max_len；超限从最旧消息起丢弃。
 /// **system_continuation_suffix**：多轮延续时追加到 system 末尾的上一轮产出说明；若提供则追加后再做最终截断。
-pub fn build_context(
-    msg: &PcMsg,
-    memory: &dyn MemoryStore,
-    session: &dyn SessionStore,
-    important_message_store: &dyn ImportantMessageStore,
-    tool_descriptions: &str,
-    skill_descriptions: &str,
-    system_max_len: usize,
-    messages_max_len: usize,
-    session_max_messages: usize,
-    group_activation: &str,
-    system_continuation_suffix: Option<&str>,
-    emotion_signal_suffix: Option<&str>,
-    summary_text: Option<&str>,
-    summary_last_count: usize,
-) -> Result<(String, Vec<Message>)> {
-    let soul_res = memory.get_soul();
+pub fn build_context(p: &ContextParams<'_>) -> Result<(String, Vec<Message>)> {
+    let soul_res = p.memory.get_soul();
     state::set_soul_load_ok(soul_res.is_ok());
     let soul = soul_res.unwrap_or_else(|e| {
         log::warn!("[context] get_soul failed: {}", e);
         String::new()
     });
-    let user = memory.get_user().unwrap_or_else(|e| {
+    let user = p.memory.get_user().unwrap_or_else(|e| {
         log::warn!("[context] get_user failed: {}", e);
         String::new()
     });
-    let mem_res = memory.get_memory();
+    let mem_res = p.memory.get_memory();
     state::set_memory_load_ok(mem_res.is_ok());
     let mem = mem_res.unwrap_or_else(|e| {
         log::warn!("[context] get_memory failed: {}", e);
         String::new()
     });
-    let names = memory.list_daily_note_names(DAILY_RECENT_N).unwrap_or_else(|_| vec![]);
+    let names = p.memory.list_daily_note_names(DAILY_RECENT_N).unwrap_or_else(|_| vec![]);
     let mut daily_contents: Vec<String> = Vec::with_capacity(names.len());
     for name in &names {
-        if let Ok(c) = memory.get_daily_note(name) {
+        if let Ok(c) = p.memory.get_daily_note(name) {
             daily_contents.push(c);
         }
     }
-    let tools_max = system_max_len / 4; // 预留约 1/4 给工具说明
-    let base_max = system_max_len.saturating_sub(tool_descriptions.len().min(tools_max));
+    let tools_max = p.system_max_len / 4; // 预留约 1/4 给工具说明
+    let base_max = p.system_max_len.saturating_sub(p.tool_descriptions.len().min(tools_max));
     let system_base = build_system_prompt(&soul, &user, &mem, &daily_contents, base_max);
     let mut system = system_base;
-    if !tool_descriptions.is_empty() {
-        let remain = system_max_len.saturating_sub(system.len());
+    if !p.tool_descriptions.is_empty() {
+        let remain = p.system_max_len.saturating_sub(system.len());
         if remain > 0 {
-            let t = if tool_descriptions.len() <= remain {
-                tool_descriptions.to_string()
+            let t = if p.tool_descriptions.len() <= remain {
+                p.tool_descriptions.to_string()
             } else {
-                tool_descriptions.chars().take(remain).collect::<String>()
+                crate::util::truncate_to_byte_len(p.tool_descriptions, remain)
             };
             system.push_str("\n\n## Tools\n");
             system.push_str(&t);
         }
     }
-    if !skill_descriptions.is_empty() {
-        let remain = system_max_len.saturating_sub(system.len());
+    if !p.skill_descriptions.is_empty() {
+        let remain = p.system_max_len.saturating_sub(system.len());
         if remain > 0 {
-            let s = if skill_descriptions.len() <= remain {
-                skill_descriptions.to_string()
+            let s = if p.skill_descriptions.len() <= remain {
+                p.skill_descriptions.to_string()
             } else {
-                skill_descriptions.chars().take(remain).collect::<String>()
+                crate::util::truncate_to_byte_len(p.skill_descriptions, remain)
             };
             system.push_str("\n\n## Skills\n");
             system.push_str(&s);
         }
     }
-    if msg.is_group {
-        let remain = system_max_len.saturating_sub(system.len());
+    if p.msg.is_group {
+        let remain = p.system_max_len.saturating_sub(system.len());
         if remain > 64 {
-            if group_activation == "always" {
+            if p.group_activation == "always" {
                 system.push_str("\n\nIf no response is needed, reply with exactly SILENT and nothing else.");
-            } else if group_activation == "mention" {
+            } else if p.group_activation == "mention" {
                 system.push_str("\n\nYou are in a group; only reply when explicitly mentioned.");
             }
         }
     }
-    if let Some(suffix) = system_continuation_suffix {
+    if let Some(suffix) = p.system_continuation_suffix {
         system.push_str("\n\n");
         system.push_str(suffix);
     }
@@ -109,32 +112,32 @@ pub fn build_context(
         AGENT_MARKER_MARK_IMPORTANT,
         AGENT_MARKER_SIGNAL_COMFORT
     );
-    if system.len().saturating_add(structured_block.len()) <= system_max_len {
+    if system.len().saturating_add(structured_block.len()) <= p.system_max_len {
         system.push_str(&structured_block);
     }
-    if let Some(em) = emotion_signal_suffix {
+    if let Some(em) = p.emotion_signal_suffix {
         system.push_str("\n\n");
         system.push_str(em);
     }
     let hint = crate::orchestrator::current_budget().llm_hint;
-    if !hint.is_empty() && system.len().saturating_add(hint.len()).saturating_add(2) <= system_max_len {
+    if !hint.is_empty() && system.len().saturating_add(hint.len()).saturating_add(2) <= p.system_max_len {
         system.push_str("\n\n");
         system.push_str(hint);
     }
-    if system.len() > system_max_len {
-        let mut end = system_max_len;
+    if system.len() > p.system_max_len {
+        let mut end = p.system_max_len;
         while end > 0 && !system.is_char_boundary(end) {
             end -= 1;
         }
         system.truncate(end);
     }
 
-    let n = session_max_messages.max(1).min(128);
-    let recent = session.load_recent(&msg.chat_id, n).unwrap_or_else(|_| vec![]);
+    let n = p.session_max_messages.max(1).min(128);
+    let recent = p.session.load_recent(&p.msg.chat_id, n).unwrap_or_else(|_| vec![]);
     let current_message_count = recent.len();
-    let cap = recent.len() + if summary_text.is_some() { 2 } else { 1 };
+    let cap = recent.len() + if p.summary_text.is_some() { 2 } else { 1 };
     let mut messages: Vec<Message> = Vec::with_capacity(cap);
-    if let Some(summary) = summary_text {
+    if let Some(summary) = p.summary_text {
         messages.push(Message {
             role: "user".to_string(),
             content: format!("[CONTEXT_SUMMARY]\n{}\n[/CONTEXT_SUMMARY]", summary),
@@ -146,25 +149,25 @@ pub fn build_context(
     }));
     messages.push(Message {
         role: "user".to_string(),
-        content: msg.content.clone(),
+        content: p.msg.content.clone(),
     });
 
     // Session maintenance: inject summary trigger when messages accumulate.
     let needs_summary_update = current_message_count >= 20
-        && (summary_text.is_none() || current_message_count.saturating_sub(summary_last_count) >= 10);
+        && (p.summary_text.is_none() || current_message_count.saturating_sub(p.summary_last_count) >= 10);
     if needs_summary_update {
         let maintenance_hint = format!(
             "\n\n[SESSION MAINTENANCE] 当前会话已有 {} 条消息。请在回复用户后，调用 update_session_summary 工具将关键上下文压缩为摘要，以防止旧消息被截断丢失。",
             current_message_count
         );
-        if system.len().saturating_add(maintenance_hint.len()) <= system_max_len {
+        if system.len().saturating_add(maintenance_hint.len()) <= p.system_max_len {
             system.push_str(&maintenance_hint);
         }
     }
-    let important_offset = important_message_store.get_important_offset(&msg.chat_id).ok().flatten();
-    truncate_messages_to_len(&mut messages, messages_max_len, important_offset);
+    let important_offset = p.important_message_store.get_important_offset(&p.msg.chat_id).ok().flatten();
+    truncate_messages_to_len(&mut messages, p.messages_max_len, important_offset);
     if important_offset.is_some() {
-        let _ = important_message_store.clear_important(&msg.chat_id);
+        let _ = p.important_message_store.clear_important(&p.msg.chat_id);
     }
 
     Ok((system, messages))

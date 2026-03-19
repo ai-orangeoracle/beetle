@@ -263,8 +263,7 @@ fn do_request(
     })?;
 
     if status == 429 {
-        log::warn!("[{}] rate limited (429), backing off", TAG);
-        std::thread::sleep(std::time::Duration::from_secs(5));
+        log::warn!("[{}] rate limited (429)", TAG);
         return Err(Error::Http {
             status_code: 429,
             stage: "llm_request",
@@ -385,6 +384,12 @@ impl OpenAiStreamAccumulator {
             if let Some(tc_arr) = delta.get("tool_calls").and_then(|v| v.as_array()) {
                 for tc in tc_arr {
                     let index = tc.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                    // Guard against malicious index values that could cause OOM.
+                    const MAX_TOOL_CALL_INDEX: usize = 128;
+                    if index > MAX_TOOL_CALL_INDEX {
+                        log::warn!("[openai_stream] tool_calls index {} exceeds max {}, skipping", index, MAX_TOOL_CALL_INDEX);
+                        continue;
+                    }
                     // 确保 tool_calls vec 足够长。
                     while self.tool_calls.len() <= index {
                         self.tool_calls.push(OpenAiToolCallBuilder {
@@ -494,8 +499,7 @@ fn do_request_streaming(
     })?;
 
     if status == 429 {
-        log::warn!("[{}] rate limited (429), backing off", TAG);
-        std::thread::sleep(std::time::Duration::from_secs(5));
+        log::warn!("[{}] rate limited (429)", TAG);
         return Err(Error::Http {
             status_code: 429,
             stage: "llm_request",

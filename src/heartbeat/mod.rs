@@ -128,7 +128,7 @@ pub fn run_heartbeat_loop_with_tasks(
             };
             let should_inject = {
                 let guard = LAST_TASK_INJECT.get_or_init(|| Mutex::new((String::new(), None)));
-                let mut g = guard.lock().expect("heartbeat LAST_TASK_INJECT lock");
+                let mut g = guard.lock().unwrap_or_else(|e| e.into_inner());
                 let (last_content, last_time) = (&g.0, g.1);
                 let same = last_content == &task_content;
                 let within =

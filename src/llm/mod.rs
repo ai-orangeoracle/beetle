@@ -73,7 +73,8 @@ pub fn build_llm_clients(
         .is_some_and(|(r, w)| (r as usize) < n_sources && (w as usize) < n_sources);
 
     let router_client: Option<Box<dyn LlmClient>> = if router_mode {
-        let idx = config.llm_router_source_index.expect("router_mode true") as usize;
+        // Safety: router_mode is true only when both indices are Some and in bounds (checked at line 72-73).
+        let idx = config.llm_router_source_index.unwrap_or(0) as usize;
         let s = &config.llm_sources[idx];
         Some(match s.provider.as_str() {
             "openai" | "openai_compatible" => Box::new(OpenAiCompatibleClient::from_source(s, global_stream)),

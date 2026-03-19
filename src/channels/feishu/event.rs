@@ -45,8 +45,8 @@ pub fn handle_http_event(
     }
 
     if v.get("encrypt").is_some() {
-        log::warn!("[{}] encrypted payload not supported", TAG);
-        return FeishuEventResponse::Ok200Json("{}".into());
+        log::warn!("[{}] encrypted payload not supported, returning error to trigger retry", TAG);
+        return FeishuEventResponse::Err400("encrypted payload not supported");
     }
 
     let allowed = parse_allowed_chat_ids(&config.feishu_allowed_chat_ids);
