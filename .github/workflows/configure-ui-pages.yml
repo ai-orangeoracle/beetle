@@ -8,6 +8,7 @@ on:
     paths:
       - 'configure-ui/**'
       - '.github/workflows/configure-ui-pages.yml'
+  workflow_dispatch:  # 支持在 Actions 页手动运行
 
 permissions:
   contents: read
