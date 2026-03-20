@@ -87,6 +87,39 @@ export function Layout({ onOpenSettings }: LayoutProps) {
     setPendingPath(null)
   }, [navigate, pendingPath])
 
+  /** 全屏磨砂底：不抢点击（pointer-events: none），仅提示条可点 */
+  const statusOverlayBackdropSx = {
+    position: 'fixed' as const,
+    inset: 0,
+    zIndex: 1100,
+    pointerEvents: 'none' as const,
+    backgroundColor: 'color-mix(in srgb, var(--foreground) 10%, transparent)',
+    backdropFilter: 'blur(12px)',
+    WebkitBackdropFilter: 'blur(12px)',
+  }
+
+  const statusOverlayCardSx = {
+    position: 'fixed' as const,
+    top: '50%',
+    left: '50%',
+    transform: 'translate(-50%, -50%)',
+    zIndex: 1101,
+    pointerEvents: 'auto' as const,
+    width: 'min(520px, calc(100vw - 24px))',
+    maxWidth: '100%',
+    boxSizing: 'border-box' as const,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 2,
+    px: 2,
+    py: 1.5,
+    borderRadius: 'var(--radius-card)',
+    border: '1px solid var(--border-subtle)',
+    backgroundColor: 'var(--card)',
+    boxShadow: 'var(--shadow-card)',
+  }
+
   return (
     <NavBlockerContext.Provider value={navBlockerValue}>
     <Box sx={{ display: 'flex', minHeight: '100vh', backgroundColor: 'var(--background)' }}>
@@ -101,73 +134,69 @@ export function Layout({ onOpenSettings }: LayoutProps) {
         onConfirm={handleUnsavedConfirm}
       />
       {showRestartBanner && (
-        <Box
-          role="status"
-          sx={{
-            flexShrink: 0,
-            display: 'flex',
-            alignItems: 'center',
-            px: 2,
-            py: 1.25,
-            borderBottom: '1px solid var(--border-subtle)',
-            borderLeft: 'var(--accent-line-width, 3px) solid var(--muted)',
-            backgroundColor: 'color-mix(in srgb, var(--muted) 8%, var(--surface))',
-          }}
-        >
-          <Typography
-            variant="body2"
+        <>
+          <Box aria-hidden sx={statusOverlayBackdropSx} />
+          <Box
+            role="status"
             sx={{
-              color: 'var(--foreground-soft)',
-              fontWeight: 600,
-              fontSize: 'var(--font-size-body-sm)',
+              ...statusOverlayCardSx,
+              justifyContent: 'center',
+              borderLeft: 'var(--accent-line-width, 3px) solid var(--muted)',
             }}
           >
-            {restartPhase === 'pending'
-              ? t('device.restartPhasePending')
-              : t('device.restartPhaseRestarting')}
-          </Typography>
-        </Box>
+            <Typography
+              variant="body2"
+              textAlign="center"
+              sx={{
+                color: 'var(--foreground-soft)',
+                fontWeight: 600,
+                fontSize: 'var(--font-size-body-sm)',
+              }}
+            >
+              {restartPhase === 'pending'
+                ? t('device.restartPhasePending')
+                : t('device.restartPhaseRestarting')}
+            </Typography>
+          </Box>
+        </>
       )}
       {showDisconnectedCacheBanner && (
-        <Box
-          role="status"
-          sx={{
-            flexShrink: 0,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            gap: 2,
-            px: 2,
-            py: 1.25,
-            borderBottom: '1px solid var(--border-subtle)',
-            borderLeft: 'var(--accent-line-width, 3px) solid var(--semantic-warning)',
-            backgroundColor: 'color-mix(in srgb, var(--semantic-warning) 6%, var(--surface))',
-          }}
-        >
-          <Typography
-            variant="body2"
+        <>
+          <Box aria-hidden sx={statusOverlayBackdropSx} />
+          <Box
+            role="status"
             sx={{
-              color: 'var(--semantic-warning)',
-              fontWeight: 600,
-              fontSize: 'var(--font-size-body-sm)',
+              ...statusOverlayCardSx,
+              borderLeft: 'var(--accent-line-width, 3px) solid var(--semantic-warning)',
             }}
           >
-            {t('config.deviceDisconnectedCache')}
-          </Typography>
-          <Button
-            size="small"
-            variant="outlined"
-            onClick={clearCachedConfig}
-            sx={{
-              flexShrink: 0,
-              borderRadius: 'var(--radius-control)',
-              borderColor: 'var(--semantic-warning)',
-              color: 'var(--semantic-warning)',
-            }}
-          >
-            {t('config.clearCache')}
-          </Button>
-        </Box>
+            <Typography
+              variant="body2"
+              sx={{
+                color: 'var(--semantic-warning)',
+                fontWeight: 600,
+                fontSize: 'var(--font-size-body-sm)',
+                flex: 1,
+                minWidth: 0,
+              }}
+            >
+              {t('config.deviceDisconnectedCache')}
+            </Typography>
+            <Button
+              size="small"
+              variant="outlined"
+              onClick={clearCachedConfig}
+              sx={{
+                flexShrink: 0,
+                borderRadius: 'var(--radius-control)',
+                borderColor: 'var(--semantic-warning)',
+                color: 'var(--semantic-warning)',
+              }}
+            >
+              {t('config.clearCache')}
+            </Button>
+          </Box>
+        </>
       )}
       {sidebarAsDrawer ? (
         <>
