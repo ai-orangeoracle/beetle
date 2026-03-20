@@ -161,11 +161,12 @@ pub fn check_connectivity<H: ChannelHttpClient + ?Sized>(
     connectivity::item("qq_channel", configured, ok, message)
 }
 
-fn acquire_qq_token<H: ChannelHttpClient>(
+/// Returns `(access_token, expires_in_secs)` from QQ API for caching.
+fn acquire_qq_token_with_expiry<H: ChannelHttpClient>(
     http: &mut H,
     app_id: &str,
     secret: &str,
-) -> Option<String> {
+) -> Option<(String, u64)> {
     const TAG: &str = "qq_send";
     let body = QqTokenRequest {
         app_id: app_id.to_string(),
@@ -197,12 +198,23 @@ fn acquire_qq_token<H: ChannelHttpClient>(
         }
     };
     match token_resp.access_token {
-        Some(t) if !t.is_empty() => Some(t),
+        Some(t) if !t.is_empty() => {
+            let exp = token_resp.expires_in.max(60);
+            Some((t, exp))
+        }
         _ => {
             log::warn!("[{}] no access_token in response", TAG);
             None
         }
     }
+}
+
+fn acquire_qq_token<H: ChannelHttpClient>(
+    http: &mut H,
+    app_id: &str,
+    secret: &str,
+) -> Option<String> {
+    acquire_qq_token_with_expiry(http, app_id, secret).map(|(t, _)| t)
 }
 
 /// 根据 chat_id 前缀确定 API 端点：
@@ -321,7 +333,11 @@ pub fn flush_qq_channel_sends<H: ChannelHttpClient>(
     }
 }
 
-/// 持续运行的 QQ 频道发送循环；按需创建 HTTP 客户端，发完即释放。
+/// QQ access_token 缓存提前刷新余量（秒），避免用即将过期的 token。
+const QQ_TOKEN_CACHE_MARGIN_SECS: u64 = 120;
+
+/// 持续运行的 QQ 频道发送循环：本线程**复用**同一 HTTP 客户端（少占 lwIP socket，避免与 WSS 抢 fd），
+/// 并按 `expires_in` **缓存** token，减少 `getAppAccessToken` 调用。
 pub fn run_qq_sender_loop<H, F>(
     rx: std::sync::mpsc::Receiver<(String, String)>,
     app_id: &str,
@@ -339,6 +355,9 @@ pub fn run_qq_sender_loop<H, F>(
     #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
     crate::platform::task_wdt::register_current_task_to_task_wdt();
     log::info!("[{}] sender loop started", TAG);
+
+    let mut http: Option<H> = None;
+    let mut token_cache: Option<(String, std::time::Instant)> = None;
 
     let recv_timeout = std::time::Duration::from_secs(30);
     loop {
@@ -360,27 +379,71 @@ pub fn run_qq_sender_loop<H, F>(
                 std::thread::sleep(std::time::Duration::from_secs(2));
                 crate::platform::task_wdt::feed_current_task();
             }
-            let mut http = match create_http() {
-                Ok(h) => h,
-                Err(e) => {
-                    log::warn!(
-                        "[{}] create http failed (attempt {}): {}",
-                        TAG,
-                        retry + 1,
-                        e
-                    );
-                    continue;
+
+            let now = std::time::Instant::now();
+            let mut token_opt: Option<String> = token_cache
+                .as_ref()
+                .filter(|(_, exp)| now < *exp)
+                .map(|(t, _)| t.clone());
+            if token_opt.is_none() {
+                token_cache = None;
+                if http.is_none() {
+                    match create_http() {
+                        Ok(h) => http = Some(h),
+                        Err(e) => {
+                            log::warn!(
+                                "[{}] create http failed (attempt {}): {}",
+                                TAG,
+                                retry + 1,
+                                e
+                            );
+                            continue;
+                        }
+                    }
                 }
-            };
-            let token = match acquire_qq_token(&mut http, app_id, secret) {
+                let Some(h) = http.as_mut() else {
+                    continue;
+                };
+                match acquire_qq_token_with_expiry(h, app_id, secret) {
+                    Some((t, exp_secs)) => {
+                        let keep = exp_secs.saturating_sub(QQ_TOKEN_CACHE_MARGIN_SECS).max(30);
+                        token_cache = Some((t.clone(), now + std::time::Duration::from_secs(keep)));
+                        token_opt = Some(t);
+                    }
+                    None => {
+                        http = None;
+                        continue;
+                    }
+                }
+            }
+
+            let token = match token_opt {
                 Some(t) => t,
                 None => continue,
             };
+
+            if http.is_none() {
+                match create_http() {
+                    Ok(h) => http = Some(h),
+                    Err(e) => {
+                        log::warn!(
+                            "[{}] create http failed (attempt {}): {}",
+                            TAG,
+                            retry + 1,
+                            e
+                        );
+                        continue;
+                    }
+                }
+            }
+            let Some(h) = http.as_mut() else {
+                continue;
+            };
             let msg_id = pop_msg_id(&cache, &chat_id);
-            send_one_qq(&mut http, &token, &chat_id, &content, msg_id.as_deref());
+            send_one_qq(h, &token, &chat_id, &content, msg_id.as_deref());
             while let Ok((cid, cnt)) = rx.try_recv() {
                 let mid = pop_msg_id(&cache, &cid);
-                send_one_qq(&mut http, &token, &cid, &cnt, mid.as_deref());
+                send_one_qq(h, &token, &cid, &cnt, mid.as_deref());
             }
             sent = true;
             break;

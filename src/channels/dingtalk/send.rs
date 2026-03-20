@@ -77,7 +77,7 @@ pub fn flush_dingtalk_sends<H: ChannelHttpClient>(
     }
 }
 
-/// 持续运行的钉钉发送循环；按需创建 HTTP 客户端，发完即释放。
+/// 持续运行的钉钉发送循环：sender 线程内**复用**同一 HTTP 客户端，减轻 lwIP socket / TLS 压力。
 pub fn run_dingtalk_sender_loop<H, F>(
     rx: std::sync::mpsc::Receiver<(String, String)>,
     webhook_url: &str,
@@ -94,6 +94,7 @@ pub fn run_dingtalk_sender_loop<H, F>(
     crate::platform::task_wdt::register_current_task_to_task_wdt();
     log::info!("[{}] sender loop started", TAG);
 
+    let mut http: Option<H> = None;
     let recv_timeout = std::time::Duration::from_secs(30);
     loop {
         let (_chat_id, content) = match rx.recv_timeout(recv_timeout) {
@@ -114,21 +115,26 @@ pub fn run_dingtalk_sender_loop<H, F>(
                 std::thread::sleep(std::time::Duration::from_secs(2));
                 crate::platform::task_wdt::feed_current_task();
             }
-            let mut http = match create_http() {
-                Ok(h) => h,
-                Err(e) => {
-                    log::warn!(
-                        "[{}] create http failed (attempt {}): {}",
-                        TAG,
-                        retry + 1,
-                        e
-                    );
-                    continue;
+            if http.is_none() {
+                match create_http() {
+                    Ok(h) => http = Some(h),
+                    Err(e) => {
+                        log::warn!(
+                            "[{}] create http failed (attempt {}): {}",
+                            TAG,
+                            retry + 1,
+                            e
+                        );
+                        continue;
+                    }
                 }
+            }
+            let Some(h) = http.as_mut() else {
+                continue;
             };
-            send_one_dingtalk(&mut http, webhook_url, &content);
+            send_one_dingtalk(h, webhook_url, &content);
             while let Ok((_, cnt)) = rx.try_recv() {
-                send_one_dingtalk(&mut http, webhook_url, &cnt);
+                send_one_dingtalk(h, webhook_url, &cnt);
             }
             sent = true;
             break;

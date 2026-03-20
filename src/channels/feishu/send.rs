@@ -127,8 +127,7 @@ pub fn flush_feishu_sends<H: ChannelHttpClient>(
     }
 }
 
-/// 持续运行的飞书发送循环：阻塞等待 rx 消息，按需创建 HTTP 客户端获取 token 后发送，
-/// 发完即释放 HTTP 连接以归还 TLS 所占 internal heap，避免与 agent 争抢内存。
+/// 持续运行的飞书发送循环：sender 线程内**复用**同一 HTTP；tenant_access_token 仍按 TTL 缓存，减少 getToken 次数。
 pub fn run_feishu_sender_loop<H, F>(
     rx: std::sync::mpsc::Receiver<(String, String)>,
     app_id: &str,
@@ -143,6 +142,7 @@ pub fn run_feishu_sender_loop<H, F>(
     crate::platform::task_wdt::register_current_task_to_task_wdt();
     log::info!("[{}] sender loop started", TAG);
 
+    let mut http: Option<H> = None;
     let recv_timeout = std::time::Duration::from_secs(30);
     // 飞书 tenant_access_token 有效期 2h，缓存避免每批消息都请求。
     let token_ttl = std::time::Duration::from_secs(7200 - TOKEN_REFRESH_MARGIN_SECS);
@@ -167,43 +167,54 @@ pub fn run_feishu_sender_loop<H, F>(
                 std::thread::sleep(std::time::Duration::from_secs(2));
                 crate::platform::task_wdt::feed_current_task();
             }
-            let mut http = match create_http() {
-                Ok(h) => h,
-                Err(e) => {
-                    log::warn!(
-                        "[{}] create http failed (attempt {}): {}",
-                        TAG,
-                        retry + 1,
-                        e
-                    );
-                    continue;
+            if http.is_none() {
+                match create_http() {
+                    Ok(h) => http = Some(h),
+                    Err(e) => {
+                        log::warn!(
+                            "[{}] create http failed (attempt {}): {}",
+                            TAG,
+                            retry + 1,
+                            e
+                        );
+                        continue;
+                    }
                 }
+            }
+            let Some(h) = http.as_mut() else {
+                continue;
             };
             let token = if let Some((ref t, acquired_at)) = cached_token {
                 if acquired_at.elapsed() < token_ttl {
                     t.clone()
                 } else {
                     cached_token = None;
-                    match acquire_tenant_token(&mut http, app_id, app_secret) {
+                    match acquire_tenant_token(h, app_id, app_secret) {
                         Some(t) => {
                             cached_token = Some((t.clone(), std::time::Instant::now()));
                             t
                         }
-                        None => continue,
+                        None => {
+                            http = None;
+                            continue;
+                        }
                     }
                 }
             } else {
-                match acquire_tenant_token(&mut http, app_id, app_secret) {
+                match acquire_tenant_token(h, app_id, app_secret) {
                     Some(t) => {
                         cached_token = Some((t.clone(), std::time::Instant::now()));
                         t
                     }
-                    None => continue,
+                    None => {
+                        http = None;
+                        continue;
+                    }
                 }
             };
-            send_feishu_message(&mut http, &token, &chat_id, &content);
+            send_feishu_message(h, &token, &chat_id, &content);
             while let Ok((cid, cnt)) = rx.try_recv() {
-                send_feishu_message(&mut http, &token, &cid, &cnt);
+                send_feishu_message(h, &token, &cid, &cnt);
             }
             sent = true;
             break;
