@@ -26,15 +26,30 @@ fn message_for_key(key: &str) -> Option<(&'static str, &'static str)> {
         "queue_full" => ("队列已满，请稍后重试", "Queue full, try again later"),
         "missing_name_for_write" => ("缺少技能名称", "Missing skill name for write"),
         "missing_name_or_enabled" => ("缺少 name 或 enabled", "Missing name or enabled"),
-        "missing_order_name_content" => ("缺少 order、name+content 或 name+enabled", "Missing order, name+content, or name+enabled"),
+        "missing_order_name_content" => (
+            "缺少 order、name+content 或 name+enabled",
+            "Missing order, name+content, or name+enabled",
+        ),
         "missing_url" => ("缺少 url", "Missing URL"),
         "missing_name" => ("缺少 name", "Missing name"),
         "url_body_not_utf8" => ("URL 返回内容不是合法 UTF-8", "URL body is not valid UTF-8"),
         "ota_channel_not_configured" => ("渠道未配置", "Update channel not configured"),
-        "ota_check_fail" => ("检查更新失败，请稍后重试", "Check for update failed, try again later"),
-        "ota_download" => ("网络或下载失败，请检查网络后重试", "Network or download failed, check connection and retry"),
-        "ota_validate" => ("固件校验失败，请更换固件来源", "Firmware verification failed, try another source"),
-        "ota_write" => ("写入失败，请勿断电并重试", "Write failed, do not power off and retry"),
+        "ota_check_fail" => (
+            "检查更新失败，请稍后重试",
+            "Check for update failed, try again later",
+        ),
+        "ota_download" => (
+            "网络或下载失败，请检查网络后重试",
+            "Network or download failed, check connection and retry",
+        ),
+        "ota_validate" => (
+            "固件校验失败，请更换固件来源",
+            "Firmware verification failed, try another source",
+        ),
+        "ota_write" => (
+            "写入失败，请勿断电并重试",
+            "Write failed, do not power off and retry",
+        ),
         _ => return None,
     };
     Some(pair)

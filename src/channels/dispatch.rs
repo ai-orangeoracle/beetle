@@ -4,9 +4,10 @@
 use crate::bus::{OutboundRx, MAX_CONTENT_LEN};
 use crate::channels::ChannelHttpClient;
 use crate::config::AppConfig;
-use crate::util::truncate_content_to_max;
 use crate::error::Result;
 use crate::metrics;
+use crate::platform::PlatformHttpClient;
+use crate::util::truncate_content_to_max;
 use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::sync::mpsc;
@@ -44,10 +45,12 @@ impl QueuedSink {
 impl MessageSink for QueuedSink {
     fn send(&self, chat_id: &str, content: &str) -> Result<()> {
         let content = truncate_content_to_max(content, MAX_CONTENT_LEN);
-        self.tx.try_send((chat_id.to_string(), content.into_owned())).map_err(|e| crate::error::Error::Other {
-            source: Box::new(e),
-            stage: self.stage,
-        })
+        self.tx
+            .try_send((chat_id.to_string(), content.into_owned()))
+            .map_err(|e| crate::error::Error::Other {
+                source: Box::new(e),
+                stage: self.stage,
+            })
     }
 }
 
@@ -113,7 +116,8 @@ pub fn run_dispatch(outbound_rx: OutboundRx, sinks: Arc<ChannelSinks>) {
         let mut i = 0;
         while i < cooldown_buffer.len() {
             if !is_channel_in_cooldown(&cooldown_buffer[i].channel) {
-                let buffered = cooldown_buffer.swap_remove_back(i)
+                let buffered = cooldown_buffer
+                    .swap_remove_back(i)
                     .expect("i < cooldown_buffer.len() checked by while condition");
                 let bc = truncate_content_to_max(&buffered.content, MAX_CONTENT_LEN);
                 if let Some(sink) = sinks.get(&buffered.channel) {
@@ -123,7 +127,11 @@ pub fn run_dispatch(outbound_rx: OutboundRx, sinks: Arc<ChannelSinks>) {
                     } else {
                         record_channel_fail(&buffered.channel);
                         metrics::record_dispatch_send(false);
-                        log::warn!("[{}] channel={} cooldown replay failed", TAG, buffered.channel);
+                        log::warn!(
+                            "[{}] channel={} cooldown replay failed",
+                            TAG,
+                            buffered.channel
+                        );
                     }
                 }
             } else {
@@ -175,7 +183,12 @@ pub fn run_dispatch(outbound_rx: OutboundRx, sinks: Arc<ChannelSinks>) {
                 record_channel_fail(&msg.channel);
                 metrics::record_dispatch_send(false);
                 metrics::record_error_by_stage("channel_dispatch");
-                log::warn!("[{}] channel={} send failed after retries: {}", TAG, msg.channel, e);
+                log::warn!(
+                    "[{}] channel={} send failed after retries: {}",
+                    TAG,
+                    msg.channel,
+                    e
+                );
             }
         } else {
             log::warn!("[{}] no sink for channel={}", TAG, msg.channel);
@@ -320,62 +333,62 @@ pub fn build_channel_sinks(
 }
 
 /// 启动各通道的 sender 线程。rx_set 中有值的通道 `.take()` 后 spawn 线程。
-/// `create_http` 工厂闭包在每个线程内调用以创建独立 HTTP 客户端。
-pub fn spawn_sender_threads<H, F>(rx_set: &mut ChannelRxSet, tg_token: &str, create_http: F)
-where
-    H: ChannelHttpClient + 'static,
-    F: Fn() -> crate::Result<H> + Send + 'static + Clone,
-{
+/// `create_http` 在每个线程内调用以创建独立 HTTP 客户端；使用 `Arc` 共享工厂，避免闭包需实现 `Clone`。
+pub fn spawn_sender_threads(
+    rx_set: &mut ChannelRxSet,
+    tg_token: &str,
+    create_http: Arc<dyn Fn() -> crate::Result<Box<dyn PlatformHttpClient>> + Send + Sync>,
+) {
     const TAG: &str = "beetle";
 
     if let Some(tg_rx) = rx_set.telegram.take() {
-        let f = create_http.clone();
+        let f = Arc::clone(&create_http);
         let tg_send_token = tg_token.to_string();
         std::thread::spawn(move || {
-            super::run_telegram_sender_loop(tg_rx, &tg_send_token, f);
+            super::run_telegram_sender_loop(tg_rx, &tg_send_token, move || f());
         });
         log::info!("[{}] Telegram sender thread started", TAG);
     }
 
     if let Some(c) = rx_set.feishu.take() {
-        let f = create_http.clone();
+        let f = Arc::clone(&create_http);
         let fs_rx = c.rx;
         let fs_id = c.app_id;
         let fs_sec = c.app_secret;
         std::thread::spawn(move || {
-            super::run_feishu_sender_loop(fs_rx, &fs_id, &fs_sec, f);
+            super::run_feishu_sender_loop(fs_rx, &fs_id, &fs_sec, move || f());
         });
         log::info!("[{}] Feishu sender thread started", TAG);
     }
     if let Some(c) = rx_set.dingtalk.take() {
-        let f = create_http.clone();
+        let f = Arc::clone(&create_http);
         let dt_rx = c.rx;
         let dt_url = c.webhook_url;
         std::thread::spawn(move || {
-            super::run_dingtalk_sender_loop(dt_rx, &dt_url, f);
+            super::run_dingtalk_sender_loop(dt_rx, &dt_url, move || f());
         });
         log::info!("[{}] DingTalk sender thread started", TAG);
     }
     if let Some(c) = rx_set.wecom.take() {
-        let f = create_http.clone();
+        let f = Arc::clone(&create_http);
         let wc_rx = c.rx;
         let wc_cid = c.corp_id;
         let wc_sec = c.corp_secret;
         let wc_aid = c.agent_id;
         let wc_usr = c.default_touser;
         std::thread::spawn(move || {
-            super::run_wecom_sender_loop(wc_rx, &wc_cid, &wc_sec, &wc_aid, &wc_usr, f);
+            super::run_wecom_sender_loop(wc_rx, &wc_cid, &wc_sec, &wc_aid, &wc_usr, move || f());
         });
         log::info!("[{}] WeCom sender thread started", TAG);
     }
     if let Some(c) = rx_set.qq_channel.take() {
-        let f = create_http.clone();
+        let f = Arc::clone(&create_http);
         let qq_rx = c.rx;
         let qq_id = c.app_id;
         let qq_sec = c.app_secret;
         let qq_cache = c.msg_id_cache;
         std::thread::spawn(move || {
-            super::run_qq_sender_loop(qq_rx, &qq_id, &qq_sec, qq_cache, f);
+            super::run_qq_sender_loop(qq_rx, &qq_id, &qq_sec, qq_cache, move || f());
         });
         log::info!("[{}] QQ Channel sender thread started", TAG);
     }

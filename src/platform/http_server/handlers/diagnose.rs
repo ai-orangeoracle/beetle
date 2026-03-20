@@ -12,7 +12,9 @@ pub fn body(ctx: &HandlerContext) -> Result<String, std::io::Error> {
     let nvs_ok = ctx.platform.config_store().read_string("wifi_ssid").is_ok();
     let last_error = state::get_last_error();
     let inc_val = ctx.inbound_depth.load(std::sync::atomic::Ordering::Relaxed);
-    let out_val = ctx.outbound_depth.load(std::sync::atomic::Ordering::Relaxed);
+    let out_val = ctx
+        .outbound_depth
+        .load(std::sync::atomic::Ordering::Relaxed);
     let skills_count = crate::skills::list_skill_names(ctx.skill_storage.as_ref()).len();
     let last_errors_count = state::get_last_errors_count();
     let results = crate::doctor::diagnose(

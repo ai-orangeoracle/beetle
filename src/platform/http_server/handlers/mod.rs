@@ -32,26 +32,26 @@ impl HandlerContext {
 
 pub mod channel_connectivity;
 pub mod config;
-pub mod dingtalk_webhook;
-pub mod feishu_event;
 pub mod config_page;
 pub mod config_reset;
 pub mod diagnose;
+pub mod dingtalk_webhook;
+pub mod feishu_event;
 pub mod health;
 pub mod memory;
 pub mod metrics;
 pub mod pairing;
 pub mod qq_webhook;
 pub mod resource;
+pub mod restart;
 pub mod root;
 pub mod sessions;
 pub mod skills;
 pub mod soul;
-pub mod user;
-pub mod restart;
 pub mod system_info;
-pub mod wecom_webhook;
+pub mod user;
 pub mod webhook;
+pub mod wecom_webhook;
 pub mod wifi_scan;
 
 #[cfg(feature = "ota")]

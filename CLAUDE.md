@@ -74,5 +74,5 @@
 - **Tool**：`execute(&self, args: &str, ctx: &mut dyn ToolContext) -> Result<String>`；**tools 不依赖 platform**，HTTP 通过 ToolContext 注入。
 - **ToolContext**：在 **lib** 中由 `EspHttpClient` 实现（`get` / `get_with_headers`）；需自定义 header 时用 `get_with_headers`。
 - **常量**：`MAX_TOOL_ARGS_LEN`（8KB）、`MAX_TOOL_RESULT_LEN`（16KB）；args 在 `registry.execute` 内校验；错误 stage 如 `tool_web_search`、`tool_execute`。
-- **ToolRegistry**：main 构造一次并注册所有工具；Agent 注入同一 Registry；`tool_specs_for_api(max_len)`、`format_descriptions_for_system_prompt(max_chars)` 总长度不超过参数。
+- **ToolRegistry**：main 构造一次并注册所有工具；`build_default_registry(config, platform, …)` 需传入 `Arc<dyn Platform>`（如 `board_info`）；Agent 注入同一 Registry；`tool_specs_for_api(max_len)`、`format_descriptions_for_system_prompt(max_chars)` 总长度不超过参数。
 - **新增工具**：实现 `Tool` 并在 main 中 `registry.register(Box::new(XxxTool::new(...)))`；不修改 platform。

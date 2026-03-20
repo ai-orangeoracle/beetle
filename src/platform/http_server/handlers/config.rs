@@ -23,14 +23,21 @@ pub fn post_wifi(ctx: &HandlerContext, body: &str) -> Result<ApiResponse, std::i
     let locale = config::get_locale(ctx.config_store.as_ref());
     let payload: WifiConfigPayload = match serde_json::from_str(body) {
         Ok(p) => p,
-        Err(_) => return Ok(ApiResponse::err_400(&user_message::from_api_key("invalid_json", &locale))),
+        Err(_) => {
+            return Ok(ApiResponse::err_400(&user_message::from_api_key(
+                "invalid_json",
+                &locale,
+            )))
+        }
     };
     match config::save_wifi_to_nvs(
         ctx.config_store.as_ref(),
         &payload.wifi_ssid,
         &payload.wifi_pass,
     ) {
-        Ok(()) => Ok(ApiResponse::ok_200_json(r#"{"ok":true,"restart_required":true}"#)),
+        Ok(()) => Ok(ApiResponse::ok_200_json(
+            r#"{"ok":true,"restart_required":true}"#,
+        )),
         Err(e) => Ok(ApiResponse::err_400(&user_message::from_error(&e, &locale))),
     }
 }
@@ -64,7 +71,10 @@ pub fn post_system(ctx: &HandlerContext, body: &str) -> Result<ApiResponse, std:
 
 /// GET /api/config/hardware：返回 HardwareSegment JSON（文件不存在时返回空 devices）。
 pub fn get_hardware_body(ctx: &HandlerContext) -> Result<String, std::io::Error> {
-    match ctx.config_file_store.read_config_file("config/hardware.json") {
+    match ctx
+        .config_file_store
+        .read_config_file("config/hardware.json")
+    {
         Ok(Some(b)) => {
             let s = String::from_utf8_lossy(&b);
             Ok(s.into_owned())

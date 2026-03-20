@@ -50,13 +50,7 @@ impl Default for SpiffsRemindAtStore {
 }
 
 impl RemindAtStore for SpiffsRemindAtStore {
-    fn add(
-        &self,
-        channel: &str,
-        chat_id: &str,
-        at_unix_secs: u64,
-        context: &str,
-    ) -> Result<()> {
+    fn add(&self, channel: &str, chat_id: &str, at_unix_secs: u64, context: &str) -> Result<()> {
         let path = full_path();
         let mut list: Vec<RemindEntry> = match read_file(&path) {
             Ok(buf) => {
@@ -78,8 +72,8 @@ impl RemindAtStore for SpiffsRemindAtStore {
         if list.len() > REMIND_AT_MAX_ENTRIES {
             list.truncate(REMIND_AT_MAX_ENTRIES);
         }
-        let json = serde_json::to_vec(&list)
-            .map_err(|e| Error::config("remind_at_add", e.to_string()))?;
+        let json =
+            serde_json::to_vec(&list).map_err(|e| Error::config("remind_at_add", e.to_string()))?;
         write_file(path, &json)
     }
 
@@ -102,8 +96,8 @@ impl RemindAtStore for SpiffsRemindAtStore {
         };
         let removed = list.remove(idx);
         let out = (removed.channel, removed.chat_id, removed.context);
-        let json = serde_json::to_vec(&list)
-            .map_err(|e| Error::config("remind_at_pop", e.to_string()))?;
+        let json =
+            serde_json::to_vec(&list).map_err(|e| Error::config("remind_at_pop", e.to_string()))?;
         let _ = write_file(&path, &json);
         Ok(Some(out))
     }

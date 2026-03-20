@@ -42,7 +42,8 @@ impl SkillMetaStore for SpiffsSkillMetaStore {
             order: order.to_vec(),
             disabled: disabled.to_vec(),
         };
-        let json = serde_json::to_string(&meta).map_err(|e| Error::config("skills_meta", e.to_string()))?;
+        let json = serde_json::to_string(&meta)
+            .map_err(|e| Error::config("skills_meta", e.to_string()))?;
         write_file(full_path(), json.as_bytes())
     }
 }

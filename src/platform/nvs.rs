@@ -43,7 +43,10 @@ pub fn init_nvs() -> Result<()> {
             || err == ESP_ERR_NVS_NEW_VERSION_FOUND
             || err == ESP_ERR_NVS_INVALID_STATE
         {
-            log::warn!("[platform::nvs] NVS partition needs erase (err={}), erasing...", err);
+            log::warn!(
+                "[platform::nvs] NVS partition needs erase (err={}), erasing...",
+                err
+            );
             unsafe { esp_idf_svc::sys::nvs_flash_erase() };
             err = unsafe { esp_idf_svc::sys::nvs_flash_init() };
         }
@@ -271,7 +274,11 @@ fn do_write_strings(pairs: &[(&str, &str)]) -> Result<()> {
     }
     log::debug!("[platform::nvs] write_strings begin, pairs={}", pairs.len());
     for (key, value) in pairs.iter() {
-        log::debug!("[platform::nvs] write_strings key={} len={}", key, value.len());
+        log::debug!(
+            "[platform::nvs] write_strings key={} len={}",
+            key,
+            value.len()
+        );
         let c_key = CString::new(*key).map_err(|_| {
             unsafe { esp_idf_svc::sys::nvs_close(handle) };
             Error::nvs_stage("nvs_set")
@@ -341,7 +348,11 @@ fn do_write_string(key: &str, value: &str) -> Result<()> {
     if err != 0 {
         return Err(Error::esp("nvs_open", err));
     }
-    log::debug!("[platform::nvs] write_string key={} len={}", key, value.len());
+    log::debug!(
+        "[platform::nvs] write_string key={} len={}",
+        key,
+        value.len()
+    );
     let err = unsafe { esp_idf_svc::sys::nvs_set_str(handle, c_key.as_ptr(), c_val.as_ptr()) };
     if err != 0 {
         log::error!("[platform::nvs] nvs_set failed key={} err={}", key, err);
@@ -420,6 +431,7 @@ pub fn default_config_store() -> NvsConfigStore {
 }
 
 /// 默认配置存储的 Arc，供跨线程使用（如 http_server spawn）。
-pub fn default_config_store_arc() -> std::sync::Arc<dyn crate::platform::ConfigStore + Send + Sync> {
+pub fn default_config_store_arc() -> std::sync::Arc<dyn crate::platform::ConfigStore + Send + Sync>
+{
     std::sync::Arc::new(NvsConfigStore)
 }

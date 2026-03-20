@@ -2,17 +2,18 @@
 //! Firmware version is embedded for OTA and ops.
 //! Startup order: NVS → SPIFFS → config → WiFi → memory/session stores → MessageBus → self-check → cron/heartbeat/sinks/dispatch/CLI → agent_loop.
 //! ESP32: no graceful shutdown; process runs until power off.
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+use beetle::channels::connect_esp_wss;
 use beetle::config;
 use beetle::memory::{MemoryStore, SessionStore};
 #[cfg(feature = "feishu")]
 use beetle::run_feishu_ws_loop;
 use beetle::Platform;
+use beetle::PlatformHttpClient;
 use beetle::{
-    parse_allowed_chat_ids, run_agent_loop, run_dispatch, send_chat_action,
-    AppConfig, Esp32Platform, EspHttpClient, MessageBus, DEFAULT_CAPACITY,
+    parse_allowed_chat_ids, run_agent_loop, run_dispatch, send_chat_action, AppConfig,
+    Esp32Platform, MessageBus, DEFAULT_CAPACITY,
 };
-#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
-use beetle::channels::connect_esp_wss;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -43,8 +44,8 @@ fn ensure_storage_ready(memory_store: &dyn MemoryStore) {
     }
 }
 
-/// HTTP 工厂类型：由 main 注入具体平台的 HTTP 客户端构造函数。
-type HttpFactory = Box<dyn Fn() -> beetle::Result<EspHttpClient> + Send + Sync>;
+/// HTTP 工厂：与 `Platform::create_http_client` 一致（含代理），供流式编辑等独立连接使用。
+type HttpFactory = Box<dyn Fn() -> beetle::Result<Box<dyn PlatformHttpClient>> + Send + Sync>;
 
 /// Telegram 流式编辑器：LLM 流式输出期间，按需创建独立 HTTP 连接发送/编辑消息。
 struct TelegramStreamEditor {
@@ -74,13 +75,17 @@ impl beetle::StreamEditor for FeishuStreamEditor {
     fn send_initial(&self, chat_id: &str, content: &str) -> beetle::Result<Option<String>> {
         let mut http = (self.create_http)()?;
         let token = beetle::feishu_acquire_token(&mut http, &self.app_id, &self.app_secret)
-            .ok_or_else(|| beetle::Error::config("feishu_stream", "failed to acquire tenant_token"))?;
+            .ok_or_else(|| {
+                beetle::Error::config("feishu_stream", "failed to acquire tenant_token")
+            })?;
         beetle::feishu_send_and_get_id(&mut http, &token, chat_id, content)
     }
     fn edit(&self, _chat_id: &str, message_id: &str, content: &str) -> beetle::Result<()> {
         let mut http = (self.create_http)()?;
         let token = beetle::feishu_acquire_token(&mut http, &self.app_id, &self.app_secret)
-            .ok_or_else(|| beetle::Error::config("feishu_stream", "failed to acquire tenant_token"))?;
+            .ok_or_else(|| {
+                beetle::Error::config("feishu_stream", "failed to acquire tenant_token")
+            })?;
         beetle::feishu_edit_message(&mut http, &token, message_id, content)
     }
 }
@@ -241,13 +246,20 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
     }
 
     beetle::cron::run_cron_loop(inbound_tx.clone(), beetle::cron::DEFAULT_CRON_INTERVAL_SECS);
-    beetle::heartbeat::run_heartbeat_loop_with_tasks(VERSION, 30, inbound_tx.clone(), || {
-        beetle::platform::read_heartbeat_file().unwrap_or_default()
-    }, Arc::clone(&inbound_depth), Arc::clone(&outbound_depth), Arc::clone(&session_store));
+    beetle::heartbeat::run_heartbeat_loop_with_tasks(
+        VERSION,
+        30,
+        inbound_tx.clone(),
+        || beetle::platform::read_heartbeat_file().unwrap_or_default(),
+        Arc::clone(&inbound_depth),
+        Arc::clone(&outbound_depth),
+        Arc::clone(&session_store),
+    );
 
     beetle::memory::run_remind_loop(Arc::clone(&remind_at_store), inbound_tx.clone(), 60);
 
-    let (sinks, mut channel_rx_set) = beetle::channels::build_channel_sinks(config.as_ref(), &qq_msg_id_cache);
+    let (sinks, mut channel_rx_set) =
+        beetle::channels::build_channel_sinks(config.as_ref(), &qq_msg_id_cache);
     let sinks = Arc::new(sinks);
     let enabled_channel = config.enabled_channel.as_str();
     log::info!(
@@ -269,7 +281,18 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
         let id = c.app_id.clone();
         let sec = c.app_secret.clone();
         let allowed = parse_allowed_chat_ids(&config.feishu_allowed_chat_ids);
-        std::thread::spawn(move || run_feishu_ws_loop(id, sec, allowed, tx, EspHttpClient::new, connect_esp_wss));
+        let pf = Arc::clone(&platform);
+        let cfg = Arc::clone(&config);
+        std::thread::spawn(move || {
+            run_feishu_ws_loop(
+                id,
+                sec,
+                allowed,
+                tx,
+                move || pf.create_http_client(cfg.as_ref()),
+                connect_esp_wss,
+            )
+        });
         log::info!("[{}] Feishu WS loop started", TAG);
     } else if enabled_channel == "feishu" {
         #[cfg(all(
@@ -290,13 +313,24 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
                 let qq_id = c.app_id.clone();
                 let qq_sec = c.app_secret.clone();
                 let qq_cache_ws = std::sync::Arc::clone(&qq_msg_id_cache);
-                std::thread::spawn(move || beetle::run_qq_ws_loop(qq_id, qq_sec, qq_tx, qq_cache_ws, EspHttpClient::new, connect_esp_wss));
+                let pf = Arc::clone(&platform);
+                let cfg = Arc::clone(&config);
+                std::thread::spawn(move || {
+                    beetle::run_qq_ws_loop(
+                        qq_id,
+                        qq_sec,
+                        qq_tx,
+                        qq_cache_ws,
+                        move || pf.create_http_client(cfg.as_ref()),
+                        connect_esp_wss,
+                    )
+                });
                 log::info!("[{}] QQ WS loop started", TAG);
             }
         }
     }
 
-    // main 使用 platform 提供的 HTTP 客户端供 agent + flush；Telegram 轮询因连接非 Send，需在 spawn 内单独 new。
+    // Agent / flush 与各通道工厂均经 `create_http_client`，与代理配置一致。
     if let Ok(mut http_client) = platform.create_http_client(config.as_ref()) {
         #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
         beetle::platform::task_wdt::register_current_task_to_task_wdt();
@@ -318,6 +352,8 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
             let tg_inbound_depth = Arc::clone(&inbound_depth);
             let tg_outbound_depth = Arc::clone(&outbound_depth);
             let tg_config_store = Arc::clone(&config_store);
+            let pf = Arc::clone(&platform);
+            let cfg = Arc::clone(&config);
             std::thread::spawn(move || {
                 beetle::run_telegram_poll_loop(
                     tg_token,
@@ -330,7 +366,7 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
                     tg_inbound_depth,
                     tg_outbound_depth,
                     tg_config_store,
-                    EspHttpClient::new,
+                    move || pf.create_http_client(cfg.as_ref()),
                 )
             });
             log::info!("[{}] Telegram poll loop started", TAG);
@@ -339,6 +375,7 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
         let (router_client, worker_llm_box) = beetle::build_llm_clients(&config);
         let registry = beetle::build_default_registry(
             &config,
+            Arc::clone(&platform),
             Arc::clone(&remind_at_store),
             Arc::clone(&session_summary_store),
             Arc::clone(&session_store),
@@ -366,7 +403,9 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
             Feishu(FeishuStreamEditor),
         }
         let stream_editor_impl: Option<StreamEditorImpl> = if config.llm_stream {
-            let make_http: HttpFactory = Box::new(|| EspHttpClient::new());
+            let pf = Arc::clone(&platform);
+            let cfg = Arc::clone(&config);
+            let make_http: HttpFactory = Box::new(move || pf.create_http_client(cfg.as_ref()));
             match config.enabled_channel.as_str() {
                 "telegram" if !config.tg_token.trim().is_empty() => {
                     Some(StreamEditorImpl::Telegram(TelegramStreamEditor {
@@ -386,10 +425,11 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
         } else {
             None
         };
-        let stream_editor_ref: Option<&dyn beetle::StreamEditor> = stream_editor_impl.as_ref().map(|e| match e {
-            StreamEditorImpl::Telegram(t) => t as &dyn beetle::StreamEditor,
-            StreamEditorImpl::Feishu(f) => f as &dyn beetle::StreamEditor,
-        });
+        let stream_editor_ref: Option<&dyn beetle::StreamEditor> =
+            stream_editor_impl.as_ref().map(|e| match e {
+                StreamEditorImpl::Telegram(t) => t as &dyn beetle::StreamEditor,
+                StreamEditorImpl::Feishu(f) => f as &dyn beetle::StreamEditor,
+            });
         let agent_config = beetle::AgentLoopConfig {
             memory_store: memory_store.as_ref(),
             session_store: session_store.as_ref(),
@@ -425,7 +465,14 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
             log::info!("[{}] CLI REPL started (stdin)", TAG);
         }
 
-        beetle::channels::spawn_sender_threads(&mut channel_rx_set, &config.tg_token, EspHttpClient::new);
+        let create_http: Arc<
+            dyn Fn() -> beetle::Result<Box<dyn PlatformHttpClient>> + Send + Sync,
+        > = Arc::new({
+            let pf = Arc::clone(&platform);
+            let cfg = Arc::clone(&config);
+            move || pf.create_http_client(cfg.as_ref())
+        });
+        beetle::channels::spawn_sender_threads(&mut channel_rx_set, &config.tg_token, create_http);
 
         if let Err(e) = run_agent_loop(
             &mut http_client,

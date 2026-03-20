@@ -75,7 +75,8 @@ impl Platform for Esp32Platform {
         esp_idf_svc::sys::link_patches();
         esp_idf_svc::log::EspLogger::initialize_default();
         // 屏蔽 HTTP 服务器每个 URI 注册的 Info 日志，减少刷屏
-        let _ = esp_idf_svc::log::set_target_level("esp_idf_svc::http::server", log::LevelFilter::Warn);
+        let _ =
+            esp_idf_svc::log::set_target_level("esp_idf_svc::http::server", log::LevelFilter::Warn);
         self.init_nvs()?;
         self.init_spiffs()?;
         Ok(())
@@ -98,9 +99,9 @@ impl Platform for Esp32Platform {
             Ok(Some(handle)) => {
                 let arc_dyn: Arc<dyn crate::platform::WifiScan + Send + Sync> = Arc::new(handle);
                 *self
-            .wifi_scan_handle
-            .lock()
-            .unwrap_or_else(|e| e.into_inner()) = Some(arc_dyn);
+                    .wifi_scan_handle
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner()) = Some(arc_dyn);
                 Ok(())
             }
             Ok(None) => Ok(()),

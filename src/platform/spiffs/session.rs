@@ -36,7 +36,10 @@ fn session_path(chat_id: &str) -> Result<(PathBuf, bool)> {
         .chars()
         .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.' || c == ':')
     {
-        return Err(Error::config("session_path", "chat_id contains invalid chars"));
+        return Err(Error::config(
+            "session_path",
+            "chat_id contains invalid chars",
+        ));
     }
     let mut p = PathBuf::from(SPIFFS_BASE);
     p.push(REL_PATH_SESSIONS_DIR);
@@ -100,11 +103,16 @@ impl SessionStore for SpiffsSessionStore {
             role: role.to_string(),
             content: content.to_string(),
         };
-        let line = serde_json::to_string(&msg).map_err(|e| Error::config("session_append", e.to_string()))?;
+        let line = serde_json::to_string(&msg)
+            .map_err(|e| Error::config("session_append", e.to_string()))?;
         if line.len() > MAX_SESSION_MESSAGE_LEN {
             return Err(Error::config(
                 "session_append",
-                format!("message serialized len {} exceeds {}", line.len(), MAX_SESSION_MESSAGE_LEN),
+                format!(
+                    "message serialized len {} exceeds {}",
+                    line.len(),
+                    MAX_SESSION_MESSAGE_LEN
+                ),
             ));
         }
 
@@ -256,7 +264,10 @@ impl SessionStore for SpiffsSessionStore {
             p.push(name);
             let stale = match std::fs::metadata(p.as_path()) {
                 Ok(meta) => match meta.modified() {
-                    Ok(mtime) => now.duration_since(mtime).map(|d| d.as_secs() > max_age_secs).unwrap_or(false),
+                    Ok(mtime) => now
+                        .duration_since(mtime)
+                        .map(|d| d.as_secs() > max_age_secs)
+                        .unwrap_or(false),
                     Err(_) => false,
                 },
                 Err(_) => false,

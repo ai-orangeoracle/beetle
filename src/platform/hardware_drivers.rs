@@ -21,12 +21,14 @@ const BUZZER_BEEP_MS: u64 = 100;
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 pub fn drive_gpio_out(pins: &PinConfig, params: &Value) -> Result<String> {
     use esp_idf_svc::sys::{
-        gpio_config_t, gpio_get_level, gpio_mode_t_GPIO_MODE_OUTPUT, gpio_reset_pin,
-        gpio_set_level, gpio_pullup_t_GPIO_PULLUP_DISABLE,
-        gpio_pulldown_t_GPIO_PULLDOWN_DISABLE, gpio_int_type_t_GPIO_INTR_DISABLE, ESP_OK,
+        gpio_config_t, gpio_get_level, gpio_int_type_t_GPIO_INTR_DISABLE,
+        gpio_mode_t_GPIO_MODE_OUTPUT, gpio_pulldown_t_GPIO_PULLDOWN_DISABLE,
+        gpio_pullup_t_GPIO_PULLUP_DISABLE, gpio_reset_pin, gpio_set_level, ESP_OK,
     };
 
-    let pin = *pins.get("pin").ok_or_else(|| Error::config("gpio_out", "missing pin"))?;
+    let pin = *pins
+        .get("pin")
+        .ok_or_else(|| Error::config("gpio_out", "missing pin"))?;
     let value = params
         .get("value")
         .and_then(|v| v.as_i64())
@@ -47,9 +49,10 @@ pub fn drive_gpio_out(pins: &PinConfig, params: &Value) -> Result<String> {
         let ret = esp_idf_svc::sys::gpio_config(&conf);
         if ret != ESP_OK {
             return Err(Error::Other {
-                source: Box::new(std::io::Error::other(
-                    format!("gpio_config failed: {}", ret),
-                )),
+                source: Box::new(std::io::Error::other(format!(
+                    "gpio_config failed: {}",
+                    ret
+                ))),
                 stage: "gpio_out",
             });
         }
@@ -71,23 +74,33 @@ pub fn drive_gpio_out(pins: &PinConfig, params: &Value) -> Result<String> {
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 pub fn drive_gpio_in(pins: &PinConfig, _params: &Value, options: &Value) -> Result<String> {
     use esp_idf_svc::sys::{
-        gpio_config_t, gpio_get_level, gpio_mode_t_GPIO_MODE_INPUT, gpio_reset_pin,
-        gpio_pullup_t_GPIO_PULLUP_ENABLE,
-        gpio_pulldown_t_GPIO_PULLDOWN_DISABLE, gpio_pulldown_t_GPIO_PULLDOWN_ENABLE,
-        gpio_pullup_t_GPIO_PULLUP_DISABLE,
-        gpio_int_type_t_GPIO_INTR_DISABLE, ESP_OK,
+        gpio_config_t, gpio_get_level, gpio_int_type_t_GPIO_INTR_DISABLE,
+        gpio_mode_t_GPIO_MODE_INPUT, gpio_pulldown_t_GPIO_PULLDOWN_DISABLE,
+        gpio_pulldown_t_GPIO_PULLDOWN_ENABLE, gpio_pullup_t_GPIO_PULLUP_DISABLE,
+        gpio_pullup_t_GPIO_PULLUP_ENABLE, gpio_reset_pin, ESP_OK,
     };
 
-    let pin = *pins.get("pin").ok_or_else(|| Error::config("gpio_in", "missing pin"))?;
+    let pin = *pins
+        .get("pin")
+        .ok_or_else(|| Error::config("gpio_in", "missing pin"))?;
     let pull = options
         .get("pull")
         .and_then(|v| v.as_str())
         .unwrap_or("none");
 
     let (pull_up, pull_down) = match pull {
-        "up" => (gpio_pullup_t_GPIO_PULLUP_ENABLE, gpio_pulldown_t_GPIO_PULLDOWN_DISABLE),
-        "down" => (gpio_pullup_t_GPIO_PULLUP_DISABLE, gpio_pulldown_t_GPIO_PULLDOWN_ENABLE),
-        _ => (gpio_pullup_t_GPIO_PULLUP_DISABLE, gpio_pulldown_t_GPIO_PULLDOWN_DISABLE),
+        "up" => (
+            gpio_pullup_t_GPIO_PULLUP_ENABLE,
+            gpio_pulldown_t_GPIO_PULLDOWN_DISABLE,
+        ),
+        "down" => (
+            gpio_pullup_t_GPIO_PULLUP_DISABLE,
+            gpio_pulldown_t_GPIO_PULLDOWN_ENABLE,
+        ),
+        _ => (
+            gpio_pullup_t_GPIO_PULLUP_DISABLE,
+            gpio_pulldown_t_GPIO_PULLDOWN_DISABLE,
+        ),
     };
 
     unsafe {
@@ -102,9 +115,10 @@ pub fn drive_gpio_in(pins: &PinConfig, _params: &Value, options: &Value) -> Resu
         let ret = esp_idf_svc::sys::gpio_config(&conf);
         if ret != ESP_OK {
             return Err(Error::Other {
-                source: Box::new(std::io::Error::other(
-                    format!("gpio_config failed: {}", ret),
-                )),
+                source: Box::new(std::io::Error::other(format!(
+                    "gpio_config failed: {}",
+                    ret
+                ))),
                 stage: "gpio_in",
             });
         }
@@ -130,14 +144,14 @@ pub fn drive_pwm_out(
     ledc_timer_index: u8,
 ) -> Result<String> {
     use esp_idf_svc::sys::{
-        ledc_channel_config_t, ledc_timer_config_t,
-        ledc_mode_t_LEDC_LOW_SPEED_MODE,
-        ledc_timer_bit_t_LEDC_TIMER_13_BIT, ledc_intr_type_t_LEDC_INTR_DISABLE,
-        ledc_channel_config, ledc_timer_config,
-        ledc_set_duty, ledc_update_duty, ESP_OK,
+        ledc_channel_config, ledc_channel_config_t, ledc_intr_type_t_LEDC_INTR_DISABLE,
+        ledc_mode_t_LEDC_LOW_SPEED_MODE, ledc_set_duty, ledc_timer_bit_t_LEDC_TIMER_13_BIT,
+        ledc_timer_config, ledc_timer_config_t, ledc_update_duty, ESP_OK,
     };
 
-    let pin = *pins.get("pin").ok_or_else(|| Error::config("pwm_out", "missing pin"))?;
+    let pin = *pins
+        .get("pin")
+        .ok_or_else(|| Error::config("pwm_out", "missing pin"))?;
     let duty = params
         .get("duty")
         .and_then(|v| v.as_u64())
@@ -169,9 +183,10 @@ pub fn drive_pwm_out(
         let ret = ledc_timer_config(&timer_conf);
         if ret != ESP_OK {
             return Err(Error::Other {
-                source: Box::new(std::io::Error::other(
-                    format!("ledc_timer_config failed: {}", ret),
-                )),
+                source: Box::new(std::io::Error::other(format!(
+                    "ledc_timer_config failed: {}",
+                    ret
+                ))),
                 stage: "pwm_out",
             });
         }
@@ -190,9 +205,10 @@ pub fn drive_pwm_out(
         let ret = ledc_channel_config(&ch_conf);
         if ret != ESP_OK {
             return Err(Error::Other {
-                source: Box::new(std::io::Error::other(
-                    format!("ledc_channel_config failed: {}", ret),
-                )),
+                source: Box::new(std::io::Error::other(format!(
+                    "ledc_channel_config failed: {}",
+                    ret
+                ))),
                 stage: "pwm_out",
             });
         }
@@ -201,24 +217,26 @@ pub fn drive_pwm_out(
         ledc_update_duty(speed_mode, channel);
     }
 
-    Ok(format!(r#"{{"ok":true,"duty":{},"duty_raw":{}}}"#, duty, duty_raw))
+    Ok(format!(
+        r#"{{"ok":true,"duty":{},"duty_raw":{}}}"#,
+        duty, duty_raw
+    ))
 }
 
 /// ADC1 使用 oneshot 驱动（esp_adc/adc_oneshot.h），替代已弃用的 driver/adc.h legacy API。
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 pub fn drive_adc_in(pins: &PinConfig, _params: &Value, options: &Value) -> Result<String> {
     use esp_idf_svc::sys::{
-        adc_atten_t_ADC_ATTEN_DB_0, adc_atten_t_ADC_ATTEN_DB_2_5,
-        adc_atten_t_ADC_ATTEN_DB_6, adc_atten_t_ADC_ATTEN_DB_11,
-        adc_bitwidth_t_ADC_BITWIDTH_12, adc_oneshot_chan_cfg_t,
-        adc_oneshot_config_channel, adc_oneshot_del_unit, adc_oneshot_new_unit,
-        adc_oneshot_read, adc_oneshot_unit_init_cfg_t,
-        adc_unit_t_ADC_UNIT_1, adc_ulp_mode_t_ADC_ULP_MODE_DISABLE,
-        soc_periph_adc_rtc_clk_src_t_ADC_RTC_CLK_SRC_DEFAULT,
-        ESP_OK,
+        adc_atten_t_ADC_ATTEN_DB_0, adc_atten_t_ADC_ATTEN_DB_11, adc_atten_t_ADC_ATTEN_DB_2_5,
+        adc_atten_t_ADC_ATTEN_DB_6, adc_bitwidth_t_ADC_BITWIDTH_12, adc_oneshot_chan_cfg_t,
+        adc_oneshot_config_channel, adc_oneshot_del_unit, adc_oneshot_new_unit, adc_oneshot_read,
+        adc_oneshot_unit_init_cfg_t, adc_ulp_mode_t_ADC_ULP_MODE_DISABLE, adc_unit_t_ADC_UNIT_1,
+        soc_periph_adc_rtc_clk_src_t_ADC_RTC_CLK_SRC_DEFAULT, ESP_OK,
     };
 
-    let pin = *pins.get("pin").ok_or_else(|| Error::config("adc_in", "missing pin"))?;
+    let pin = *pins
+        .get("pin")
+        .ok_or_else(|| Error::config("adc_in", "missing pin"))?;
 
     // ESP32-S3: ADC1 channels map GPIO 1–10 → channel 0–9
     if !(1..=10).contains(&pin) {
@@ -250,9 +268,10 @@ pub fn drive_adc_in(pins: &PinConfig, _params: &Value, options: &Value) -> Resul
         let ret = adc_oneshot_new_unit(&init_cfg, &mut handle);
         if ret != ESP_OK {
             return Err(Error::Other {
-                source: Box::new(std::io::Error::other(
-                    format!("adc_oneshot_new_unit failed: {}", ret),
-                )),
+                source: Box::new(std::io::Error::other(format!(
+                    "adc_oneshot_new_unit failed: {}",
+                    ret
+                ))),
                 stage: "adc_in",
             });
         }
@@ -264,9 +283,10 @@ pub fn drive_adc_in(pins: &PinConfig, _params: &Value, options: &Value) -> Resul
         if ret != ESP_OK {
             let _ = adc_oneshot_del_unit(handle);
             return Err(Error::Other {
-                source: Box::new(std::io::Error::other(
-                    format!("adc_oneshot_config_channel failed: {}", ret),
-                )),
+                source: Box::new(std::io::Error::other(format!(
+                    "adc_oneshot_config_channel failed: {}",
+                    ret
+                ))),
                 stage: "adc_in",
             });
         }
@@ -275,9 +295,10 @@ pub fn drive_adc_in(pins: &PinConfig, _params: &Value, options: &Value) -> Resul
         let _ = adc_oneshot_del_unit(handle);
         if ret != ESP_OK {
             return Err(Error::Other {
-                source: Box::new(std::io::Error::other(
-                    format!("adc_oneshot_read failed: {}", ret),
-                )),
+                source: Box::new(std::io::Error::other(format!(
+                    "adc_oneshot_read failed: {}",
+                    ret
+                ))),
                 stage: "adc_in",
             });
         }
@@ -288,15 +309,20 @@ pub fn drive_adc_in(pins: &PinConfig, _params: &Value, options: &Value) -> Resul
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 pub fn drive_buzzer(pins: &PinConfig, params: &Value) -> Result<String> {
     use esp_idf_svc::sys::{
-        gpio_config_t, gpio_mode_t_GPIO_MODE_OUTPUT, gpio_reset_pin,
-        gpio_set_level, gpio_pullup_t_GPIO_PULLUP_DISABLE,
-        gpio_pulldown_t_GPIO_PULLDOWN_DISABLE, gpio_int_type_t_GPIO_INTR_DISABLE, ESP_OK,
+        gpio_config_t, gpio_int_type_t_GPIO_INTR_DISABLE, gpio_mode_t_GPIO_MODE_OUTPUT,
+        gpio_pulldown_t_GPIO_PULLDOWN_DISABLE, gpio_pullup_t_GPIO_PULLUP_DISABLE, gpio_reset_pin,
+        gpio_set_level, ESP_OK,
     };
 
-    let pin = *pins.get("pin").ok_or_else(|| Error::config("buzzer", "missing pin"))?;
+    let pin = *pins
+        .get("pin")
+        .ok_or_else(|| Error::config("buzzer", "missing pin"))?;
 
     // Determine duration: beep=true → 100ms, or duration_ms (clamped to MAX)
-    let beep = params.get("beep").and_then(|v| v.as_bool()).unwrap_or(false);
+    let beep = params
+        .get("beep")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
     let mut duration_ms = if beep {
         BUZZER_BEEP_MS
     } else {
@@ -322,9 +348,10 @@ pub fn drive_buzzer(pins: &PinConfig, params: &Value) -> Result<String> {
         let ret = esp_idf_svc::sys::gpio_config(&conf);
         if ret != ESP_OK {
             return Err(Error::Other {
-                source: Box::new(std::io::Error::other(
-                    format!("gpio_config failed: {}", ret),
-                )),
+                source: Box::new(std::io::Error::other(format!(
+                    "gpio_config failed: {}",
+                    ret
+                ))),
                 stage: "buzzer",
             });
         }
@@ -362,7 +389,9 @@ pub fn drive_buzzer(pins: &PinConfig, params: &Value) -> Result<String> {
 
 #[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
 pub fn drive_gpio_out(pins: &PinConfig, params: &Value) -> Result<String> {
-    let pin = *pins.get("pin").ok_or_else(|| Error::config("gpio_out", "missing pin"))?;
+    let pin = *pins
+        .get("pin")
+        .ok_or_else(|| Error::config("gpio_out", "missing pin"))?;
     let value = params
         .get("value")
         .and_then(|v| v.as_i64())
@@ -371,13 +400,21 @@ pub fn drive_gpio_out(pins: &PinConfig, params: &Value) -> Result<String> {
         return Err(Error::config("gpio_out", "value must be 0 or 1"));
     }
     log::info!("[gpio_out] stub: pin={} value={}", pin, value);
-    Ok(format!(r#"{{"ok":true,"actual_value":{},"stub":true}}"#, value))
+    Ok(format!(
+        r#"{{"ok":true,"actual_value":{},"stub":true}}"#,
+        value
+    ))
 }
 
 #[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
 pub fn drive_gpio_in(pins: &PinConfig, _params: &Value, options: &Value) -> Result<String> {
-    let pin = *pins.get("pin").ok_or_else(|| Error::config("gpio_in", "missing pin"))?;
-    let _pull = options.get("pull").and_then(|v| v.as_str()).unwrap_or("none");
+    let pin = *pins
+        .get("pin")
+        .ok_or_else(|| Error::config("gpio_in", "missing pin"))?;
+    let _pull = options
+        .get("pull")
+        .and_then(|v| v.as_str())
+        .unwrap_or("none");
     log::info!("[gpio_in] stub: pin={}", pin);
     Ok(r#"{"value":0,"stub":true}"#.to_string())
 }
@@ -390,7 +427,9 @@ pub fn drive_pwm_out(
     ledc_channel: u8,
     ledc_timer_index: u8,
 ) -> Result<String> {
-    let pin = *pins.get("pin").ok_or_else(|| Error::config("pwm_out", "missing pin"))?;
+    let pin = *pins
+        .get("pin")
+        .ok_or_else(|| Error::config("pwm_out", "missing pin"))?;
     let duty = params
         .get("duty")
         .and_then(|v| v.as_u64())
@@ -398,43 +437,81 @@ pub fn drive_pwm_out(
     if duty > 100 {
         return Err(Error::config("pwm_out", "duty must be 0–100"));
     }
-    let freq = options.get("frequency_hz").and_then(|v| v.as_u64()).unwrap_or(PWM_DEFAULT_FREQ_HZ as u64);
+    let freq = options
+        .get("frequency_hz")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(PWM_DEFAULT_FREQ_HZ as u64);
     let duty_raw = (duty as u32 * LEDC_DUTY_MAX) / 100;
-    log::info!("[pwm_out] stub: pin={} ch={} timer={} duty={}% raw={} freq={}", pin, ledc_channel, ledc_timer_index, duty, duty_raw, freq);
-    Ok(format!(r#"{{"ok":true,"duty":{},"duty_raw":{},"stub":true}}"#, duty, duty_raw))
+    log::info!(
+        "[pwm_out] stub: pin={} ch={} timer={} duty={}% raw={} freq={}",
+        pin,
+        ledc_channel,
+        ledc_timer_index,
+        duty,
+        duty_raw,
+        freq
+    );
+    Ok(format!(
+        r#"{{"ok":true,"duty":{},"duty_raw":{},"stub":true}}"#,
+        duty, duty_raw
+    ))
 }
 
 #[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
 pub fn drive_adc_in(pins: &PinConfig, _params: &Value, options: &Value) -> Result<String> {
-    let pin = *pins.get("pin").ok_or_else(|| Error::config("adc_in", "missing pin"))?;
+    let pin = *pins
+        .get("pin")
+        .ok_or_else(|| Error::config("adc_in", "missing pin"))?;
     if !(1..=10).contains(&pin) {
-        return Err(Error::config("adc_in", format!("pin {} not in ADC1 range (GPIO 1–10)", pin)));
+        return Err(Error::config(
+            "adc_in",
+            format!("pin {} not in ADC1 range (GPIO 1–10)", pin),
+        ));
     }
-    let _atten = options.get("atten").and_then(|v| v.as_str()).unwrap_or("11db");
+    let _atten = options
+        .get("atten")
+        .and_then(|v| v.as_str())
+        .unwrap_or("11db");
     log::info!("[adc_in] stub: pin={}", pin);
     Ok(r#"{"raw":2048,"stub":true}"#.to_string())
 }
 
 #[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
 pub fn drive_buzzer(pins: &PinConfig, params: &Value) -> Result<String> {
-    let pin = *pins.get("pin").ok_or_else(|| Error::config("buzzer", "missing pin"))?;
-    let beep = params.get("beep").and_then(|v| v.as_bool()).unwrap_or(false);
+    let pin = *pins
+        .get("pin")
+        .ok_or_else(|| Error::config("buzzer", "missing pin"))?;
+    let beep = params
+        .get("beep")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
     let mut duration_ms = if beep {
         BUZZER_BEEP_MS
     } else {
-        params.get("duration_ms").and_then(|v| v.as_u64()).unwrap_or(BUZZER_BEEP_MS)
+        params
+            .get("duration_ms")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(BUZZER_BEEP_MS)
     };
     let clamped = duration_ms > MAX_BUZZER_DURATION_MS;
     if clamped {
         duration_ms = MAX_BUZZER_DURATION_MS;
     }
-    log::info!("[buzzer] stub: pin={} duration_ms={} clamped={}", pin, duration_ms, clamped);
+    log::info!(
+        "[buzzer] stub: pin={} duration_ms={} clamped={}",
+        pin,
+        duration_ms,
+        clamped
+    );
     if clamped {
         Ok(format!(
             r#"{{"ok":true,"duration_ms":{},"warning":"clamped to max {}ms","stub":true}}"#,
             duration_ms, MAX_BUZZER_DURATION_MS
         ))
     } else {
-        Ok(format!(r#"{{"ok":true,"duration_ms":{},"stub":true}}"#, duration_ms))
+        Ok(format!(
+            r#"{{"ok":true,"duration_ms":{},"stub":true}}"#,
+            duration_ms
+        ))
     }
 }

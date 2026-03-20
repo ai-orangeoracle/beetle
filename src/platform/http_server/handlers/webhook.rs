@@ -20,17 +20,31 @@ pub fn post(
         Some(ctx.config_file_store.as_ref()),
     );
     if !cfg.webhook_enabled || cfg.webhook_token.is_empty() {
-        return Ok(ApiResponse::err_403(&user_message::from_api_key("webhook_disabled", &locale)));
+        return Ok(ApiResponse::err_403(&user_message::from_api_key(
+            "webhook_disabled",
+            &locale,
+        )));
     }
     if !constant_time_eq(provided_token, &cfg.webhook_token) {
-        return Ok(ApiResponse::err_401(&user_message::from_api_key("invalid_token", &locale)));
+        return Ok(ApiResponse::err_401(&user_message::from_api_key(
+            "invalid_token",
+            &locale,
+        )));
     }
     let msg = match PcMsg::new("webhook", "webhook", body) {
         Ok(m) => m,
-        Err(_) => return Ok(ApiResponse::err_413(&user_message::from_api_key("content_too_long", &locale))),
+        Err(_) => {
+            return Ok(ApiResponse::err_413(&user_message::from_api_key(
+                "content_too_long",
+                &locale,
+            )))
+        }
     };
     if inbound_tx.send(msg).is_err() {
-        return Ok(ApiResponse::err_503(&user_message::from_api_key("queue_full", &locale)));
+        return Ok(ApiResponse::err_503(&user_message::from_api_key(
+            "queue_full",
+            &locale,
+        )));
     }
     Ok(ApiResponse::ok_200_json("{\"ok\":true}"))
 }

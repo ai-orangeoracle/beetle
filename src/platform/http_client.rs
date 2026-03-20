@@ -3,9 +3,9 @@
 
 use crate::config::{parse_proxy_url_to_host_port, AppConfig};
 use crate::error::{Error, Result};
+use crate::orchestrator::Priority;
 use crate::platform::heap::alloc_spiram_buffer;
 use crate::platform::ResponseBody;
-use crate::orchestrator::Priority;
 use embedded_svc::http::client::Client as HttpClient;
 use embedded_svc::http::Method;
 use embedded_svc::io::{Read, Write};
@@ -83,7 +83,10 @@ impl EspHttpClient {
 
     fn new_optional_proxy(proxy: Option<(String, String)>, priority: Priority) -> Result<Self> {
         if proxy.is_some() {
-            log::warn!("[{}] proxy CONNECT tunnel not implemented, request will fail", TAG);
+            log::warn!(
+                "[{}] proxy CONNECT tunnel not implemented, request will fail",
+                TAG
+            );
         }
         let config = Self::default_http_config();
         let conn = EspHttpConnection::new(&config).map_err(|e| Error::Other {
@@ -151,10 +154,12 @@ impl EspHttpClient {
     fn do_get(&mut self, url: &str, headers: &[(&str, &str)]) -> Result<(u16, ResponseBody)> {
         self.execute_request(|conn| {
             let mut client = HttpClient::wrap(conn);
-            let request = client.request(Method::Get, url, headers).map_err(|e| Error::Other {
-                source: Box::new(e),
-                stage: "http_get_request",
-            })?;
+            let request = client
+                .request(Method::Get, url, headers)
+                .map_err(|e| Error::Other {
+                    source: Box::new(e),
+                    stage: "http_get_request",
+                })?;
             let mut response = request.submit().map_err(|e| Error::Other {
                 source: Box::new(e),
                 stage: "http_get_submit",
@@ -179,16 +184,24 @@ impl EspHttpClient {
     ) -> Result<(u16, ResponseBody)> {
         self.execute_request(|conn| {
             let mut client = HttpClient::wrap(conn);
-            let mut request = client.request(method, url, headers).map_err(|e| Error::Other {
-                source: Box::new(e),
-                stage: "http_post_request",
-            })?;
+            let mut request = client
+                .request(method, url, headers)
+                .map_err(|e| Error::Other {
+                    source: Box::new(e),
+                    stage: "http_post_request",
+                })?;
             request.write_all(body).map_err(|e| Error::Other {
-                source: Box::new(std::io::Error::new(std::io::ErrorKind::Other, format!("{:?}", e))),
+                source: Box::new(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("{:?}", e),
+                )),
                 stage: "http_post_write",
             })?;
             request.flush().map_err(|e| Error::Other {
-                source: Box::new(std::io::Error::new(std::io::ErrorKind::Other, format!("{:?}", e))),
+                source: Box::new(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("{:?}", e),
+                )),
                 stage: "http_post_flush",
             })?;
             let mut response = request.submit().map_err(|e| Error::Other {
@@ -213,7 +226,11 @@ impl EspHttpClient {
     }
 
     /// GET 请求，自定义 headers；供 ToolContext 使用（如 Brave API key）。内部实现，避免与 trait 重名。
-    pub fn get_with_headers_inner(&mut self, url: &str, headers: &[(&str, &str)]) -> Result<(u16, ResponseBody)> {
+    pub fn get_with_headers_inner(
+        &mut self,
+        url: &str,
+        headers: &[(&str, &str)],
+    ) -> Result<(u16, ResponseBody)> {
         self.check_proxy_and_watchdog()?;
         self.do_get(url, headers)
     }
@@ -269,11 +286,17 @@ impl EspHttpClient {
                 stage: "http_post_request",
             })?;
             request.write_all(body).map_err(|e| Error::Other {
-                source: Box::new(std::io::Error::new(std::io::ErrorKind::Other, format!("{:?}", e))),
+                source: Box::new(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("{:?}", e),
+                )),
                 stage: "http_post_write",
             })?;
             request.flush().map_err(|e| Error::Other {
-                source: Box::new(std::io::Error::new(std::io::ErrorKind::Other, format!("{:?}", e))),
+                source: Box::new(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("{:?}", e),
+                )),
                 stage: "http_post_flush",
             })?;
             let mut response = request.submit().map_err(|e| Error::Other {
@@ -299,7 +322,11 @@ impl EspHttpClient {
                 }
                 total += n;
                 if total > max_len {
-                    log::warn!("[{}] streaming response truncated at {} bytes", TAG, max_len);
+                    log::warn!(
+                        "[{}] streaming response truncated at {} bytes",
+                        TAG,
+                        max_len
+                    );
                     drain_response(&mut response);
                     break;
                 }
@@ -348,7 +375,10 @@ fn read_response_body<R: Read>(r: &mut R) -> Result<ResponseBody> {
     let mut buf = [0u8; RESPONSE_READ_CHUNK];
     loop {
         let n = r.read(&mut buf).map_err(|e| Error::Other {
-            source: Box::new(std::io::Error::new(std::io::ErrorKind::Other, format!("{:?}", e))),
+            source: Box::new(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("{:?}", e),
+            )),
             stage: "http_read",
         })?;
         if n == 0 {
@@ -384,7 +414,9 @@ fn read_response_body_into_psram<R: Read>(
         let n = match r.read(&mut buf) {
             Ok(n) => n,
             Err(e) => {
-                unsafe { crate::platform::heap::free_spiram_buffer(ptr); }
+                unsafe {
+                    crate::platform::heap::free_spiram_buffer(ptr);
+                }
                 return Err(Error::Other {
                     source: Box::new(std::io::Error::new(
                         std::io::ErrorKind::Other,

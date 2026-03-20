@@ -19,12 +19,12 @@ impl ResponseBody {
         match self {
             ResponseBody::Heap(v) => v.as_ref(),
             #[cfg(target_arch = "xtensa")]
-            ResponseBody::PSRAM { ptr, len } => {
-                match ptr {
-                    Some(p) if !p.is_null() && *len > 0 => unsafe { std::slice::from_raw_parts(*p, *len) },
-                    _ => &[],
-                }
-            }
+            ResponseBody::PSRAM { ptr, len } => match ptr {
+                Some(p) if !p.is_null() && *len > 0 => unsafe {
+                    std::slice::from_raw_parts(*p, *len)
+                },
+                _ => &[],
+            },
         }
     }
 
@@ -37,7 +37,9 @@ impl ResponseBody {
                 let p = ptr.take();
                 let len = *len;
                 let v = match p {
-                    Some(p) if !p.is_null() && len > 0 => unsafe { std::slice::from_raw_parts(p, len).to_vec() },
+                    Some(p) if !p.is_null() && len > 0 => unsafe {
+                        std::slice::from_raw_parts(p, len).to_vec()
+                    },
                     _ => Vec::new(),
                 };
                 if let Some(p) = p {
@@ -69,4 +71,3 @@ impl Drop for ResponseBody {
         }
     }
 }
-

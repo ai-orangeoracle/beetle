@@ -70,10 +70,7 @@ fn extract_query_param(uri: &str, key: &str) -> Option<String> {
     let query = uri.find('?').map(|i| &uri[i + 1..]).unwrap_or("");
     for pair in query.split('&') {
         let mut it = pair.splitn(2, '=');
-        if it
-            .next()
-            .is_some_and(|k| k.eq_ignore_ascii_case(key))
-        {
+        if it.next().is_some_and(|k| k.eq_ignore_ascii_case(key)) {
             return it
                 .next()
                 .filter(|s| !s.is_empty())
