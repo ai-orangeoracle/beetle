@@ -26,35 +26,6 @@ pub struct ToolSpec {
     pub parameters: serde_json::Value,
 }
 
-/// Anthropic 请求体中的单条工具定义（需 name、description、input_schema）。
-#[derive(Debug, Serialize)]
-pub struct AnthropicTool {
-    pub name: String,
-    pub description: String,
-    #[serde(rename = "input_schema")]
-    pub input_schema: serde_json::Value,
-}
-
-/// Anthropic 请求体（Messages API）。
-#[derive(Debug, Serialize)]
-pub struct AnthropicRequest {
-    pub model: String,
-    pub max_tokens: u32,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub system: Option<String>,
-    pub messages: Vec<AnthropicRequestMessage>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tools: Option<Vec<AnthropicTool>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub stream: Option<bool>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct AnthropicRequestMessage {
-    pub role: String,
-    pub content: String,
-}
-
 /// 响应 stop_reason 枚举。
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]

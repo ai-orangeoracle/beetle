@@ -225,8 +225,9 @@ fn send_one_wecom<H: ChannelHttpClient>(
     if touser.is_empty() {
         return;
     }
-    let chunks = crate::channels::chunk::chunk_str_by_utf8_bytes(content, WECOM_MAX_TEXT_BYTES);
-    for chunk in chunks {
+    for chunk in
+        crate::channels::chunk::chunk_str_by_utf8_bytes_iter(content, WECOM_MAX_TEXT_BYTES)
+    {
         let body = serde_json::json!({
             "touser": touser,
             "msgtype": "text",
