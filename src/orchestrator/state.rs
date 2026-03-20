@@ -126,6 +126,8 @@ pub struct ResourceSnapshot {
     pub pressure: super::pressure::PressureLevel,
     pub heap_free_internal: u32,
     pub heap_free_spiram: u32,
+    /// internal 堆最大连续空闲块（字节），与 TLS 准入、mbedTLS 碎片诊断一致。
+    pub heap_largest_block_internal: u32,
     pub active_http_count: u32,
     pub inbound_depth: u32,
     pub outbound_depth: u32,
@@ -160,6 +162,7 @@ impl ResourceSnapshot {
             pressure,
             heap_free_internal: state.heap_free_internal.load(Ordering::Relaxed),
             heap_free_spiram: state.heap_free_spiram.load(Ordering::Relaxed),
+            heap_largest_block_internal: state.heap_largest_block.load(Ordering::Relaxed),
             active_http_count: state.active_http_count.load(Ordering::Relaxed),
             inbound_depth: state.inbound_depth.load(Ordering::Relaxed),
             outbound_depth: state.outbound_depth.load(Ordering::Relaxed),

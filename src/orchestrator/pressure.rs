@@ -8,12 +8,25 @@ use super::state::OrchestratorState;
 
 /// 压力等级：Normal 全量预算，Cautious 缩减，Critical 最低预算并积极丢弃。
 /// Pressure level: Normal = full budget, Cautious = reduced, Critical = minimal + aggressive drop.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum PressureLevel {
     Normal = 0,
     Cautious = 1,
     Critical = 2,
+}
+
+impl serde::Serialize for PressureLevel {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(match self {
+            PressureLevel::Normal => "Normal",
+            PressureLevel::Cautious => "Cautious",
+            PressureLevel::Critical => "Critical",
+        })
+    }
 }
 
 impl PressureLevel {

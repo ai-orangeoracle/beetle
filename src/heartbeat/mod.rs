@@ -39,15 +39,13 @@ pub fn run_heartbeat_loop(version: &'static str, interval_secs: u64) {
             std::thread::sleep(interval);
             crate::orchestrator::update_heap_state();
             let uptime_secs = crate::platform::time::uptime_secs();
-            {
-                let internal_free = crate::platform::heap::heap_free_internal();
-                let spiram_free = crate::platform::heap::heap_free_spiram();
-                let total_free = crate::platform::heap::heap_free_total();
-                log::info!(
-                    "[{}] HEARTBEAT version={} uptime_secs={} heap_internal={} heap_spiram={} heap_total={}",
-                    TAG, v, uptime_secs, internal_free, spiram_free, total_free
-                );
-            }
+            log::info!(
+                "[{}] HEARTBEAT version={} uptime_secs={} {}",
+                TAG,
+                v,
+                uptime_secs,
+                crate::orchestrator::format_resource_baseline_line()
+            );
         }
     });
     log::info!(
@@ -100,15 +98,13 @@ pub fn run_heartbeat_loop_with_tasks(
             crate::orchestrator::update_queue_depth(in_d, out_d);
             crate::orchestrator::update_heap_state();
             let uptime_secs = crate::platform::time::uptime_secs();
-            {
-                let internal_free = crate::platform::heap::heap_free_internal();
-                let spiram_free = crate::platform::heap::heap_free_spiram();
-                let total_free = crate::platform::heap::heap_free_total();
-                log::info!(
-                    "[{}] HEARTBEAT version={} uptime_secs={} heap_internal={} heap_spiram={} heap_total={}",
-                    TAG, version, uptime_secs, internal_free, spiram_free, total_free
-                );
-            }
+            log::info!(
+                "[{}] HEARTBEAT version={} uptime_secs={} {}",
+                TAG,
+                version,
+                uptime_secs,
+                crate::orchestrator::format_resource_baseline_line()
+            );
             let baseline = crate::metrics::snapshot().to_baseline_log_line();
             log::info!("[{}] {}", TAG, baseline);
 

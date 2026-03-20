@@ -2,8 +2,8 @@
 //! Four-dimensional admission: inbound/outbound/LLM/tool, coordinated via unified resource snapshot.
 
 use crate::constants::{
-    LOW_MEM_DEFER_SLEEP_MS, OUTBOUND_DEFER_DELAY_MS, TLS_ADMISSION_MIN_INTERNAL_BYTES,
-    TLS_ADMISSION_MIN_LARGEST_BLOCK_BYTES,
+    LOW_MEM_DEFER_SLEEP_MS, OUTBOUND_DEFER_DELAY_MS, OUTBOUND_DEFER_DELAY_MS_CAUTIOUS,
+    TLS_ADMISSION_MIN_INTERNAL_BYTES, TLS_ADMISSION_MIN_LARGEST_BLOCK_BYTES,
 };
 use std::sync::atomic::Ordering;
 
@@ -129,6 +129,9 @@ pub fn should_accept_outbound(state: &OrchestratorState, _channel: &str) -> Admi
         PressureLevel::Critical => AdmissionDecision::Defer {
             delay_ms: OUTBOUND_DEFER_DELAY_MS,
         },
-        PressureLevel::Cautious | PressureLevel::Normal => AdmissionDecision::Accept,
+        PressureLevel::Cautious => AdmissionDecision::Defer {
+            delay_ms: OUTBOUND_DEFER_DELAY_MS_CAUTIOUS,
+        },
+        PressureLevel::Normal => AdmissionDecision::Accept,
     }
 }

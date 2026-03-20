@@ -245,19 +245,24 @@
 
 ### GET /api/health
 
-- **用途**：与 CLI `health` 一致的结构化健康信息。
-- **响应**：200，JSON 示例：
+- **用途**：与 CLI `health` 一致的结构化健康信息；含 `metrics` 与 `resource`（与 `GET /api/resource` 同源 orchestrator 快照）。
+- **响应**：200，JSON 示例（字段与 serde 结构体一致；`metrics` 计数器字段名为 `messages_in` 等）：
   ```json
   {
     "wifi": "connected",
     "inbound_depth": 0,
     "outbound_depth": 0,
-    "last_error": "none"
+    "last_error": "none",
+    "metrics": { "messages_in": 0, "messages_out": 0 },
+    "resource": { "pressure": "Normal", "heap_largest_block_internal": 12345 }
   }
   ```
   - `wifi`：`"connected"` | `"disconnected"`。
   - `inbound_depth` / `outbound_depth`：入站/出站队列深度（数字）。
   - `last_error`：最近一次错误摘要（仅 stage/message，无密钥）；无则为 `"none"`。
+  - `metrics`：`metrics::MetricsSnapshot`（消息吞吐、LLM/tool、dispatch、按 stage 错误计数等）。
+  - `resource`：`orchestrator::ResourceSnapshot`（压力、堆、队列深度、通道健康等）；`pressure` 为字符串 `"Normal"` | `"Cautious"` | `"Critical"`。
+  - **迁移**：若外部脚本曾依赖旧版手写 JSON 中的扁平 `msg_in` 等键名，请改为嵌套 `metrics.messages_in`。
 
 ### GET /api/diagnose
 

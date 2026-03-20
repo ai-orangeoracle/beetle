@@ -1,11 +1,49 @@
 import { request, API_ERROR } from '../client'
 import type { ApiResult } from '../client'
 
+/** 与固件 `metrics::MetricsSnapshot` serde 字段一致。 */
+export interface MetricsSnapshotData {
+  messages_in?: number
+  messages_out?: number
+  llm_calls?: number
+  llm_errors?: number
+  llm_last_ms?: number
+  tool_calls?: number
+  tool_errors?: number
+  wdt_feeds?: number
+  dispatch_send_ok?: number
+  dispatch_send_fail?: number
+  errors_agent_router?: number
+  errors_agent_chat?: number
+  errors_agent_context?: number
+  errors_tool_execute?: number
+  errors_llm_request?: number
+  errors_llm_parse?: number
+  errors_channel_dispatch?: number
+  errors_session_append?: number
+  errors_other?: number
+}
+
+/** 与固件 `orchestrator::ResourceSnapshot` 对齐的子集；完整嵌套见设备 JSON。 */
+export interface ResourceSnapshotData {
+  pressure?: string
+  heap_free_internal?: number
+  heap_free_spiram?: number
+  heap_largest_block_internal?: number
+  active_http_count?: number
+  inbound_depth?: number
+  outbound_depth?: number
+}
+
 export interface HealthData {
   wifi?: string
   inbound_depth?: number
   outbound_depth?: number
   last_error?: string
+  /** 运行指标快照（与旧版仅扁平 metrics 键名不同：现为 `messages_in` 等）。 */
+  metrics?: MetricsSnapshotData
+  /** 编排器资源快照，与 `GET /api/resource` 一致。 */
+  resource?: ResourceSnapshotData
 }
 
 export interface DiagnoseItem {

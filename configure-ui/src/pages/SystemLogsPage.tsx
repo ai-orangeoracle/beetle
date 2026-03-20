@@ -130,6 +130,32 @@ export function SystemLogsPage() {
                       }}
                     />
                   </ListItem>
+                  {health.resource && (
+                    <>
+                      <ListItem sx={{ py: 0.5, px: 0 }}>
+                        <ListItemText
+                          primary={`resource.pressure: ${health.resource.pressure ?? "—"}`}
+                          slotProps={{
+                            primary: {
+                              variant: "body2",
+                              sx: { fontFamily: "var(--font-mono)" },
+                            },
+                          }}
+                        />
+                      </ListItem>
+                      <ListItem sx={{ py: 0.5, px: 0 }}>
+                        <ListItemText
+                          primary={`resource.heap_largest_block_internal: ${health.resource.heap_largest_block_internal ?? "—"}`}
+                          slotProps={{
+                            primary: {
+                              variant: "body2",
+                              sx: { fontFamily: "var(--font-mono)" },
+                            },
+                          }}
+                        />
+                      </ListItem>
+                    </>
+                  )}
                 </List>
               </Box>
             )}

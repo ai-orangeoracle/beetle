@@ -19,6 +19,7 @@ remote_component = { name = "espressif/esp_websocket_client", version = "1.1" }
 unexpected_cfgs = { level = "warn" }
 
 [build-dependencies]
+# Align with esp-idf-sys build.rs; when bumping esp-idf-sys, check crates.io for that version’s embuild requirement.
 embuild = "0.33"
 
 [dependencies]
