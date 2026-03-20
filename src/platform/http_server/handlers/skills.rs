@@ -22,7 +22,10 @@ pub fn get(ctx: &HandlerContext, name: Option<String>) -> Result<SkillsGetResult
         let n = n.strip_suffix(".md").unwrap_or(&n);
         return match skills::get_skill_content(ctx.skill_storage.as_ref(), n) {
             Some(content) => Ok(SkillsGetResult::TextPlain(content)),
-            None => Err(ApiResponse::err_404(&user_message::from_api_key("skill_not_found", &locale))),
+            None => Err(ApiResponse::err_404(&user_message::from_api_key(
+                "skill_not_found",
+                &locale,
+            ))),
         };
     }
     let disabled = skills::get_disabled_skills(ctx.skill_meta_store.as_ref());
@@ -33,11 +36,14 @@ pub fn get(ctx: &HandlerContext, name: Option<String>) -> Result<SkillsGetResult
             serde_json::json!({ "name": name, "enabled": enabled })
         })
         .collect();
-    let order =
-        skills::get_ordered_enabled_skill_names(ctx.skill_meta_store.as_ref(), ctx.skill_storage.as_ref());
+    let order = skills::get_ordered_enabled_skill_names(
+        ctx.skill_meta_store.as_ref(),
+        ctx.skill_storage.as_ref(),
+    );
     let payload = serde_json::json!({ "skills": list, "order": order });
-    let body = serde_json::to_string(&payload)
-        .map_err(|_| ApiResponse::err_500(&user_message::from_api_key("operation_failed", &locale)))?;
+    let body = serde_json::to_string(&payload).map_err(|_| {
+        ApiResponse::err_500(&user_message::from_api_key("operation_failed", &locale))
+    })?;
     Ok(SkillsGetResult::Json(body))
 }
 
@@ -46,7 +52,9 @@ pub fn post(ctx: &HandlerContext, body: &str) -> ApiResponse {
     let locale = config::get_locale(ctx.config_store.as_ref());
     let v = match serde_json::from_str::<serde_json::Value>(body) {
         Ok(x) => x,
-        Err(_) => return ApiResponse::err_400(&user_message::from_api_key("invalid_json", &locale)),
+        Err(_) => {
+            return ApiResponse::err_400(&user_message::from_api_key("invalid_json", &locale))
+        }
     };
     let name = v.get("name").and_then(|n| n.as_str()).map(String::from);
     if let Some(order_arr) = v.get("order").and_then(|o| o.as_array()) {
@@ -67,7 +75,10 @@ pub fn post(ctx: &HandlerContext, body: &str) -> ApiResponse {
                 Err(e) => ApiResponse::err_400(&user_message::from_error(&e, &locale)),
             };
         }
-        return ApiResponse::err_400(&user_message::from_api_key("missing_name_for_write", &locale));
+        return ApiResponse::err_400(&user_message::from_api_key(
+            "missing_name_for_write",
+            &locale,
+        ));
     }
     if let Some(enabled) = v.get("enabled").and_then(|e| e.as_bool()) {
         if let Some(ref name) = name {
@@ -76,9 +87,15 @@ pub fn post(ctx: &HandlerContext, body: &str) -> ApiResponse {
                 Err(e) => ApiResponse::err_400(&user_message::from_error(&e, &locale)),
             };
         }
-        return ApiResponse::err_400(&user_message::from_api_key("missing_name_or_enabled", &locale));
+        return ApiResponse::err_400(&user_message::from_api_key(
+            "missing_name_or_enabled",
+            &locale,
+        ));
     }
-    ApiResponse::err_400(&user_message::from_api_key("missing_order_name_content", &locale))
+    ApiResponse::err_400(&user_message::from_api_key(
+        "missing_order_name_content",
+        &locale,
+    ))
 }
 
 /// DELETE /api/skills?name=：name 由 mod 从 query 解析后传入（必填）。
@@ -105,24 +122,45 @@ pub fn import(ctx: &HandlerContext, body: &str) -> Result<ApiResponse, std::io::
     let locale = config::get_locale(ctx.config_store.as_ref());
     let v = match serde_json::from_str::<serde_json::Value>(body) {
         Ok(x) => x,
-        Err(_) => return Ok(ApiResponse::err_400(&user_message::from_api_key("invalid_json", &locale))),
+        Err(_) => {
+            return Ok(ApiResponse::err_400(&user_message::from_api_key(
+                "invalid_json",
+                &locale,
+            )))
+        }
     };
     let url = v
         .get("url")
         .and_then(|u| u.as_str())
         .map(|s| s.trim())
         .filter(|s| !s.is_empty());
-    let name = v.get("name").and_then(|n| n.as_str()).map(|s| s.to_string());
+    let name = v
+        .get("name")
+        .and_then(|n| n.as_str())
+        .map(|s| s.to_string());
     let url = match url {
         Some(u) => u,
-        None => return Ok(ApiResponse::err_400(&user_message::from_api_key("missing_url", &locale))),
+        None => {
+            return Ok(ApiResponse::err_400(&user_message::from_api_key(
+                "missing_url",
+                &locale,
+            )))
+        }
     };
     let name = match name {
         Some(n) => n.strip_suffix(".md").unwrap_or(&n).to_string(),
-        None => return Ok(ApiResponse::err_400(&user_message::from_api_key("missing_name", &locale))),
+        None => {
+            return Ok(ApiResponse::err_400(&user_message::from_api_key(
+                "missing_name",
+                &locale,
+            )))
+        }
     };
     if !(url.starts_with("http://") || url.starts_with("https://")) || url.len() <= 8 {
-        return Ok(ApiResponse::err_400(&user_message::from_api_key("invalid_url", &locale)));
+        return Ok(ApiResponse::err_400(&user_message::from_api_key(
+            "invalid_url",
+            &locale,
+        )));
     }
     let body_bytes = match ctx.fetch_url(url, IMPORT_MAX) {
         Ok(b) => b,
@@ -133,7 +171,12 @@ pub fn import(ctx: &HandlerContext, body: &str) -> Result<ApiResponse, std::io::
     };
     let content = match String::from_utf8(body_bytes) {
         Ok(s) => s,
-        Err(_) => return Ok(ApiResponse::err_400(&user_message::from_api_key("url_body_not_utf8", &locale))),
+        Err(_) => {
+            return Ok(ApiResponse::err_400(&user_message::from_api_key(
+                "url_body_not_utf8",
+                &locale,
+            )))
+        }
     };
     match skills::write_skill(ctx.skill_storage.as_ref(), &name, &content) {
         Ok(()) => Ok(ApiResponse::ok_200_json("{\"ok\":true}")),

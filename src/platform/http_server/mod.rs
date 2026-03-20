@@ -181,7 +181,9 @@ pub fn run(
 ) -> Result<()> {
     let config_store = platform.config_store();
     let config_file_store: std::sync::Arc<dyn crate::config::ConfigFileStore + Send + Sync> =
-        std::sync::Arc::new(crate::config::PlatformConfigFileStore(std::sync::Arc::clone(&platform)));
+        std::sync::Arc::new(crate::config::PlatformConfigFileStore(
+            std::sync::Arc::clone(&platform),
+        ));
     let skill_storage = platform.skill_storage();
     let skill_meta_store = platform.skill_meta_store();
     use embedded_io::Write as _;
@@ -338,7 +340,9 @@ pub fn run(
         server,
         "/api/config",
         Method::Get,
-        move |req| -> HandlerResult { activated_get_json!(req, store_cfg, ctx_cfg, handlers::config::get_body) }
+        move |req| -> HandlerResult {
+            activated_get_json!(req, store_cfg, ctx_cfg, handlers::config::get_body)
+        }
     );
 
     register!(
@@ -454,7 +458,14 @@ pub fn run(
         server,
         "/api/config/hardware",
         Method::Get,
-        move |req| -> HandlerResult { activated_get_json!(req, store_hw_get, ctx_hw_get, handlers::config::get_hardware_body) }
+        move |req| -> HandlerResult {
+            activated_get_json!(
+                req,
+                store_hw_get,
+                ctx_hw_get,
+                handlers::config::get_hardware_body
+            )
+        }
     );
     register!(
         server,
@@ -489,11 +500,23 @@ pub fn run(
                 Ok(body) => write_json_200!(req, body),
                 Err(handlers::wifi_scan::WifiScanError::Unavailable) => {
                     let body = serde_json::json!({ "error": "wifi scan not available (non-ESP or wifi not ready)" }).to_string();
-                    write_response!(req, 503, "Service Unavailable", CORS_HEADERS, body.as_bytes())
+                    write_response!(
+                        req,
+                        503,
+                        "Service Unavailable",
+                        CORS_HEADERS,
+                        body.as_bytes()
+                    )
                 }
                 Err(handlers::wifi_scan::WifiScanError::Other(e)) => {
                     let body = serde_json::json!({ "error": e.to_string() }).to_string();
-                    write_response!(req, 500, "Internal Server Error", CORS_HEADERS, body.as_bytes())
+                    write_response!(
+                        req,
+                        500,
+                        "Internal Server Error",
+                        CORS_HEADERS,
+                        body.as_bytes()
+                    )
                 }
             }
         }
@@ -547,7 +570,9 @@ pub fn run(
         server,
         "/api/metrics",
         Method::Get,
-        move |req| -> HandlerResult { activated_get_json!(req, store_metrics, ctx_metrics, handlers::metrics::body) }
+        move |req| -> HandlerResult {
+            activated_get_json!(req, store_metrics, ctx_metrics, handlers::metrics::body)
+        }
     );
     register!(
         server,
@@ -562,7 +587,9 @@ pub fn run(
         server,
         "/api/resource",
         Method::Get,
-        move |req| -> HandlerResult { activated_get_json!(req, store_resource, ctx_resource, handlers::resource::body) }
+        move |req| -> HandlerResult {
+            activated_get_json!(req, store_resource, ctx_resource, handlers::resource::body)
+        }
     );
     register!(
         server,
@@ -577,7 +604,9 @@ pub fn run(
         server,
         "/api/diagnose",
         Method::Get,
-        move |req| -> HandlerResult { activated_get_json!(req, store_diag, ctx_diag, handlers::diagnose::body) }
+        move |req| -> HandlerResult {
+            activated_get_json!(req, store_diag, ctx_diag, handlers::diagnose::body)
+        }
     );
 
     register!(
@@ -593,7 +622,9 @@ pub fn run(
         server,
         "/api/system_info",
         Method::Get,
-        move |req| -> HandlerResult { activated_get_json!(req, store_sysinfo, ctx_sysinfo, handlers::system_info::body) }
+        move |req| -> HandlerResult {
+            activated_get_json!(req, store_sysinfo, ctx_sysinfo, handlers::system_info::body)
+        }
     );
     register!(
         server,
@@ -652,18 +683,20 @@ pub fn run(
         move |req| -> HandlerResult {
             require_activated!(req, store_sess);
             // ?chat_id=xxx returns detail; no param returns list.
-            let chat_id = common::name_from_uri(req.uri())
-                .or_else(|| {
-                    let uri = req.uri();
-                    let query = uri.find('?').map(|i| &uri[i + 1..]).unwrap_or("");
-                    for pair in query.split('&') {
-                        let mut it = pair.splitn(2, '=');
-                        if it.next().map_or(false, |k| k.eq_ignore_ascii_case("chat_id")) {
-                            return it.next().filter(|s| !s.is_empty()).map(String::from);
-                        }
+            let chat_id = common::name_from_uri(req.uri()).or_else(|| {
+                let uri = req.uri();
+                let query = uri.find('?').map(|i| &uri[i + 1..]).unwrap_or("");
+                for pair in query.split('&') {
+                    let mut it = pair.splitn(2, '=');
+                    if it
+                        .next()
+                        .map_or(false, |k| k.eq_ignore_ascii_case("chat_id"))
+                    {
+                        return it.next().filter(|s| !s.is_empty()).map(String::from);
                     }
-                    None
-                });
+                }
+                None
+            });
             let result = match chat_id {
                 Some(id) => handlers::sessions::detail(ctx_sess.as_ref(), &id),
                 None => handlers::sessions::body(ctx_sess.as_ref()),
@@ -672,7 +705,13 @@ pub fn run(
                 Ok(body) => write_json_200!(req, body),
                 Err(msg) => {
                     let body = format!(r#"{{"error":"{}"}}"#, msg.replace('"', "\\\""));
-                    write_response!(req, 500, "Internal Server Error", CORS_HEADERS, body.as_bytes())
+                    write_response!(
+                        req,
+                        500,
+                        "Internal Server Error",
+                        CORS_HEADERS,
+                        body.as_bytes()
+                    )
                 }
             }
         }
@@ -692,7 +731,10 @@ pub fn run(
                 let mut found = None;
                 for pair in query.split('&') {
                     let mut it = pair.splitn(2, '=');
-                    if it.next().map_or(false, |k| k.eq_ignore_ascii_case("chat_id")) {
+                    if it
+                        .next()
+                        .map_or(false, |k| k.eq_ignore_ascii_case("chat_id"))
+                    {
                         found = it.next().filter(|s| !s.is_empty()).map(String::from);
                         break;
                     }
@@ -700,15 +742,13 @@ pub fn run(
                 found
             };
             match chat_id {
-                Some(id) => {
-                    match handlers::sessions::delete(ctx_sess_del.as_ref(), &id) {
-                        Ok(body) => write_json_200!(req, body),
-                        Err(msg) => {
-                            let r = ApiResponse::err_500(&msg);
-                            write_api_resp!(req, r)
-                        }
+                Some(id) => match handlers::sessions::delete(ctx_sess_del.as_ref(), &id) {
+                    Ok(body) => write_json_200!(req, body),
+                    Err(msg) => {
+                        let r = ApiResponse::err_500(&msg);
+                        write_api_resp!(req, r)
                     }
-                }
+                },
                 None => {
                     let r = ApiResponse::err_400("missing chat_id query param");
                     write_api_resp!(req, r)
@@ -1017,8 +1057,7 @@ pub fn run(
         Method::Post,
         move |mut req| -> HandlerResult {
             let body_str = read_body_utf8!(req, POST_BODY_MAX_LEN, store_dingtalk_wh);
-            let r = handlers::dingtalk_webhook::post(&dingtalk_tx, &body_str)
-                .map_err(to_io)?;
+            let r = handlers::dingtalk_webhook::post(&dingtalk_tx, &body_str).map_err(to_io)?;
             write_api_resp!(req, r)
         }
     );
@@ -1054,8 +1093,13 @@ pub fn run(
         move |mut req| -> HandlerResult {
             let uri = req.uri().to_string();
             let body_str = read_body_utf8!(req, POST_BODY_MAX_LEN, store_wecom_wh_post);
-            let r = handlers::wecom_webhook::post(ctx_wecom_wh_post.as_ref(), &uri, &wecom_tx_post, &body_str)
-                .map_err(to_io)?;
+            let r = handlers::wecom_webhook::post(
+                ctx_wecom_wh_post.as_ref(),
+                &uri,
+                &wecom_tx_post,
+                &body_str,
+            )
+            .map_err(to_io)?;
             write_api_resp!(req, r)
         }
     );
@@ -1066,8 +1110,7 @@ pub fn run(
         |req| -> HandlerResult { resp_options!(req) }
     );
 
-    let config_for_qq =
-        AppConfig::load(config_store.as_ref(), Some(config_file_store.as_ref()));
+    let config_for_qq = AppConfig::load(config_store.as_ref(), Some(config_file_store.as_ref()));
     if !config_for_qq.qq_channel_app_id.trim().is_empty()
         && !config_for_qq.qq_channel_secret.trim().is_empty()
     {

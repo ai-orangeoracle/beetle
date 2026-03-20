@@ -69,9 +69,8 @@ pub fn heap_min_free_internal() -> usize {
 /// S3 上从 PSRAM 分配大块缓冲区；无 PSRAM 或失败返回 None。调用方负责 heap_caps_free。
 #[cfg(target_arch = "xtensa")]
 pub fn alloc_spiram_buffer(size: usize) -> Option<*mut u8> {
-    let ptr = unsafe {
-        esp_idf_svc::sys::heap_caps_malloc(size, esp_idf_svc::sys::MALLOC_CAP_SPIRAM)
-    };
+    let ptr =
+        unsafe { esp_idf_svc::sys::heap_caps_malloc(size, esp_idf_svc::sys::MALLOC_CAP_SPIRAM) };
     if ptr.is_null() {
         None
     } else {

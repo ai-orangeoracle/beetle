@@ -20,7 +20,10 @@ fn current_time_str() -> String {
         let s = (t % 60) as u32;
         let d = secs / 86400;
         let (y, mo, day) = days_to_ymd(d);
-        format!("{:04}-{:02}-{:02} {:02}:{:02}:{:02} UTC", y, mo, day, h, m, s)
+        format!(
+            "{:04}-{:02}-{:02} {:02}:{:02}:{:02} UTC",
+            y, mo, day, h, m, s
+        )
     }
     #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
     {
@@ -67,17 +70,18 @@ pub fn body(ctx: &HandlerContext) -> Result<String, std::io::Error> {
     let last_error = state::get_last_error();
     let inc = ctx.inbound_depth.load(Ordering::Relaxed);
     let out = ctx.outbound_depth.load(Ordering::Relaxed);
-    let system_status = if ctx.wifi_connected && storage_ok && last_error.is_none() && inc <= 6 && out <= 6 {
-        "正常"
-    } else if !ctx.wifi_connected {
-        "WiFi 未连接"
-    } else if !storage_ok {
-        "存储异常"
-    } else if last_error.is_some() {
-        "通道异常"
-    } else {
-        "运行中"
-    };
+    let system_status =
+        if ctx.wifi_connected && storage_ok && last_error.is_none() && inc <= 6 && out <= 6 {
+            "正常"
+        } else if !ctx.wifi_connected {
+            "WiFi 未连接"
+        } else if !storage_ok {
+            "存储异常"
+        } else if last_error.is_some() {
+            "通道异常"
+        } else {
+            "运行中"
+        };
     let product_name = "beetle";
     let current_time = current_time_str();
     let firmware_version = ctx.version.as_ref();

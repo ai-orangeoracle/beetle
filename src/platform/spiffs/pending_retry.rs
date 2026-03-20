@@ -43,23 +43,30 @@ impl PendingRetryStore for SpiffsPendingRetryStore {
         if msg.content.len() > MAX_CONTENT_LEN {
             return Err(Error::config(
                 "pending_retry_save",
-                format!("content len {} exceeds {}", msg.content.len(), MAX_CONTENT_LEN),
+                format!(
+                    "content len {} exceeds {}",
+                    msg.content.len(),
+                    MAX_CONTENT_LEN
+                ),
             ));
         }
         let path = full_path();
         let replay_count = match read_file(&path) {
-            Ok(buf) if buf.len() > 2 => {
-                serde_json::from_slice::<PendingRetryEntry>(&buf)
-                    .map(|e| e.replay_count.saturating_add(1).min(PENDING_RETRY_MAX_REPLAY))
-                    .unwrap_or(1)
-            }
+            Ok(buf) if buf.len() > 2 => serde_json::from_slice::<PendingRetryEntry>(&buf)
+                .map(|e| {
+                    e.replay_count
+                        .saturating_add(1)
+                        .min(PENDING_RETRY_MAX_REPLAY)
+                })
+                .unwrap_or(1),
             _ => 1,
         };
         let entry = PendingRetryEntry {
             msg: msg.clone(),
             replay_count,
         };
-        let json = serde_json::to_vec(&entry).map_err(|e| Error::config("pending_retry_save", e.to_string()))?;
+        let json = serde_json::to_vec(&entry)
+            .map_err(|e| Error::config("pending_retry_save", e.to_string()))?;
         write_file(full_path(), &json)
     }
 

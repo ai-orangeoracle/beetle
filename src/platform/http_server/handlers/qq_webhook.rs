@@ -31,13 +31,7 @@ pub fn post(
     }
 
     match crate::channels::handle_webhook(
-        body,
-        ts_header,
-        sig_header,
-        app_id,
-        secret,
-        inbound_tx,
-        cache,
+        body, ts_header, sig_header, app_id, secret, inbound_tx, cache,
     ) {
         Ok(crate::channels::QqHandlerResult::UrlVerification {
             plain_token,

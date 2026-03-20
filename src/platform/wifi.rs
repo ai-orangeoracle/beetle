@@ -4,7 +4,9 @@
 
 use crate::config::AppConfig;
 use crate::error::{Error, Result};
-use embedded_svc::wifi::{AccessPointConfiguration, AuthMethod, ClientConfiguration, Configuration};
+use embedded_svc::wifi::{
+    AccessPointConfiguration, AuthMethod, ClientConfiguration, Configuration,
+};
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::hal::peripherals::Peripherals;
 use esp_idf_svc::nvs::EspDefaultNvsPartition;
@@ -123,7 +125,11 @@ pub fn connect(config: &AppConfig) -> Result<Option<WifiScanHandle>> {
         }
         Ok(Err(e)) => Err(e),
         Err(mpsc::RecvTimeoutError::Timeout) => {
-            log::warn!("[{}] WiFi STA connect timeout ({}s), AP is up", TAG, CONNECT_TIMEOUT_SECS);
+            log::warn!(
+                "[{}] WiFi STA connect timeout ({}s), AP is up",
+                TAG,
+                CONNECT_TIMEOUT_SECS
+            );
             Err(Error::config(
                 "wifi_connect",
                 format!("STA timeout after {}s", CONNECT_TIMEOUT_SECS),
@@ -176,13 +182,18 @@ fn run_scan_loop(
                     WIFI_STA_CONNECTED.store(false, Ordering::Relaxed);
                     match wifi.connect() {
                         Ok(()) => {
-                            log::info!("[{}] STA connect() issued, cooldown {}ms", TAG, STA_RECONNECT_COOLDOWN_MS);
+                            log::info!(
+                                "[{}] STA connect() issued, cooldown {}ms",
+                                TAG,
+                                STA_RECONNECT_COOLDOWN_MS
+                            );
                         }
                         Err(e) => {
                             log::warn!("[{}] STA connect() failed: {}", TAG, e);
                         }
                     }
-                    cooldown_until = Some(Instant::now() + Duration::from_millis(STA_RECONNECT_COOLDOWN_MS));
+                    cooldown_until =
+                        Some(Instant::now() + Duration::from_millis(STA_RECONNECT_COOLDOWN_MS));
                 }
             }
         }
@@ -260,12 +271,12 @@ fn do_connect(
         Err(e) => return send_err(e),
     };
 
-    let esp_wifi = match EspWifi::new(peripherals.modem, sys_loop.clone(), Some(nvs))
-        .map_err(|e| Error::Other {
+    let esp_wifi = match EspWifi::new(peripherals.modem, sys_loop.clone(), Some(nvs)).map_err(|e| {
+        Error::Other {
             source: Box::new(e),
             stage: "wifi_new",
-        })
-    {
+        }
+    }) {
         Ok(w) => w,
         Err(e) => return send_err(e),
     };
@@ -278,7 +289,9 @@ fn do_connect(
     };
 
     let ap_config = match (
-        SOFTAP_SSID.try_into().map_err(|_| Error::config("wifi_ap", "softap ssid too long")),
+        SOFTAP_SSID
+            .try_into()
+            .map_err(|_| Error::config("wifi_ap", "softap ssid too long")),
         SOFTAP_PASSWORD
             .try_into()
             .map_err(|_| Error::config("wifi_ap", "softap password too long")),
@@ -340,7 +353,9 @@ fn do_connect(
     };
 
     let ap_config_mixed = match (
-        SOFTAP_SSID.try_into().map_err(|_| Error::config("wifi_ap", "softap ssid too long")),
+        SOFTAP_SSID
+            .try_into()
+            .map_err(|_| Error::config("wifi_ap", "softap ssid too long")),
         SOFTAP_PASSWORD
             .try_into()
             .map_err(|_| Error::config("wifi_ap", "softap password too long")),
@@ -372,7 +387,11 @@ fn do_connect(
     if let Err(e) = crate::platform::softap_ip::set_softap_ip_192_168_4_1() {
         log::warn!("[{}] SoftAP IP set failed: {}", TAG, e);
     }
-    log::info!("[{}] SoftAP started (SSID: {}), connecting STA...", TAG, SOFTAP_SSID);
+    log::info!(
+        "[{}] SoftAP started (SSID: {}), connecting STA...",
+        TAG,
+        SOFTAP_SSID
+    );
     if let Err(e) = wifi.connect().map_err(|e| Error::Other {
         source: Box::new(e),
         stage: "wifi_connect",

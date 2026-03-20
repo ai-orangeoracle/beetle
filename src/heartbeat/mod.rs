@@ -27,21 +27,18 @@ pub fn first_pending_task(content: &str) -> Option<String> {
     None
 }
 
-/// 启动时间，由 run_heartbeat_loop 在启动时设置。
-static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
 /// 待办注入限频：同一内容 30s 内不重复注入。(content, last_inject_time)
 static LAST_TASK_INJECT: OnceLock<Mutex<(String, Option<Instant>)>> = OnceLock::new();
 
 /// 周期（秒）打一条日志：版本、运行时长、可选 heap；可被外部脚本/串口抓取判断存活。
 pub fn run_heartbeat_loop(version: &'static str, interval_secs: u64) {
-    START.get_or_init(Instant::now);
     let v = version;
     std::thread::spawn(move || {
         let interval = std::time::Duration::from_secs(interval_secs);
         loop {
             std::thread::sleep(interval);
             crate::orchestrator::update_heap_state();
-            let uptime_secs = START.get().map(|s| s.elapsed().as_secs()).unwrap_or(0);
+            let uptime_secs = crate::platform::time::uptime_secs();
             {
                 let internal_free = crate::platform::heap::heap_free_internal();
                 let spiram_free = crate::platform::heap::heap_free_spiram();
@@ -53,7 +50,11 @@ pub fn run_heartbeat_loop(version: &'static str, interval_secs: u64) {
             }
         }
     });
-    log::info!("[{}] heartbeat loop started (interval {}s)", TAG, interval_secs);
+    log::info!(
+        "[{}] heartbeat loop started (interval {}s)",
+        TAG,
+        interval_secs
+    );
 }
 
 /// 周期打日志并在有待办时向 inbound 注入一条 PcMsg；同一待办 30s 内不重复注入。
@@ -67,7 +68,6 @@ pub fn run_heartbeat_loop_with_tasks(
     outbound_depth: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     session_store: std::sync::Arc<dyn crate::memory::SessionStore + Send + Sync>,
 ) {
-    START.get_or_init(Instant::now);
     let interval = Duration::from_secs(interval_secs);
     std::thread::spawn(move || {
         let mut round: u32 = 0;
@@ -86,7 +86,10 @@ pub fn run_heartbeat_loop_with_tasks(
 
             // Session/storage metrics: collect every SESSION_METRICS_INTERVAL_ROUNDS rounds.
             if round % crate::constants::SESSION_METRICS_INTERVAL_ROUNDS == 0 {
-                let sess_count = session_store.list_chat_ids().map(|v| v.len() as u32).unwrap_or(0);
+                let sess_count = session_store
+                    .list_chat_ids()
+                    .map(|v| v.len() as u32)
+                    .unwrap_or(0);
                 let (s_used, s_total) = storage_usage_kb();
                 crate::orchestrator::update_session_storage(sess_count, s_used, s_total);
             }
@@ -96,7 +99,7 @@ pub fn run_heartbeat_loop_with_tasks(
             let out_d = outbound_depth.load(std::sync::atomic::Ordering::Relaxed) as u32;
             crate::orchestrator::update_queue_depth(in_d, out_d);
             crate::orchestrator::update_heap_state();
-            let uptime_secs = START.get().map(|s| s.elapsed().as_secs()).unwrap_or(0);
+            let uptime_secs = crate::platform::time::uptime_secs();
             {
                 let internal_free = crate::platform::heap::heap_free_internal();
                 let spiram_free = crate::platform::heap::heap_free_spiram();
@@ -121,8 +124,9 @@ pub fn run_heartbeat_loop_with_tasks(
                 let mut g = guard.lock().unwrap_or_else(|e| e.into_inner());
                 let (last_content, last_time) = (&g.0, g.1);
                 let same = last_content == &task_content;
-                let within =
-                    last_time.map(|t| t.elapsed() < Duration::from_secs(TASK_THROTTLE_SECS)).unwrap_or(false);
+                let within = last_time
+                    .map(|t| t.elapsed() < Duration::from_secs(TASK_THROTTLE_SECS))
+                    .unwrap_or(false);
                 if same && within {
                     false
                 } else {
@@ -149,7 +153,11 @@ pub fn run_heartbeat_loop_with_tasks(
             }
         }
     });
-    log::info!("[{}] heartbeat loop with tasks started (interval {}s)", TAG, interval_secs);
+    log::info!(
+        "[{}] heartbeat loop with tasks started (interval {}s)",
+        TAG,
+        interval_secs
+    );
 }
 
 /// 存储用量（KB）。ESP32 读 SPIFFS，host 返回 (0, 0)。

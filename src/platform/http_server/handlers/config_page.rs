@@ -3,12 +3,18 @@
 
 /// 返回内嵌的 WiFi 配置页 HTML（通过 /common.css 加载样式）。
 pub fn html() -> &'static str {
-    include_str!(concat!(env!("OUT_DIR"), "/config_page_min/wifi_config_page.html"))
+    include_str!(concat!(
+        env!("OUT_DIR"),
+        "/config_page_min/wifi_config_page.html"
+    ))
 }
 
 /// 返回内嵌的配对码设置页 HTML。
 pub fn pairing_html() -> &'static str {
-    include_str!(concat!(env!("OUT_DIR"), "/config_page_min/pairing_page.html"))
+    include_str!(concat!(
+        env!("OUT_DIR"),
+        "/config_page_min/pairing_page.html"
+    ))
 }
 
 /// 返回公共 CSS 内容，供 GET /common.css 使用。

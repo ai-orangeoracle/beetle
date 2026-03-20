@@ -17,8 +17,10 @@ pub fn get_body(ctx: &HandlerContext) -> Result<String, WifiScanError> {
         None => return Err(WifiScanError::Unavailable),
     };
     let list = scanner.request_scan().map_err(WifiScanError::Other)?;
-    serde_json::to_string(&list).map_err(|e| WifiScanError::Other(Error::Other {
-        source: Box::new(e),
-        stage: "wifi_scan_serialize",
-    }))
+    serde_json::to_string(&list).map_err(|e| {
+        WifiScanError::Other(Error::Other {
+            source: Box::new(e),
+            stage: "wifi_scan_serialize",
+        })
+    })
 }

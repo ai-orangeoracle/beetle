@@ -86,7 +86,8 @@ pub fn read_file(path: impl AsRef<Path>) -> Result<Vec<u8>> {
     } else {
         Vec::new()
     };
-    f.read_to_end(&mut buf).map_err(|e| Error::io("spiffs_read", e))?;
+    f.read_to_end(&mut buf)
+        .map_err(|e| Error::io("spiffs_read", e))?;
     Ok(buf)
 }
 
@@ -105,7 +106,8 @@ pub fn write_file(path: impl AsRef<Path>, data: &[u8]) -> Result<()> {
         .to_str()
         .ok_or_else(|| Error::config("spiffs_write", "invalid path"))?;
     let mut f = std::fs::File::create(path_str).map_err(|e| Error::io("spiffs_write", e))?;
-    f.write_all(data).map_err(|e| Error::io("spiffs_write", e))?;
+    f.write_all(data)
+        .map_err(|e| Error::io("spiffs_write", e))?;
     Ok(())
 }
 

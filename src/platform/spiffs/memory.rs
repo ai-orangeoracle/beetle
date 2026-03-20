@@ -35,7 +35,11 @@ impl MemoryStore for SpiffsMemoryStore {
         if content.len() > MAX_MEMORY_CONTENT_LEN {
             return Err(Error::config(
                 "set_memory",
-                format!("content length {} exceeds {}", content.len(), MAX_MEMORY_CONTENT_LEN),
+                format!(
+                    "content length {} exceeds {}",
+                    content.len(),
+                    MAX_MEMORY_CONTENT_LEN
+                ),
             ));
         }
         write_file(full_path(REL_PATH_MEMORY), content.as_bytes())
@@ -50,7 +54,11 @@ impl MemoryStore for SpiffsMemoryStore {
         if content.len() > MAX_SOUL_USER_LEN {
             return Err(Error::config(
                 "set_soul",
-                format!("content length {} exceeds {}", content.len(), MAX_SOUL_USER_LEN),
+                format!(
+                    "content length {} exceeds {}",
+                    content.len(),
+                    MAX_SOUL_USER_LEN
+                ),
             ));
         }
         write_file(full_path(REL_PATH_SOUL), content.as_bytes())
@@ -65,7 +73,11 @@ impl MemoryStore for SpiffsMemoryStore {
         if content.len() > MAX_SOUL_USER_LEN {
             return Err(Error::config(
                 "set_user",
-                format!("content length {} exceeds {}", content.len(), MAX_SOUL_USER_LEN),
+                format!(
+                    "content length {} exceeds {}",
+                    content.len(),
+                    MAX_SOUL_USER_LEN
+                ),
             ));
         }
         write_file(full_path(REL_PATH_USER), content.as_bytes())
@@ -95,7 +107,11 @@ impl MemoryStore for SpiffsMemoryStore {
         if content.len() > MAX_MEMORY_CONTENT_LEN {
             return Err(Error::config(
                 "write_daily_note",
-                format!("content length {} exceeds {}", content.len(), MAX_MEMORY_CONTENT_LEN),
+                format!(
+                    "content length {} exceeds {}",
+                    content.len(),
+                    MAX_MEMORY_CONTENT_LEN
+                ),
             ));
         }
         let mut p = PathBuf::from(SPIFFS_BASE);

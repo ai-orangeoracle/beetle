@@ -87,7 +87,10 @@ pub fn get_check(ctx: &HandlerContext, channel: &str) -> Result<String, std::io:
         }
     };
 
-    let boards = match root.get("boards").and_then(|b| b.get(ctx.board_id.as_ref())) {
+    let boards = match root
+        .get("boards")
+        .and_then(|b| b.get(ctx.board_id.as_ref()))
+    {
         Some(b) => b,
         None => {
             let json = serde_json::json!({
@@ -158,12 +161,19 @@ pub fn post(ctx: &HandlerContext, body: &str) -> Result<(ApiResponse, bool), std
     };
     let url = match url {
         Some(u) => u,
-        None => return Ok((ApiResponse::err_400(&user_message::from_api_key("invalid_url", &locale)), false)),
+        None => {
+            return Ok((
+                ApiResponse::err_400(&user_message::from_api_key("invalid_url", &locale)),
+                false,
+            ))
+        }
     };
-    let valid =
-        (url.starts_with("http://") || url.starts_with("https://")) && url.len() > 8;
+    let valid = (url.starts_with("http://") || url.starts_with("https://")) && url.len() > 8;
     if !valid {
-        return Ok((ApiResponse::err_400(&user_message::from_api_key("invalid_url", &locale)), false));
+        return Ok((
+            ApiResponse::err_400(&user_message::from_api_key("invalid_url", &locale)),
+            false,
+        ));
     }
     match ctx.platform.ota_from_url(url) {
         Ok(()) => Ok((ApiResponse::ok_200_json("{\"ok\":true}"), true)),

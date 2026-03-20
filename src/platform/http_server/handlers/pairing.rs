@@ -25,24 +25,39 @@ pub struct SetCodePayload {
 pub fn post_body(ctx: &HandlerContext, body_json: &str) -> ApiResponse {
     let locale = config::get_locale(ctx.config_store.as_ref());
     if pairing::code_set(ctx.config_store.as_ref()) {
-        return ApiResponse::err_400(&user_message::from_api_key("pairing_code_already_set", &locale));
+        return ApiResponse::err_400(&user_message::from_api_key(
+            "pairing_code_already_set",
+            &locale,
+        ));
     }
     let payload: SetCodePayload = match serde_json::from_str(body_json) {
         Ok(p) => p,
-        Err(_) => return ApiResponse::err_400(&user_message::from_api_key("invalid_json", &locale)),
+        Err(_) => {
+            return ApiResponse::err_400(&user_message::from_api_key("invalid_json", &locale))
+        }
     };
     let code = payload.code.trim();
     if code.len() != 6 || !code.chars().all(|c| c.is_ascii_digit()) {
-        return ApiResponse::err_400(&user_message::from_api_key("code_must_be_6_digits", &locale));
+        return ApiResponse::err_400(&user_message::from_api_key(
+            "code_must_be_6_digits",
+            &locale,
+        ));
     }
     match pairing::set_code(ctx.config_store.as_ref(), code) {
         Ok(true) => {
             // 首次激活时顺带创建空 SOUL/USER 文件，避免后续 get_soul/get_user 报 No such file
-            let _ = ctx.platform.write_config_file(crate::memory::REL_PATH_SOUL, b"");
-            let _ = ctx.platform.write_config_file(crate::memory::REL_PATH_USER, b"");
+            let _ = ctx
+                .platform
+                .write_config_file(crate::memory::REL_PATH_SOUL, b"");
+            let _ = ctx
+                .platform
+                .write_config_file(crate::memory::REL_PATH_USER, b"");
             ApiResponse::ok_200_json(r#"{"ok":true}"#)
         }
-        Ok(false) => ApiResponse::err_400(&user_message::from_api_key("pairing_code_already_set", &locale)),
+        Ok(false) => ApiResponse::err_400(&user_message::from_api_key(
+            "pairing_code_already_set",
+            &locale,
+        )),
         Err(_) => ApiResponse::err_500(&user_message::from_api_key("failed_to_save_code", &locale)),
     }
 }

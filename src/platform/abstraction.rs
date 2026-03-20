@@ -3,11 +3,11 @@
 
 use crate::config::AppConfig;
 use crate::error::Result;
-use crate::platform::ResponseBody;
 use crate::memory::{
     ImportantMessageStore, MemoryStore, PendingRetryStore, RemindAtStore, SessionStore,
     SessionSummaryStore, TaskContinuationStore,
 };
+use crate::platform::ResponseBody;
 use std::sync::Arc;
 
 /// 配置键值存储抽象（如 NVS）。用于 config、pairing、skills 的 NVS 部分。
@@ -15,9 +15,7 @@ pub trait ConfigStore: Send + Sync {
     fn read_string(&self, key: &str) -> Result<Option<String>>;
     /// 批量读取；默认逐键 read_string。NVS 实现可覆写为单 handle 多 key 读，减少 open/close 避免 4361。
     fn read_strings(&self, keys: &[&str]) -> Result<Vec<Option<String>>> {
-        keys.iter()
-            .map(|k| self.read_string(k))
-            .collect()
+        keys.iter().map(|k| self.read_string(k)).collect()
     }
     fn write_string(&self, key: &str, value: &str) -> Result<()>;
     /// 批量写入；默认逐键 write_string，NVS 实现可覆写为单 handle 批量写以避免 4361。
@@ -142,6 +140,11 @@ pub trait Platform: Send + Sync {
     fn read_heartbeat_file(&self) -> Result<String>;
     fn fetch_url_to_bytes(&self, url: &str, max_len: usize) -> Result<Vec<u8>>;
 
+    /// 板级状态 JSON（芯片、堆、运行时间、压力、WiFi、SPIFFS）。默认实现委托 `platform/board_info`；新平台可覆写。
+    fn board_info_json(&self) -> Result<String> {
+        Ok(crate::platform::board_info::board_info_json_string())
+    }
+
     /// 读 SPIFFS 配置文件（相对路径如 config/llm.json）。不存在或非 ESP 返回 Ok(None)。默认 no-op 返回 Ok(None)。
     fn read_config_file(&self, _rel_path: &str) -> Result<Option<Vec<u8>>> {
         Ok(None)
@@ -169,6 +172,9 @@ pub trait Platform: Send + Sync {
 
     /// OTA 固件升级。ESP 实现调用 ota_update_from_url；非 ESP 返回错误。
     fn ota_from_url(&self, _url: &str) -> Result<()> {
-        Err(crate::error::Error::config("ota", "OTA not supported on this platform"))
+        Err(crate::error::Error::config(
+            "ota",
+            "OTA not supported on this platform",
+        ))
     }
 }

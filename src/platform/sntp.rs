@@ -24,7 +24,10 @@ pub fn init_sntp() {
 
         sys::esp_sntp_init();
     }
-    log::info!("[{}] SNTP started (pool.ntp.org), time will sync in background", TAG);
+    log::info!(
+        "[{}] SNTP started (pool.ntp.org), time will sync in background",
+        TAG
+    );
 }
 
 #[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]

@@ -110,6 +110,8 @@ impl SessionSummaryStore for SpiffsSessionSummaryStore {
             Ok(m) => m,
             Err(_) => return Ok(None),
         };
-        Ok(map.get(chat_id).map(|e| (e.summary.clone(), e.last_summary_at_count)))
+        Ok(map
+            .get(chat_id)
+            .map(|e| (e.summary.clone(), e.last_summary_at_count)))
     }
 }
