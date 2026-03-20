@@ -43,6 +43,38 @@ fn resolve_path(path_arg: &str) -> Result<std::path::PathBuf> {
 
 const MAX_LIST_ENTRIES: usize = 256;
 
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+fn read_storage_file(path: &std::path::Path) -> Result<Vec<u8>> {
+    crate::platform::spiffs::read_file(path)
+}
+
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+fn read_storage_file(path: &std::path::Path) -> Result<Vec<u8>> {
+    std::fs::read(path).map_err(|e| Error::io("tool_files", e))
+}
+
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+fn list_storage_dir(path: &std::path::Path) -> Result<Vec<String>> {
+    crate::platform::spiffs::list_dir(path)
+}
+
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+fn list_storage_dir(path: &std::path::Path) -> Result<Vec<String>> {
+    let mut out = Vec::new();
+    for e in std::fs::read_dir(path).map_err(|e| Error::io("tool_files", e))? {
+        let e = e.map_err(|e| Error::io("tool_files", e))?;
+        let name = e.file_name();
+        if let Some(s) = name.to_str() {
+            let is_dir = e.file_type().map(|t| t.is_dir()).unwrap_or(false);
+            out.push(if is_dir { format!("{}/", s) } else { s.to_string() });
+            if out.len() >= MAX_LIST_ENTRIES {
+                break;
+            }
+        }
+    }
+    Ok(out)
+}
+
 pub struct FilesTool;
 
 impl Tool for FilesTool {
@@ -78,24 +110,7 @@ impl Tool for FilesTool {
         let full = resolve_path(path_arg)?;
 
         if mode == "list" {
-            let mut entries = Vec::new();
-            let dir = std::fs::read_dir(&full).map_err(|e| Error::io("tool_files", e))?;
-            for e in dir {
-                let e = e.map_err(|e| Error::io("tool_files", e))?;
-                let name = e.file_name();
-                if let Some(s) = name.to_str() {
-                    let is_dir = e.file_type().map(|t| t.is_dir()).unwrap_or(false);
-                    let entry = if is_dir {
-                        format!("{}/", s)
-                    } else {
-                        s.to_string()
-                    };
-                    entries.push(entry);
-                    if entries.len() >= MAX_LIST_ENTRIES {
-                        break;
-                    }
-                }
-            }
+            let entries = list_storage_dir(&full)?;
             let truncated = entries.len() >= MAX_LIST_ENTRIES;
             let out = json!({
                 "mode": "list",
@@ -119,7 +134,10 @@ impl Tool for FilesTool {
         if len > (MAX_TOOL_RESULT_LEN as u64).saturating_mul(2) {
             return Err(Error::config("tool_files", "file too large"));
         }
-        let content = std::fs::read_to_string(&full).map_err(|e| Error::io("tool_files", e))?;
+        let raw = read_storage_file(&full)?;
+        let content = std::str::from_utf8(&raw)
+            .map_err(|_| Error::config("tool_files", "file is not valid UTF-8"))?
+            .to_string();
         let (content, truncated) = if content.len() > MAX_TOOL_RESULT_LEN {
             let mut c = content
                 .chars()
