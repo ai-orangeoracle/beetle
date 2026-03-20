@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import Box from "@mui/material/Box";
 import FormControl from "@mui/material/FormControl";
@@ -26,6 +26,8 @@ import {
 } from "../components/form";
 import { SettingsSection } from "../components/SettingsSection";
 import { useConfig } from "../hooks/useConfig";
+import { useConfigPageLoad } from "../hooks/useConfigPageLoad";
+import { useSaveFeedback } from "../hooks/useSaveFeedback";
 import { useUnsaved } from "../hooks/useUnsaved";
 import { useRevealedPasswordFields } from "../hooks/useRevealedPassword";
 import type { LlmSource } from "../types/appConfig";
@@ -85,23 +87,11 @@ export function AIConfigPage() {
   const [routerIndex, setRouterIndex] = useState<number | null>(null);
   const [workerIndex, setWorkerIndex] = useState<number | null>(null);
   const [llmStream, setLlmStream] = useState(false);
-  const [saveStatus, setSaveStatus] = useState<
-    "idle" | "saving" | "ok" | "fail"
-  >("idle");
-  const [saveError, setSaveError] = useState("");
   const [removeSourceIndex, setRemoveSourceIndex] = useState<number | null>(null);
-  const loadAttemptedRef = useRef(false);
+  const saveFeedback = useSaveFeedback(t);
   const { isRevealed, getRevealHandlers } = useRevealedPasswordFields();
 
-  useEffect(() => {
-    if (config !== null) {
-      loadAttemptedRef.current = false;
-      return;
-    }
-    if (loading || loadAttemptedRef.current) return;
-    loadAttemptedRef.current = true;
-    loadConfig();
-  }, [config, loading, loadConfig]);
+  useConfigPageLoad({ hasConfig: config !== null, loading, loadConfig });
 
   useEffect(() => {
     if (!config) {
@@ -169,8 +159,7 @@ export function AIConfigPage() {
     if (!config) return;
     const err = validateSources(sources, routerIndex, workerIndex, t);
     if (err) {
-      setSaveStatus("fail");
-      setSaveError(err);
+      saveFeedback.fail(err);
       return;
     }
     const llm_sources: LlmSource[] = sources.map((r) => ({
@@ -179,21 +168,14 @@ export function AIConfigPage() {
       model: r.model.trim(),
       api_url: r.api_url.trim(),
     }));
-    setSaveStatus("saving");
-    setSaveError("");
+    saveFeedback.begin();
     const result = await saveLlm({
       llm_sources,
       llm_router_source_index: routerIndex,
       llm_worker_source_index: workerIndex,
       llm_stream: llmStream,
     });
-    setSaveStatus(result.ok ? "ok" : "fail");
-    const errMsg =
-      result.error &&
-      (result.error.startsWith("device.") || result.error.startsWith("config."))
-        ? t(result.error)
-        : (result.error ?? "");
-    setSaveError(errMsg);
+    saveFeedback.finishFromResult(result);
     if (result.ok) setDirty(false);
   };
 
@@ -210,7 +192,7 @@ export function AIConfigPage() {
     );
   }
 
-  const saveDisabled = !config || saveStatus === "saving";
+  const saveDisabled = !config || saveFeedback.status === "saving";
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 4 }}>
@@ -239,20 +221,17 @@ export function AIConfigPage() {
             title={!config ? t("config.hintSaveNeedDevice") : undefined}
             sx={{ borderRadius: "var(--radius-control)" }}
           >
-            {saveStatus === "saving" ? t("common.saving") : t("common.save")}
+            {saveFeedback.status === "saving" ? t("common.saving") : t("common.save")}
           </Button>
         }
         belowTitleRow={
-          saveStatus === "ok" || saveStatus === "fail" ? (
+          saveFeedback.status === "ok" || saveFeedback.status === "fail" ? (
             <SaveFeedback
               placement="belowTitle"
-              status={saveStatus}
-              message={saveStatus === "ok" ? t("common.saveOk") : saveError}
+              status={saveFeedback.status}
+              message={saveFeedback.status === "ok" ? t("common.saveOk") : saveFeedback.error}
               autoDismissMs={3000}
-              onDismiss={() => {
-                setSaveStatus("idle");
-                setSaveError("");
-              }}
+              onDismiss={saveFeedback.dismiss}
             />
           ) : null
         }

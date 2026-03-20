@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
@@ -16,10 +16,13 @@ import {
 } from "../components/form";
 import { SettingsSection } from "../components/SettingsSection";
 import { useConfig } from "../hooks/useConfig";
+import { useConfigPageLoad } from "../hooks/useConfigPageLoad";
+import { useDeviceApi } from "../hooks/useDeviceApi";
+import { useSaveFeedback } from "../hooks/useSaveFeedback";
 import { useDevice } from "../hooks/useDevice";
 import { useRevealedPassword } from "../hooks/useRevealedPassword";
 import { useUnsaved } from "../hooks/useUnsaved";
-import { getWifiScan, type WifiApEntry } from "../api/endpoints/system";
+import type { WifiApEntry } from "../api/endpoints/system";
 import type { AppConfig } from "../types/appConfig";
 
 const WIFI_MANUAL = "__manual__";
@@ -54,17 +57,14 @@ function validateSystem(
 export function SystemConfigPage() {
   const { t } = useTranslation();
   const { baseUrl } = useDevice();
+  const { api } = useDeviceApi();
   const { config, loadConfig, saveSystem, loading, error } = useConfig();
   const { setDirty } = useUnsaved();
   const [form, setForm] = useState<AppConfig | null>(null);
   const [wifiScanList, setWifiScanList] = useState<WifiApEntry[] | null>(null);
   const [wifiScanLoading, setWifiScanLoading] = useState(false);
   const [wifiScanError, setWifiScanError] = useState("");
-  const [saveStatus, setSaveStatus] = useState<
-    "idle" | "saving" | "ok" | "fail"
-  >("idle");
-  const [saveError, setSaveError] = useState("");
-  const loadAttemptedRef = useRef(false);
+  const saveFeedback = useSaveFeedback(t);
   const { type: wifiPassType, inputProps: wifiPassInputProps } =
     useRevealedPassword();
 
@@ -73,7 +73,7 @@ export function SystemConfigPage() {
     setWifiScanLoading(true);
     setWifiScanList(null);
     setWifiScanError("");
-    const res = await getWifiScan(baseUrl);
+    const res = await api.system.wifiScan();
     setWifiScanLoading(false);
     if (res.ok && Array.isArray(res.data)) {
       setWifiScanList(res.data);
@@ -84,15 +84,7 @@ export function SystemConfigPage() {
     }
   };
 
-  useEffect(() => {
-    if (config !== null) {
-      loadAttemptedRef.current = false;
-      return;
-    }
-    if (loading || loadAttemptedRef.current) return;
-    loadAttemptedRef.current = true;
-    loadConfig();
-  }, [config, loading, loadConfig]);
+  useConfigPageLoad({ hasConfig: config !== null, loading, loadConfig });
 
   useEffect(() => {
     if (!config) {
@@ -111,8 +103,7 @@ export function SystemConfigPage() {
     if (!config || !form) return;
     const err = validateSystem(form, t);
     if (err) {
-      setSaveStatus("fail");
-      setSaveError(err);
+      saveFeedback.fail(err);
       return;
     }
     const segment = {
@@ -122,16 +113,9 @@ export function SystemConfigPage() {
       session_max_messages: form.session_max_messages,
       tg_group_activation: form.tg_group_activation,
     };
-    setSaveStatus("saving");
-    setSaveError("");
+    saveFeedback.begin();
     const result = await saveSystem(segment);
-    setSaveStatus(result.ok ? "ok" : "fail");
-    const errMsg =
-      result.error &&
-      (result.error.startsWith("device.") || result.error.startsWith("config."))
-        ? t(result.error)
-        : (result.error ?? "");
-    setSaveError(errMsg);
+    saveFeedback.finishFromResult(result);
     if (result.ok) setDirty(false);
   };
 
@@ -152,7 +136,7 @@ export function SystemConfigPage() {
     );
   }
 
-  const saveDisabled = saveStatus === "saving" || !form;
+  const saveDisabled = saveFeedback.status === "saving" || !form;
   const proxyUrlError =
     form && !isValidProxyUrl(form.proxy_url ?? "")
       ? t("config.validation.proxyUrlInvalid")
@@ -183,20 +167,17 @@ export function SystemConfigPage() {
             title={!form ? t("config.hintSaveNeedDevice") : undefined}
             sx={{ borderRadius: "var(--radius-control)" }}
           >
-            {saveStatus === "saving" ? t("common.saving") : t("common.save")}
+            {saveFeedback.status === "saving" ? t("common.saving") : t("common.save")}
           </Button>
         }
         belowTitleRow={
-          saveStatus === "ok" || saveStatus === "fail" ? (
+          saveFeedback.status === "ok" || saveFeedback.status === "fail" ? (
             <SaveFeedback
               placement="belowTitle"
-              status={saveStatus}
-              message={saveStatus === "ok" ? t("common.saveOk") : saveError}
+              status={saveFeedback.status}
+              message={saveFeedback.status === "ok" ? t("common.saveOk") : saveFeedback.error}
               autoDismissMs={3000}
-              onDismiss={() => {
-                setSaveStatus("idle");
-                setSaveError("");
-              }}
+              onDismiss={saveFeedback.dismiss}
             />
           ) : null
         }

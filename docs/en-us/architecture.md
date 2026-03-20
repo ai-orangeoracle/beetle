@@ -25,6 +25,8 @@ This doc is for **readers who want to understand module layout, data flow, or ho
 | **ota** (optional) | Fetch firmware from URL, write to OTA partition; failure does not corrupt current partition. |
 | **cron / heartbeat / skills** | Scheduled tasks, periodic logs (incl. metrics baseline), SPIFFS skill loading. |
 
+**Platform boundary note**: Besides `platform/`, `channels/wss_gateway/esp_conn.rs` is ESP-only WSS transport and directly depends on `esp-idf-svc` (requires `esp_websocket_client` via `esp-idf-sys` `extra_components` with matching bindings). This is an **explicit exception** to “core code reaches hardware only through `platform`,” and aligns with CLAUDE.md’s stated carve-out.
+
 ---
 
 ## Data flow

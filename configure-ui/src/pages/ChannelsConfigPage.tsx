@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
@@ -16,6 +16,8 @@ import {
 import { SettingsSection } from "../components/SettingsSection";
 import Typography from "@mui/material/Typography";
 import { useConfig } from "../hooks/useConfig";
+import { useConfigPageLoad } from "../hooks/useConfigPageLoad";
+import { useSaveFeedback } from "../hooks/useSaveFeedback";
 import { useUnsaved } from "../hooks/useUnsaved";
 import { useRevealedPasswordFields } from "../hooks/useRevealedPassword";
 import { ENABLED_CHANNEL_OPTIONS } from "../types/appConfig";
@@ -47,21 +49,8 @@ export function ChannelsConfigPage() {
   const { config, loadConfig, saveChannels, loading, error } = useConfig();
   const { setDirty } = useUnsaved();
   const [form, setForm] = useState<AppConfig | null>(null);
-  const [saveStatus, setSaveStatus] = useState<
-    "idle" | "saving" | "ok" | "fail"
-  >("idle");
-  const [saveError, setSaveError] = useState("");
-  const loadAttemptedRef = useRef(false);
-
-  useEffect(() => {
-    if (config !== null) {
-      loadAttemptedRef.current = false;
-      return;
-    }
-    if (loading || loadAttemptedRef.current) return;
-    loadAttemptedRef.current = true;
-    loadConfig();
-  }, [config, loading, loadConfig]);
+  const saveFeedback = useSaveFeedback(t);
+  useConfigPageLoad({ hasConfig: config !== null, loading, loadConfig });
 
   useEffect(() => {
     if (!config) {
@@ -82,8 +71,7 @@ export function ChannelsConfigPage() {
     if (!config || !form) return;
     const err = validateChannels(form, t);
     if (err) {
-      setSaveStatus("fail");
-      setSaveError(err);
+      saveFeedback.fail(err);
       return;
     }
     const segment = {
@@ -103,16 +91,9 @@ export function ChannelsConfigPage() {
       webhook_enabled: form.webhook_enabled,
       webhook_token: form.webhook_token,
     };
-    setSaveStatus("saving");
-    setSaveError("");
+    saveFeedback.begin();
     const result = await saveChannels(segment);
-    setSaveStatus(result.ok ? "ok" : "fail");
-    const errMsg =
-      result.error &&
-      (result.error.startsWith("device.") || result.error.startsWith("config."))
-        ? t(result.error)
-        : (result.error ?? "");
-    setSaveError(errMsg);
+    saveFeedback.finishFromResult(result);
     if (result.ok) setDirty(false);
   };
 
@@ -131,7 +112,7 @@ export function ChannelsConfigPage() {
     );
   }
 
-  const saveDisabled = saveStatus === "saving" || !form;
+  const saveDisabled = saveFeedback.status === "saving" || !form;
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 4 }}>
@@ -152,20 +133,17 @@ export function ChannelsConfigPage() {
             title={!form ? t("config.hintSaveNeedDevice") : undefined}
             sx={{ borderRadius: "var(--radius-control)" }}
           >
-            {saveStatus === "saving" ? t("common.saving") : t("common.save")}
+            {saveFeedback.status === "saving" ? t("common.saving") : t("common.save")}
           </Button>
         }
         belowTitleRow={
-          saveStatus === "ok" || saveStatus === "fail" ? (
+          saveFeedback.status === "ok" || saveFeedback.status === "fail" ? (
             <SaveFeedback
               placement="belowTitle"
-              status={saveStatus}
-              message={saveStatus === "ok" ? t("common.saveOk") : saveError}
+              status={saveFeedback.status}
+              message={saveFeedback.status === "ok" ? t("common.saveOk") : saveFeedback.error}
               autoDismissMs={3000}
-              onDismiss={() => {
-                setSaveStatus("idle");
-                setSaveError("");
-              }}
+              onDismiss={saveFeedback.dismiss}
             />
           ) : null
         }

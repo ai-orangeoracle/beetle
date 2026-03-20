@@ -56,33 +56,33 @@ impl OpenAiCompatibleClient {
 // --- OpenAI Chat Completions 请求/响应 DTO ---
 
 #[derive(Debug, Serialize)]
-struct OpenAiRequestMessage {
-    role: String,
-    content: String,
+struct OpenAiRequestMessageRef<'a> {
+    role: &'a str,
+    content: &'a str,
 }
 
 #[derive(Debug, Serialize)]
-struct OpenAiFunctionSpec {
-    name: String,
-    description: String,
+struct OpenAiFunctionSpecRef<'a> {
+    name: &'a str,
+    description: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
-    parameters: Option<serde_json::Value>,
+    parameters: Option<&'a serde_json::Value>,
 }
 
 #[derive(Debug, Serialize)]
-struct OpenAiTool {
+struct OpenAiToolRef<'a> {
     #[serde(rename = "type")]
-    tool_type: String,
-    function: OpenAiFunctionSpec,
+    tool_type: &'static str,
+    function: OpenAiFunctionSpecRef<'a>,
 }
 
 #[derive(Debug, Serialize)]
-struct OpenAiRequest {
-    model: String,
+struct OpenAiRequestRef<'a> {
+    model: &'a str,
     max_tokens: u32,
-    messages: Vec<OpenAiRequestMessage>,
+    messages: Vec<OpenAiRequestMessageRef<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    tools: Option<Vec<OpenAiTool>>,
+    tools: Option<Vec<OpenAiToolRef<'a>>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     stream: Option<bool>,
 }
@@ -138,17 +138,18 @@ fn build_request_body(
     tools: Option<&[ToolSpec]>,
     stream: bool,
 ) -> Result<Vec<u8>> {
-    let mut req_messages: Vec<OpenAiRequestMessage> = Vec::new();
+    let mut req_messages: Vec<OpenAiRequestMessageRef<'_>> =
+        Vec::with_capacity(messages.len() + usize::from(!system.is_empty()));
     if !system.is_empty() {
-        req_messages.push(OpenAiRequestMessage {
-            role: "system".to_string(),
-            content: system.to_string(),
+        req_messages.push(OpenAiRequestMessageRef {
+            role: "system",
+            content: system,
         });
     }
     for m in messages {
-        req_messages.push(OpenAiRequestMessage {
-            role: m.role.clone(),
-            content: m.content.clone(),
+        req_messages.push(OpenAiRequestMessageRef {
+            role: &m.role,
+            content: &m.content,
         });
     }
 
@@ -158,12 +159,12 @@ fn build_request_body(
         } else {
             Some(
                 t.iter()
-                    .map(|s| OpenAiTool {
-                        tool_type: "function".to_string(),
-                        function: OpenAiFunctionSpec {
-                            name: s.name.clone(),
-                            description: s.description.clone(),
-                            parameters: Some(s.parameters.clone()),
+                    .map(|s| OpenAiToolRef {
+                        tool_type: "function",
+                        function: OpenAiFunctionSpecRef {
+                            name: &s.name,
+                            description: &s.description,
+                            parameters: Some(&s.parameters),
                         },
                     })
                     .collect::<Vec<_>>(),
@@ -171,8 +172,8 @@ fn build_request_body(
         }
     });
 
-    let req = OpenAiRequest {
-        model: model.to_string(),
+    let req = OpenAiRequestRef {
+        model,
         max_tokens,
         messages: req_messages,
         tools: tools_api,
@@ -283,23 +284,25 @@ fn do_request(
         });
     }
 
-    let parsed: OpenAiResponse =
-        serde_json::from_slice(resp_body.as_ref()).map_err(|e| Error::Other {
-            source: Box::new(e),
-            stage: "llm_parse",
-        })?;
-
-    let choice = parsed
-        .choices
-        .into_iter()
-        .next()
-        .ok_or_else(|| Error::Other {
-            source: Box::new(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "openai response has no choices",
-            )),
-            stage: "llm_parse",
-        })?;
+    let choice = {
+        let parsed: OpenAiResponse =
+            serde_json::from_slice(resp_body.as_ref()).map_err(|e| Error::Other {
+                source: Box::new(e),
+                stage: "llm_parse",
+            })?;
+        parsed
+            .choices
+            .into_iter()
+            .next()
+            .ok_or_else(|| Error::Other {
+                source: Box::new(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "openai response has no choices",
+                )),
+                stage: "llm_parse",
+            })?
+    };
+    drop(resp_body);
 
     let content = choice.message.content.unwrap_or_default();
     let stop_reason = finish_reason_to_stop_reason(choice.finish_reason.as_deref());
@@ -356,20 +359,13 @@ impl OpenAiStreamAccumulator {
         }
     }
 
-    /// 处理单条 SSE data（JSON chunk）。data: [DONE] 表示结束。
-    fn handle_data(&mut self, data: &str) {
-        if data == "[DONE]" {
-            return;
-        }
-
-        let val: serde_json::Value = match serde_json::from_str(data) {
-            Ok(v) => v,
-            Err(_) => return,
-        };
+    /// 处理单条 SSE data 的已解析 JSON chunk；返回 content_delta 供进度回调。
+    fn handle_value(&mut self, val: &serde_json::Value) -> Option<String> {
+        let mut delta_text: Option<String> = None;
 
         let choices = match val.get("choices").and_then(|v| v.as_array()) {
             Some(c) => c,
-            None => return,
+            None => return None,
         };
 
         for choice in choices {
@@ -386,6 +382,7 @@ impl OpenAiStreamAccumulator {
             // delta.content
             if let Some(text) = delta.get("content").and_then(|v| v.as_str()) {
                 self.content.push_str(text);
+                delta_text = Some(text.to_string());
             }
 
             // delta.tool_calls
@@ -425,6 +422,7 @@ impl OpenAiStreamAccumulator {
                 }
             }
         }
+        delta_text
     }
 
     fn finish(self) -> LlmResponse {
@@ -454,22 +452,6 @@ impl OpenAiStreamAccumulator {
     }
 }
 
-/// 从 OpenAI SSE data 中提取 choices[0].delta.content 文本（用于进度回调）。
-fn extract_content_delta(data: &str) -> Option<String> {
-    if data == "[DONE]" {
-        return None;
-    }
-    let val: serde_json::Value = serde_json::from_str(data).ok()?;
-    val.get("choices")
-        .and_then(|v| v.as_array())
-        .and_then(|arr| arr.first())
-        .and_then(|c| c.get("delta"))
-        .and_then(|d| d.get("content"))
-        .and_then(|v| v.as_str())
-        .filter(|s| !s.is_empty())
-        .map(|s| s.to_string())
-}
-
 fn do_request_streaming(
     http: &mut dyn LlmHttpClient,
     url: &str,
@@ -496,10 +478,14 @@ fn do_request_streaming(
         .do_post_streaming(url, &headers, body, &mut |chunk| {
             sse_reader.feed(chunk);
             while let Some(event) = sse_reader.next_event() {
-                // Extract delta text before handling, for progress callback.
-                let delta_text = extract_content_delta(&event.data);
-
-                accumulator.handle_data(&event.data);
+                if event.data == "[DONE]" {
+                    continue;
+                }
+                let parsed = match serde_json::from_str::<serde_json::Value>(&event.data) {
+                    Ok(v) => v,
+                    Err(_) => continue,
+                };
+                let delta_text = accumulator.handle_value(&parsed);
 
                 if let (Some(ref delta), Some(ref mut cb)) = (&delta_text, &mut progress_cb) {
                     cb(delta, &accumulator.content);

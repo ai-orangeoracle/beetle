@@ -8,6 +8,7 @@ import type {
 } from '../types/appConfig'
 import { ConfigContext } from './ConfigContext'
 import { useDeviceApi } from '../hooks/useDeviceApi'
+import { markDeviceReachable } from '../store/deviceStatusStore'
 
 /** i18n keys for config load errors; 与顶栏横幅重复的配对/设备类不展示，由 DeviceBanner 处理 */
 const ERROR_KEY_NO_BASE = 'device.bannerNeedDevice'
@@ -61,6 +62,21 @@ export function ConfigProvider({ children }: { children: React.ReactNode }) {
     }
   }, [api.config, ready])
 
+  /**
+   * 在“断连但有缓存”场景下尝试刷新：成功则更新缓存，失败保留现有缓存不清空。
+   */
+  const refreshCachedConfig = useCallback(async (): Promise<{ ok: boolean; error?: string }> => {
+    if (!ready) return { ok: false, error: ERROR_KEY_NO_BASE }
+    const res = await api.config.get()
+    if (res.ok && res.data != null && typeof res.data === 'object') {
+      setConfig(res.data as AppConfig)
+      setError(null)
+      markDeviceReachable()
+      return { ok: true }
+    }
+    return { ok: false, error: res.error ?? ERROR_KEY_LOAD_FAILED }
+  }, [api.config, ready])
+
   const saveLlm = useCallback(
     async (body: LlmConfigSegment): Promise<{ ok: boolean; error?: string }> => {
       const res = await api.config.saveLlm(body)
@@ -109,12 +125,23 @@ export function ConfigProvider({ children }: { children: React.ReactNode }) {
       loading,
       error,
       loadConfig,
+      refreshCachedConfig,
       clearCachedConfig,
       saveLlm,
       saveChannels,
       saveSystem,
     }),
-    [config, loading, error, loadConfig, clearCachedConfig, saveLlm, saveChannels, saveSystem],
+    [
+      config,
+      loading,
+      error,
+      loadConfig,
+      refreshCachedConfig,
+      clearCachedConfig,
+      saveLlm,
+      saveChannels,
+      saveSystem,
+    ],
   )
 
   return <ConfigContext.Provider value={value}>{children}</ConfigContext.Provider>

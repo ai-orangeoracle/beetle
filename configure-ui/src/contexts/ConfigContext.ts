@@ -11,6 +11,7 @@ export interface ConfigContextValue {
   loading: boolean
   error: string | null
   loadConfig: () => Promise<void>
+  refreshCachedConfig: () => Promise<{ ok: boolean; error?: string }>
   clearCachedConfig: () => void
   saveLlm: (body: LlmConfigSegment) => Promise<{ ok: boolean; error?: string }>
   saveChannels: (body: ChannelsConfigSegment) => Promise<{ ok: boolean; error?: string }>

@@ -29,16 +29,19 @@ interface LayoutProps {
 }
 
 export function Layout({ onOpenSettings }: LayoutProps) {
+  const AUTO_REFRESH_SECONDS = 5
   const theme = useTheme()
   const { t } = useTranslation()
   const navigate = useNavigate()
   const location = useLocation()
   const { dirty } = useContext(UnsavedContext)
-  const { config, clearCachedConfig } = useConfig()
+  const { config, clearCachedConfig, refreshCachedConfig } = useConfig()
   const { showToast } = useToast()
   const deviceConnected = useDeviceConnected()
   const restartPhase = useRestartPhase()
   const [pendingPath, setPendingPath] = useState<string | null>(null)
+  const [refreshingCache, setRefreshingCache] = useState(false)
+  const [refreshCountdown, setRefreshCountdown] = useState(AUTO_REFRESH_SECONDS)
   const showRestartBanner = restartPhase !== 'idle'
   const showDisconnectedCacheBanner =
     !deviceConnected && config != null && !showRestartBanner
@@ -87,6 +90,71 @@ export function Layout({ onOpenSettings }: LayoutProps) {
     setPendingPath(null)
   }, [navigate, pendingPath])
 
+  const handleRefreshCachedConfig = useCallback(async () => {
+    if (refreshingCache) return
+    setRefreshingCache(true)
+    const result = await refreshCachedConfig()
+    if (!result.ok && result.error) {
+      showToast(result.error, { variant: 'warning' })
+    }
+    setRefreshingCache(false)
+    setRefreshCountdown(AUTO_REFRESH_SECONDS)
+  }, [refreshingCache, refreshCachedConfig, showToast])
+
+  useEffect(() => {
+    if (!showDisconnectedCacheBanner) {
+      queueMicrotask(() => {
+        setRefreshingCache(false)
+        setRefreshCountdown(AUTO_REFRESH_SECONDS)
+      })
+      return
+    }
+    if (refreshingCache) return
+    const timer = window.setInterval(() => {
+      setRefreshCountdown((prev) => {
+        if (prev <= 1) {
+          void handleRefreshCachedConfig()
+          return AUTO_REFRESH_SECONDS
+        }
+        return prev - 1
+      })
+    }, 1000)
+    return () => window.clearInterval(timer)
+  }, [showDisconnectedCacheBanner, refreshingCache, handleRefreshCachedConfig])
+
+  /** 全屏磨砂底：拦截底层交互，避免可视蒙层下仍可点击 */
+  const statusOverlayBackdropSx = {
+    position: 'fixed' as const,
+    inset: 0,
+    zIndex: 1100,
+    pointerEvents: 'auto' as const,
+    backgroundColor: 'color-mix(in srgb, var(--foreground) 10%, transparent)',
+    backdropFilter: 'blur(12px)',
+    WebkitBackdropFilter: 'blur(12px)',
+  }
+
+  const statusOverlayCardSx = {
+    position: 'fixed' as const,
+    top: '50%',
+    left: '50%',
+    transform: 'translate(-50%, -50%)',
+    zIndex: 1101,
+    pointerEvents: 'auto' as const,
+    width: 'min(520px, calc(100vw - 24px))',
+    maxWidth: '100%',
+    boxSizing: 'border-box' as const,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 2,
+    px: 2,
+    py: 1.5,
+    borderRadius: 'var(--radius-card)',
+    border: '1px solid var(--border-subtle)',
+    backgroundColor: 'var(--card)',
+    boxShadow: 'var(--shadow-card)',
+  }
+
   return (
     <NavBlockerContext.Provider value={navBlockerValue}>
     <Box sx={{ display: 'flex', minHeight: '100vh', backgroundColor: 'var(--background)' }}>
@@ -101,73 +169,90 @@ export function Layout({ onOpenSettings }: LayoutProps) {
         onConfirm={handleUnsavedConfirm}
       />
       {showRestartBanner && (
-        <Box
-          role="status"
-          sx={{
-            flexShrink: 0,
-            display: 'flex',
-            alignItems: 'center',
-            px: 2,
-            py: 1.25,
-            borderBottom: '1px solid var(--border-subtle)',
-            borderLeft: 'var(--accent-line-width, 3px) solid var(--muted)',
-            backgroundColor: 'color-mix(in srgb, var(--muted) 8%, var(--surface))',
-          }}
-        >
-          <Typography
-            variant="body2"
+        <>
+          <Box aria-hidden sx={statusOverlayBackdropSx} />
+          <Box
+            role="status"
             sx={{
-              color: 'var(--foreground-soft)',
-              fontWeight: 600,
-              fontSize: 'var(--font-size-body-sm)',
+              ...statusOverlayCardSx,
+              justifyContent: 'center',
+              borderLeft: 'var(--accent-line-width, 3px) solid var(--muted)',
             }}
           >
-            {restartPhase === 'pending'
-              ? t('device.restartPhasePending')
-              : t('device.restartPhaseRestarting')}
-          </Typography>
-        </Box>
+            <Typography
+              variant="body2"
+              textAlign="center"
+              sx={{
+                color: 'var(--foreground-soft)',
+                fontWeight: 600,
+                fontSize: 'var(--font-size-body-sm)',
+              }}
+            >
+              {restartPhase === 'pending'
+                ? t('device.restartPhasePending')
+                : t('device.restartPhaseRestarting')}
+            </Typography>
+          </Box>
+        </>
       )}
       {showDisconnectedCacheBanner && (
-        <Box
-          role="status"
-          sx={{
-            flexShrink: 0,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            gap: 2,
-            px: 2,
-            py: 1.25,
-            borderBottom: '1px solid var(--border-subtle)',
-            borderLeft: 'var(--accent-line-width, 3px) solid var(--semantic-warning)',
-            backgroundColor: 'color-mix(in srgb, var(--semantic-warning) 6%, var(--surface))',
-          }}
-        >
-          <Typography
-            variant="body2"
+        <>
+          <Box aria-hidden sx={statusOverlayBackdropSx} />
+          <Box
+            role="status"
             sx={{
-              color: 'var(--semantic-warning)',
-              fontWeight: 600,
-              fontSize: 'var(--font-size-body-sm)',
+              ...statusOverlayCardSx,
+              borderLeft: 'var(--accent-line-width, 3px) solid var(--semantic-warning)',
             }}
           >
-            {t('config.deviceDisconnectedCache')}
-          </Typography>
-          <Button
-            size="small"
-            variant="outlined"
-            onClick={clearCachedConfig}
-            sx={{
-              flexShrink: 0,
-              borderRadius: 'var(--radius-control)',
-              borderColor: 'var(--semantic-warning)',
-              color: 'var(--semantic-warning)',
-            }}
-          >
-            {t('config.clearCache')}
-          </Button>
-        </Box>
+            <Typography
+              variant="body2"
+              sx={{
+                color: 'var(--semantic-warning)',
+                fontWeight: 600,
+                fontSize: 'var(--font-size-body-sm)',
+                flex: 1,
+                minWidth: 0,
+              }}
+            >
+              {t('config.deviceDisconnectedCache')}
+            </Typography>
+            <Button
+              size="small"
+              variant="contained"
+              onClick={() => {
+                void handleRefreshCachedConfig()
+              }}
+              disabled={refreshingCache}
+              sx={{
+                flexShrink: 0,
+                borderRadius: 'var(--radius-control)',
+                backgroundColor: 'var(--primary)',
+                color: 'var(--primary-fg)',
+                '&:hover:not(:disabled)': {
+                  backgroundColor: 'color-mix(in srgb, var(--primary) 86%, black)',
+                },
+              }}
+            >
+              {refreshingCache
+                ? `${t('common.loading')}…`
+                : `${t('common.retry')} (${refreshCountdown}s)`}
+            </Button>
+            <Button
+              size="small"
+              variant="outlined"
+              onClick={clearCachedConfig}
+              sx={{
+                flexShrink: 0,
+                borderRadius: 'var(--radius-control)',
+                borderColor: 'var(--semantic-warning)',
+                color: 'var(--semantic-warning)',
+              }}
+            >
+              {t('config.clearCache')}
+            </Button>
+          </Box>
+        </>
       )}
       {sidebarAsDrawer ? (
         <>

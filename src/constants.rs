@@ -74,6 +74,17 @@ pub const SSE_LINE_BUF_SIZE: usize = 4096;
 /// HTTP 最大并发连接数（含 TLS）。lwIP ~10 socket，预留给 WSS/HTTP 服务器后可用 ~6，但 TLS 内存限制更紧。
 pub const MAX_CONCURRENT_HTTP: usize = 3;
 
+/// 压力判级：Normal 阈值的 internal 空闲下限（字节）。
+pub const PRESSURE_NORMAL_INTERNAL_MIN_BYTES: usize = 70 * 1024;
+/// 压力判级：Normal 阈值的 PSRAM 空闲下限（字节）。
+pub const PRESSURE_NORMAL_PSRAM_MIN_BYTES: usize = 4 * 1024 * 1024;
+/// 压力判级：Cautious 阈值的 internal 空闲下限（字节）。
+pub const PRESSURE_CAUTIOUS_INTERNAL_MIN_BYTES: usize = 48 * 1024;
+/// 压力判级：Cautious 阈值的 PSRAM 空闲下限（字节）。
+pub const PRESSURE_CAUTIOUS_PSRAM_MIN_BYTES: usize = 1 * 1024 * 1024;
+/// 压力判级：队列拥塞阈值（入站+出站总深度），默认容量下为 75%。
+pub const PRESSURE_QUEUE_CONGESTION_THRESHOLD: u32 = (DEFAULT_CAPACITY as u32) * 2 * 3 / 4;
+
 /// kv_store 工具：最多允许存储的条目数。
 pub const KV_STORE_MAX_ENTRIES: usize = 64;
 /// kv_store 工具：key 最大字节数；只允许 [a-zA-Z0-9_\-.] 字符。
