@@ -9,8 +9,8 @@ import {
   setStoredPairingCode,
 } from './DeviceContext'
 
-/** 定时检测设备连接间隔（毫秒），用于发现设备断线后更新侧栏/横幅状态 */
-const CONNECTION_POLL_INTERVAL_MS = 30_000
+/** 定时检测设备连接间隔（毫秒），用于更快更新重启与连接状态 */
+const CONNECTION_POLL_INTERVAL_MS = 10_000
 
 export function DeviceProvider({ children }: { children: React.ReactNode }) {
   const [baseUrl, setBaseUrlState] = useState(getStoredBaseUrl)

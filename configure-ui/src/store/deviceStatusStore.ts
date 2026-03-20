@@ -19,12 +19,18 @@ export interface DeviceStatus {
 export type RestartPhase = 'idle' | 'pending' | 'restarting'
 
 const RESTART_TIMEOUT_MS = 60_000
+/**
+ * 兜底：若指令发出后一直处于 reachable（可能因轮询采样未命中掉线窗口），
+ * 超过该时长自动结束 pending，避免蒙层卡死。
+ */
+const RESTART_PENDING_MAX_MS = 90_000
 
 let status: DeviceStatus = {
   connectionStatus: 'none',
   activated: null,
 }
 let restartPending = false
+let restartPendingSince: number | null = null
 let restartDropTime: number | null = null
 let reconnectedAfterRestart = false
 let restartTimeout = false
@@ -53,9 +59,17 @@ export function setDeviceStatus(connectionStatus: ConnectionStatus, activated: b
   emitChange()
 }
 
+/** 配置刷新成功后可调用：立即把连接态标记为可达，避免 UI 继续显示断连蒙层。 */
+export function markDeviceReachable(): void {
+  if (status.connectionStatus === 'reachable') return
+  status = { ...status, connectionStatus: 'reachable' }
+  emitChange()
+}
+
 /** 重启指令已发出，由 TopBar 在 POST /api/restart 成功后调用。 */
 export function setRestartPending(): void {
   restartPending = true
+  restartPendingSince = Date.now()
   restartDropTime = null
   emitChange()
 }
@@ -66,10 +80,23 @@ export function setRestartPending(): void {
  */
 export function updateRestartState(connectionStatus: ConnectionStatus): void {
   if (!restartPending) return
+  if (
+    restartDropTime === null &&
+    restartPendingSince !== null &&
+    Date.now() - restartPendingSince > RESTART_PENDING_MAX_MS
+  ) {
+    restartPending = false
+    restartPendingSince = null
+    restartDropTime = null
+    restartTimeout = true
+    emitChange()
+    return
+  }
   if (connectionStatus === 'unreachable') {
     if (restartDropTime === null) restartDropTime = Date.now()
     else if (Date.now() - restartDropTime > RESTART_TIMEOUT_MS) {
       restartPending = false
+      restartPendingSince = null
       restartDropTime = null
       restartTimeout = true
       emitChange()
@@ -78,6 +105,7 @@ export function updateRestartState(connectionStatus: ConnectionStatus): void {
   }
   if (connectionStatus === 'reachable' && restartDropTime !== null) {
     restartPending = false
+    restartPendingSince = null
     restartDropTime = null
     reconnectedAfterRestart = true
     emitChange()
