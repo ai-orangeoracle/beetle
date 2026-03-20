@@ -33,9 +33,10 @@ fn send_one_telegram<H: ChannelHttpClient>(
     content: &str,
 ) {
     const TAG: &str = "telegram_send";
-    let chunks = crate::channels::chunk::chunk_str_by_char_count(content, TELEGRAM_MAX_MESSAGE_LEN);
     let mut reply_to_message_id: Option<i64> = None;
-    for chunk in chunks {
+    for chunk in
+        crate::channels::chunk::chunk_str_by_char_count_iter(content, TELEGRAM_MAX_MESSAGE_LEN)
+    {
         let mut body = serde_json::json!({
             "chat_id": chat_id,
             "text": chunk,

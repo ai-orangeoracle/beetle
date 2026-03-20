@@ -70,3 +70,4 @@
 
 - 新增页面或组件前请对照本文档（含上节约束清单），确保不引入重阴影、重边框与硬编码色值/尺寸/动效。
 - 新增颜色或尺寸 token 时：颜色放入 `ThemeTokens`（按 mode/brand），布局/动效放入 `LAYOUT_TOKENS`，并在 `appTheme` 的 `:root` 中注入对应 CSS 变量。
+- 状态管理与请求入口评审基线：`docs/STATE_MANAGEMENT.md`（状态分层、统一 API 入口、统一保存反馈）。

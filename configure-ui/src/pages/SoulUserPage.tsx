@@ -14,6 +14,7 @@ import {
 import { SettingsSection } from "../components/SettingsSection";
 import { useDeviceApi, API_ERROR } from "../hooks/useDeviceApi";
 import { useUnsaved } from "../hooks/useUnsaved";
+import { createAsyncState } from "../types/asyncState";
 
 const MAX_CONTENT = 32 * 1024;
 
@@ -30,12 +31,10 @@ export function SoulUserPage() {
   const { t } = useTranslation();
   const { api, ready } = useDeviceApi();
   const { setDirty } = useUnsaved();
-  const [soul, setSoul] = useState("");
-  const [user, setUser] = useState("");
+  const [soulState, setSoulState] = useState(createAsyncState(""));
+  const [userState, setUserState] = useState(createAsyncState(""));
   const [savedSoul, setSavedSoul] = useState("");
   const [savedUser, setSavedUser] = useState("");
-  const [soulLoading, setSoulLoading] = useState(false);
-  const [userLoading, setUserLoading] = useState(false);
   const [soulSaveStatus, setSoulSaveStatus] = useState<
     "idle" | "saving" | "ok" | "fail"
   >("idle");
@@ -48,34 +47,43 @@ export function SoulUserPage() {
 
   const loadSoul = useCallback(() => {
     if (!ready) return;
-    setSoulLoading(true);
+    setSoulState((prev) => ({ ...prev, loading: true }));
     setLoadError("");
     api.soul
       .get()
       .then((res) => {
         if (res.ok) {
           const data = res.data ?? "";
-          setSoul(data);
+          setSoulState({ data, loading: false, error: "" });
           setSavedSoul(data);
-        } else setLoadError(res.error ?? "");
+        } else {
+          setSoulState((prev) => ({ ...prev, loading: false, error: res.error ?? "" }));
+          setLoadError(res.error ?? "");
+        }
       })
-      .catch(() => setLoadError("config.errorNetwork"))
-      .finally(() => setSoulLoading(false));
+      .catch(() => {
+        setSoulState((prev) => ({ ...prev, loading: false, error: "config.errorNetwork" }));
+        setLoadError("config.errorNetwork");
+      });
   }, [api.soul, ready]);
 
   const loadUser = useCallback(() => {
     if (!ready) return;
-    setUserLoading(true);
+    setUserState((prev) => ({ ...prev, loading: true }));
     api.user
       .get()
       .then((res) => {
         if (res.ok) {
           const data = res.data ?? "";
-          setUser(data);
+          setUserState({ data, loading: false, error: "" });
           setSavedUser(data);
+        } else {
+          setUserState((prev) => ({ ...prev, loading: false, error: res.error ?? "" }));
         }
       })
-      .finally(() => setUserLoading(false));
+      .catch(() =>
+        setUserState((prev) => ({ ...prev, loading: false, error: "config.errorNetwork" })),
+      );
   }, [api.user, ready]);
 
   const retryLoad = useCallback(() => {
@@ -100,36 +108,36 @@ export function SoulUserPage() {
   }, [ready, loadUser]);
 
   const handleSaveSoul = async () => {
-    if (soul.length > MAX_CONTENT) {
+    if (soulState.data.length > MAX_CONTENT) {
       setSoulSaveStatus("fail");
       setSoulError(t("config.validation.contentTooLong"));
       return;
     }
     setSoulSaveStatus("saving");
     setSoulError("");
-    const res = await api.soul.save(soul);
+    const res = await api.soul.save(soulState.data);
     setSoulSaveStatus(res.ok ? "ok" : "fail");
     setSoulError(apiErrorMessage(res.error, t));
-    if (res.ok) setSavedSoul(soul);
+    if (res.ok) setSavedSoul(soulState.data);
   };
 
   const handleSaveUser = async () => {
-    if (user.length > MAX_CONTENT) {
+    if (userState.data.length > MAX_CONTENT) {
       setUserSaveStatus("fail");
       setUserError(t("config.validation.contentTooLong"));
       return;
     }
     setUserSaveStatus("saving");
     setUserError("");
-    const res = await api.user.save(user);
+    const res = await api.user.save(userState.data);
     setUserSaveStatus(res.ok ? "ok" : "fail");
     setUserError(apiErrorMessage(res.error, t));
-    if (res.ok) setSavedUser(user);
+    if (res.ok) setSavedUser(userState.data);
   };
 
   useEffect(() => {
-    setDirty(soul !== savedSoul || user !== savedUser);
-  }, [soul, savedSoul, user, savedUser, setDirty]);
+    setDirty(soulState.data !== savedSoul || userState.data !== savedUser);
+  }, [soulState.data, savedSoul, userState.data, savedUser, setDirty]);
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 4 }}>
@@ -169,14 +177,14 @@ export function SoulUserPage() {
           ) : null
         }
       >
-        {soulLoading ? (
+        {soulState.loading ? (
           <SectionLoadingSkeleton />
         ) : (
           <>
             <TextField
               placeholder={t("soulUser.soulPlaceholder")}
-              value={soul}
-              onChange={(e) => setSoul(e.target.value)}
+              value={soulState.data}
+              onChange={(e) => setSoulState((prev) => ({ ...prev, data: e.target.value }))}
               multiline
               minRows={6}
               maxRows={16}
@@ -229,14 +237,14 @@ export function SoulUserPage() {
           ) : null
         }
       >
-        {userLoading ? (
+        {userState.loading ? (
           <SectionLoadingSkeleton />
         ) : (
           <>
             <TextField
               placeholder={t("soulUser.userPlaceholder")}
-              value={user}
-              onChange={(e) => setUser(e.target.value)}
+              value={userState.data}
+              onChange={(e) => setUserState((prev) => ({ ...prev, data: e.target.value }))}
               multiline
               minRows={4}
               maxRows={12}

@@ -145,7 +145,8 @@ pub fn drive_pwm_out(
 ) -> Result<String> {
     use esp_idf_svc::sys::{
         ledc_channel_config, ledc_channel_config_t, ledc_intr_type_t_LEDC_INTR_DISABLE,
-        ledc_mode_t_LEDC_LOW_SPEED_MODE, ledc_set_duty, ledc_timer_bit_t_LEDC_TIMER_13_BIT,
+        ledc_mode_t_LEDC_LOW_SPEED_MODE, ledc_set_duty,
+        ledc_sleep_mode_t_LEDC_SLEEP_MODE_NO_ALIVE_NO_PD, ledc_timer_bit_t_LEDC_TIMER_13_BIT,
         ledc_timer_config, ledc_timer_config_t, ledc_update_duty, ESP_OK,
     };
 
@@ -200,6 +201,7 @@ pub fn drive_pwm_out(
             gpio_num: pin,
             duty: duty_raw,
             hpoint: 0,
+            sleep_mode: ledc_sleep_mode_t_LEDC_SLEEP_MODE_NO_ALIVE_NO_PD,
             flags: Default::default(),
         };
         let ret = ledc_channel_config(&ch_conf);

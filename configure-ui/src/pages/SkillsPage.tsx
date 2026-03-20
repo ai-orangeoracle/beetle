@@ -22,6 +22,7 @@ import { FormFieldStack, InlineAlert, SectionLoadingSkeleton } from "../componen
 import { SettingsSection } from "../components/SettingsSection";
 import { useDeviceApi, type SkillItem } from "../hooks/useDeviceApi";
 import { useToast } from "../hooks/useToast";
+import { createAsyncState } from "../types/asyncState";
 
 const MAX_CONTENT = 32 * 1024;
 
@@ -29,10 +30,12 @@ export function SkillsPage() {
   const { t } = useTranslation();
   const { showToast } = useToast();
   const { api, ready, hasPairing } = useDeviceApi();
-  const [skills, setSkills] = useState<SkillItem[]>([]);
-  const [order, setOrder] = useState<string[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
+  const [listState, setListState] = useState(
+    createAsyncState<{ skills: SkillItem[]; order: string[] }>({
+      skills: [],
+      order: [],
+    }),
+  );
   const [editName, setEditName] = useState<string | null>(null);
   const [editContent, setEditContent] = useState("");
   const [editContentInitial, setEditContentInitial] = useState("");
@@ -55,15 +58,16 @@ export function SkillsPage() {
 
   const loadList = useCallback(async () => {
     if (!ready) return;
-    setLoading(true);
-    setError("");
+    setListState((prev) => ({ ...prev, loading: true, error: "" }));
     const res = await api.skills.list();
-    setLoading(false);
     if (res.ok && res.data) {
-      setSkills(res.data.skills);
-      setOrder(res.data.order ?? []);
+      setListState({
+        loading: false,
+        error: "",
+        data: { skills: res.data.skills, order: res.data.order ?? [] },
+      });
     } else {
-      setError(res.error ?? "");
+      setListState((prev) => ({ ...prev, loading: false, error: res.error ?? "" }));
     }
   }, [api.skills, ready]);
 
@@ -78,9 +82,13 @@ export function SkillsPage() {
   const handleToggleEnabled = async (name: string, enabled: boolean) => {
     const res = await api.skills.post({ name, enabled });
     if (res.ok)
-      setSkills((prev) =>
-        prev.map((s) => (s.name === name ? { ...s, enabled } : s)),
-      );
+      setListState((prev) => ({
+        ...prev,
+        data: {
+          ...prev.data,
+          skills: prev.data.skills.map((s) => (s.name === name ? { ...s, enabled } : s)),
+        },
+      }));
   };
 
   const openEdit = async (name: string) => {
@@ -168,6 +176,8 @@ export function SkillsPage() {
     }
   };
 
+  const skills = listState.data.skills;
+  const order = listState.data.order;
   const displayOrder = order.length ? order : skills.map((s) => s.name);
   const orderedSkills = displayOrder
     .map((name) => skills.find((s) => s.name === name))
@@ -177,7 +187,7 @@ export function SkillsPage() {
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 4 }}>
-      <InlineAlert message={error || null} onRetry={loadList} />
+      <InlineAlert message={listState.error || null} onRetry={loadList} />
       <SettingsSection
         icon={<ExtensionOutlined sx={{ fontSize: "var(--icon-size-md)" }} />}
         label={t("skills.sectionList")}
@@ -200,7 +210,7 @@ export function SkillsPage() {
           </Button>
         }
       >
-        {loading ? (
+        {listState.loading ? (
           <SectionLoadingSkeleton />
         ) : listToShow.length === 0 ? (
           <List dense disablePadding>

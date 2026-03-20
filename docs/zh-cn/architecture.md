@@ -25,6 +25,8 @@
 | **ota** (可选) | 从 URL 拉取固件、写 OTA 分区；失败不破坏当前分区。 |
 | **cron / heartbeat / skills** | 定时任务、周期日志（含 metrics 基线）、SPIFFS 技能加载。 |
 
+**平台边界补充**：除 `platform/` 外，`channels/wss_gateway/esp_conn.rs` 为 ESP 专用 WSS 传输，直接依赖 `esp-idf-svc`（需 `esp-idf-sys` 的 `extra_components` 拉取 `esp_websocket_client` 且绑定一致）。这是相对「业务层经 platform 访问硬件」的**明确例外**，避免与 CLAUDE.md 审查表述冲突。
+
 ---
 
 ## 数据流

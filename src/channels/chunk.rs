@@ -1,50 +1,105 @@
 //! 通道出站分片：按字符数或 UTF-8 字节数分片，供各通道 flush 使用。
 //! Chunking helpers for channel outbound; shared to avoid code duplication.
 
+/// 按最多 max_chars 个字符迭代分片，不拆开多字节字符。
+pub fn chunk_str_by_char_count_iter<'a>(
+    s: &'a str,
+    max_chars: usize,
+) -> impl Iterator<Item = &'a str> + 'a {
+    struct CharChunkIter<'a> {
+        s: &'a str,
+        max_chars: usize,
+        start: usize,
+    }
+    impl<'a> Iterator for CharChunkIter<'a> {
+        type Item = &'a str;
+        fn next(&mut self) -> Option<Self::Item> {
+            if self.max_chars == 0 || self.start >= self.s.len() {
+                return None;
+            }
+            let rest = &self.s[self.start..];
+            let mut taken = 0usize;
+            let mut end_rel = 0usize;
+            for (i, ch) in rest.char_indices() {
+                if taken >= self.max_chars {
+                    break;
+                }
+                end_rel = i + ch.len_utf8();
+                taken += 1;
+            }
+            if end_rel == 0 {
+                return None;
+            }
+            let end = self.start + end_rel;
+            let out = &self.s[self.start..end];
+            self.start = end;
+            Some(out)
+        }
+    }
+    CharChunkIter {
+        s,
+        max_chars,
+        start: 0,
+    }
+}
+
 /// 按最多 max_chars 个字符分片，不拆开多字节字符。迭代器实现，不中间分配 Vec<char>。
 pub fn chunk_str_by_char_count(s: &str, max_chars: usize) -> Vec<String> {
-    if max_chars == 0 {
-        return vec![];
+    chunk_str_by_char_count_iter(s, max_chars)
+        .map(|x| x.to_string())
+        .collect()
+}
+
+/// 按最多 max_bytes 个 UTF-8 字节迭代分片，不拆开多字节字符。
+pub fn chunk_str_by_utf8_bytes_iter<'a>(
+    s: &'a str,
+    max_bytes: usize,
+) -> impl Iterator<Item = &'a str> + 'a {
+    struct Utf8ChunkIter<'a> {
+        s: &'a str,
+        max_bytes: usize,
+        start: usize,
     }
-    let mut chunks = Vec::new();
-    let mut current = String::new();
-    let mut count = 0usize;
-    for c in s.chars() {
-        if count >= max_chars {
-            chunks.push(std::mem::take(&mut current));
-            count = 0;
+    impl<'a> Iterator for Utf8ChunkIter<'a> {
+        type Item = &'a str;
+        fn next(&mut self) -> Option<Self::Item> {
+            if self.max_bytes == 0 || self.start >= self.s.len() {
+                return None;
+            }
+            let rest = &self.s[self.start..];
+            let mut end_rel = 0usize;
+            for (i, ch) in rest.char_indices() {
+                let next = i + ch.len_utf8();
+                if next > self.max_bytes {
+                    break;
+                }
+                end_rel = next;
+            }
+            if end_rel == 0 {
+                // max_bytes 小于首字符字节数时，至少推进一个字符，避免死循环。
+                if let Some((_, ch)) = rest.char_indices().next() {
+                    end_rel = ch.len_utf8();
+                } else {
+                    return None;
+                }
+            }
+            let end = self.start + end_rel;
+            let out = &self.s[self.start..end];
+            self.start = end;
+            Some(out)
         }
-        current.push(c);
-        count += 1;
     }
-    if !current.is_empty() {
-        chunks.push(current);
+    Utf8ChunkIter {
+        s,
+        max_bytes,
+        start: 0,
     }
-    chunks
 }
 
 /// 按最多 max_bytes 个 UTF-8 字节分片，不拆开多字节字符。
+#[allow(dead_code)]
 pub fn chunk_str_by_utf8_bytes(s: &str, max_bytes: usize) -> Vec<String> {
-    if s.is_empty() {
-        return vec![];
-    }
-    if s.len() <= max_bytes {
-        return vec![s.to_string()];
-    }
-    let mut chunks = Vec::new();
-    let mut current = String::new();
-    let mut current_len = 0usize;
-    for c in s.chars() {
-        let n = c.len_utf8();
-        if current_len + n > max_bytes && !current.is_empty() {
-            chunks.push(std::mem::take(&mut current));
-            current_len = 0;
-        }
-        current.push(c);
-        current_len += n;
-    }
-    if !current.is_empty() {
-        chunks.push(current);
-    }
-    chunks
+    chunk_str_by_utf8_bytes_iter(s, max_bytes)
+        .map(|x| x.to_string())
+        .collect()
 }

@@ -33,20 +33,14 @@ fn chip_model_from_target() -> (&'static str, u32, u32) {
 
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 fn collect_esp() -> String {
-    use crate::platform::heap::{heap_free_internal, heap_free_spiram};
-
     let (chip_model, chip_revision, cores) = chip_model_from_target();
-
-    let heap_internal = heap_free_internal();
-    let psram_free = heap_free_spiram();
-    let heap_free = heap_internal.saturating_add(psram_free);
-
+    let snap = crate::orchestrator::snapshot();
+    let heap_internal = snap.heap_free_internal as usize;
+    let psram_free = snap.heap_free_spiram as usize;
+    let heap_total = heap_internal.saturating_add(psram_free);
     let heap_min_free = crate::platform::heap::heap_min_free_internal() as u64;
-
     let uptime_secs = crate::platform::time::uptime_secs();
-
     let idf_version = option_env!("IDF_VERSION").unwrap_or("unknown");
-    let budget = crate::orchestrator::current_budget();
     let wifi_sta_connected = crate::platform::is_wifi_sta_connected();
     let spiffs = crate::platform::spiffs_usage().map(|(total, used)| {
         let free = total.saturating_sub(used);
@@ -61,13 +55,16 @@ fn collect_esp() -> String {
         "chip_model": chip_model,
         "chip_revision": chip_revision,
         "cores": cores,
-        "heap_free": heap_free,
+        // Keep heap_free for backward compatibility; it represents internal + PSRAM total.
+        "heap_free": heap_total,
+        "heap_free_total": heap_total,
+        "heap_free_internal": heap_internal,
         "heap_min_free": heap_min_free,
         "psram_free": psram_free,
         "uptime_secs": uptime_secs,
         "idf_version": idf_version,
-        "pressure_level": format!("{:?}", budget.level),
-        "hint": budget.llm_hint,
+        "pressure_level": format!("{:?}", snap.pressure),
+        "hint": snap.budget.llm_hint,
         "wifi_sta_connected": wifi_sta_connected,
         "spiffs": spiffs,
     });
@@ -76,7 +73,7 @@ fn collect_esp() -> String {
 
 #[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
 fn collect_host() -> String {
-    let budget = crate::orchestrator::current_budget();
+    let snap = crate::orchestrator::snapshot();
     let wifi_sta_connected = crate::platform::is_wifi_sta_connected();
     let spiffs = crate::platform::spiffs_usage().map(|(total, used)| {
         let free = total.saturating_sub(used);
@@ -91,12 +88,14 @@ fn collect_host() -> String {
         "chip_revision": 0,
         "cores": 0,
         "heap_free": 0,
+        "heap_free_total": 0,
+        "heap_free_internal": 0,
         "heap_min_free": 0,
         "psram_free": 0,
         "uptime_secs": crate::platform::time::uptime_secs(),
         "idf_version": "n/a",
-        "pressure_level": format!("{:?}", budget.level),
-        "hint": budget.llm_hint,
+        "pressure_level": format!("{:?}", snap.pressure),
+        "hint": snap.budget.llm_hint,
         "wifi_sta_connected": wifi_sta_connected,
         "spiffs": spiffs,
     });
