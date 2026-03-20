@@ -48,6 +48,12 @@
   - 局部操作失败（如 WiFi 扫描）优先在操作区就地展示错误并提供重试。
 - **可访问性**：错误 Toast 使用 `role=\"alert\"` + `aria-live=\"assertive\"`；成功/警告使用 `aria-live=\"polite\"`。
 
+## 主题品牌（ThemeBrand）
+
+- **单源**：`src/config/themeTokens.ts` 的 `ThemeBrand`、`THEME_BRAND_KEYS`、`tokenMap`；默认偏好见 `appPreferencesContext.ts`。
+- **`logo`（默认）**：与 `public/logo.png` 对齐——浅色模式主色深紫 `#6d28d9`、强调电青 `#0891b2`；深色模式主色 `#a78bfa`、强调 `#22d3ee`，背景带轻微紫基调。
+- **已移除**：原「爱马仕橙」`orange` 品牌；本地若仍存 `themeBrand: "orange"` 的偏好会被视为无效并回退到默认 `logo`。
+
 ## 设计约束清单（写 UI/样式时必须遵守）
 
 以下为 `.cursor/rules/design-constraints.mdc` 的完整内容来源，AI 与开发写样式时以此为准：

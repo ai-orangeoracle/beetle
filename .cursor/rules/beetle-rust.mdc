@@ -1,5 +1,5 @@
 ---
-description: 甲虫 (beetle) Rust 编码约束与架构约定
+description: 甲壳虫 (beetle) Rust 编码约束与架构约定
 globs: rust/**/*.rs, rust/**/*.toml, rust/**/README*, src/**/*.rs, Cargo.toml
 alwaysApply: false
 ---
@@ -15,10 +15,10 @@ alwaysApply: false
 
 ## 项目命名
 
-- **中文名**：甲虫
+- **中文名**：甲壳虫
 - **英文名**：beetle
 - **Crate 名**：`beetle`
-- 对外类型与日志可带 "beetle" 或 "甲虫"；注释与文档保持中英双语。
+- 对外类型与日志可带 "beetle" 或 "甲壳虫"；注释与文档保持中英双语。
 
 ## 架构原则
 

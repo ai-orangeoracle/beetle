@@ -3,7 +3,7 @@ name = "beetle"
 version = "0.1.0"
 edition = "2021"
 authors = ["Beetle Team"]
-description = "甲虫 (beetle) - ESP32-S3 AI Agent firmware"
+description = "甲壳虫 (beetle) - ESP32-S3 AI Agent firmware"
 license = "MIT OR Apache-2.0"
 repository = ""
 

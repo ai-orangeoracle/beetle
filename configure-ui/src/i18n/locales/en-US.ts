@@ -252,7 +252,7 @@ export const enUS = {
       dark: 'Dark',
       blue: 'Blue',
       teal: 'Teal',
-      orange: 'Hermès Orange',
+      logo: 'Logo (violet & cyan)',
       firmware: 'Firmware',
     },
   },

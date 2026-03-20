@@ -17,7 +17,7 @@ function isThemeBrand(value: unknown): value is ThemeBrand {
   return (
     value === 'blue' ||
     value === 'teal' ||
-    value === 'orange' ||
+    value === 'logo' ||
     value === 'firmware'
   )
 }

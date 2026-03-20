@@ -1,5 +1,6 @@
 export type ThemeMode = 'light' | 'dark'
-export type ThemeBrand = 'blue' | 'teal' | 'orange' | 'firmware'
+/** logo：取自 `public/logo.png` 主色（深紫主色 + 电青强调） */
+export type ThemeBrand = 'blue' | 'teal' | 'logo' | 'firmware'
 
 /**
  * 布局与动效 Token（单源，与 mode/brand 无关）。
@@ -176,11 +177,13 @@ export const SEMANTIC_COLORS = {
 export const BRAND_COLORS: Record<ThemeBrand, string> = {
   blue: '#3b82f6',
   teal: '#14b8a6',
-  orange: '#f97316',
+  /** Logo 主色域：壳面深紫（与 logo 视觉一致） */
+  logo: '#6d28d9',
   firmware: '#c43030',
 }
 
-export const THEME_BRAND_KEYS: ThemeBrand[] = ['blue', 'teal', 'orange', 'firmware']
+/** 设置里展示顺序：默认品牌 logo 放首位 */
+export const THEME_BRAND_KEYS: ThemeBrand[] = ['logo', 'blue', 'teal', 'firmware']
 
 const tokenMap: Record<ThemeMode, Record<ThemeBrand, ThemeTokens>> = {
   light: {
@@ -232,17 +235,17 @@ const tokenMap: Record<ThemeMode, Record<ThemeBrand, ThemeTokens>> = {
       shadowCardHover: '0 2px 6px rgba(0,0,0,0.05)',
       badgeNew: '#ef4444',
     },
-    orange: {
+    logo: {
       background: '#ffffff',
       foreground: '#2d3142',
       card: '#ffffff',
-      surface: '#f8f9fc',
+      surface: '#f7f5ff',
       muted: '#64748b',
-      border: '#e2e8f0',
-      primary: '#f97316',
-      primarySoft: 'rgba(249, 115, 22, 0.06)',
+      border: '#e8e4f2',
+      primary: '#6d28d9',
+      primarySoft: 'rgba(109, 40, 217, 0.08)',
       primaryFg: '#ffffff',
-      accent: '#fb923c',
+      accent: '#0891b2',
       imageOverlay: 'rgba(0, 0, 0, 0.50)',
       overlay: 'rgba(255, 255, 255, 0.92)',
       appBarGlass: 'rgba(255, 255, 255, 0.72)',
@@ -251,7 +254,7 @@ const tokenMap: Record<ThemeMode, Record<ThemeBrand, ThemeTokens>> = {
       transitionDuration: '200ms',
       transitionDurationEmphasized: '220ms',
       foregroundSoft: '#64748b',
-      borderSubtle: '#f1f5f9',
+      borderSubtle: '#f1effa',
       shadowSubtle: '0 1px 2px rgba(0,0,0,0.04)',
       shadowCardHover: '0 2px 6px rgba(0,0,0,0.05)',
       badgeNew: '#ef4444',
@@ -330,26 +333,26 @@ const tokenMap: Record<ThemeMode, Record<ThemeBrand, ThemeTokens>> = {
       shadowCardHover: '0 4px 10px rgba(0,0,0,0.28)',
       badgeNew: '#f87171',
     },
-    orange: {
-      background: '#111318',
-      foreground: '#e2e8f0',
-      card: '#1a1d24',
-      surface: '#231f1c',
+    logo: {
+      background: '#0f0b18',
+      foreground: '#e8e4f5',
+      card: '#161024',
+      surface: '#1c1530',
       muted: '#94a3b8',
-      border: '#334155',
-      primary: '#fb923c',
-      primarySoft: 'rgba(249, 115, 22, 0.10)',
+      border: '#352848',
+      primary: '#a78bfa',
+      primarySoft: 'rgba(167, 139, 250, 0.12)',
       primaryFg: '#ffffff',
-      accent: '#fdba74',
+      accent: '#22d3ee',
       imageOverlay: 'rgba(0, 0, 0, 0.55)',
-      overlay: 'rgba(17, 19, 24, 0.92)',
-      appBarGlass: 'rgba(26, 29, 36, 0.75)',
+      overlay: 'rgba(15, 11, 24, 0.92)',
+      appBarGlass: 'rgba(22, 16, 36, 0.75)',
       backdropOverlay: 'rgba(0, 0, 0, 0.50)',
       glassBlur: '24px',
       transitionDuration: '200ms',
       transitionDurationEmphasized: '220ms',
       foregroundSoft: '#94a3b8',
-      borderSubtle: '#1e1c1a',
+      borderSubtle: '#241a38',
       shadowSubtle: '0 1px 3px rgba(0,0,0,0.20)',
       shadowCardHover: '0 4px 10px rgba(0,0,0,0.28)',
       badgeNew: '#f87171',

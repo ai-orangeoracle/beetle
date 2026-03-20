@@ -1,4 +1,4 @@
-//! 甲虫 (beetle) - 稳定对外 API。
+//! 甲壳虫 (beetle) - 稳定对外 API。
 //! beetle - stable public API.
 
 mod build_info;
