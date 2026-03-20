@@ -4,7 +4,7 @@
 
 ## What is this?
 
-**Beetle Configure UI** is the config web app for **Beetle** (甲虫) firmware. It is a standalone frontend that talks to the device over HTTP: you open it in a browser, connect to the device (via its hotspot or same LAN), then set WiFi, LLM, channels, and other options. The UI is **not** shipped inside the firmware; it is either served by the device (built-in copy) or loaded from the online build (GitHub Pages), so the firmware stays small and the config experience can be updated without flashing.
+**Beetle Configure UI** is the config web app for **Beetle** (甲壳虫) firmware. It is a standalone frontend that talks to the device over HTTP: you open it in a browser, connect to the device (via its hotspot or same LAN), then set WiFi, LLM, channels, and other options. The UI is **not** shipped inside the firmware; it is either served by the device (built-in copy) or loaded from the online build (GitHub Pages), so the firmware stays small and the config experience can be updated without flashing.
 
 ## Why does this repo exist?
 
@@ -34,7 +34,7 @@ All write operations require the correct pairing code; the UI sends it for you.
 You must have both of the following:
 
 1. **A device with Beetle firmware flashed.**  
-   The config page only talks to a device running the Beetle (甲虫) firmware. If you have not flashed the firmware yet, build and flash it first (see the **parent repo’s README or docs** for build and flash instructions). This UI does not replace the need for a flashed device.
+   The config page only talks to a device running the Beetle (甲壳虫) firmware. If you have not flashed the firmware yet, build and flash it first (see the **parent repo’s README or docs** for build and flash instructions). This UI does not replace the need for a flashed device.
 
 2. **The device powered on and reachable.**  
    - **First use / not yet on your WiFi:** The device will open a **WiFi hotspot** with SSID **Beetle** (no password). Your phone or PC must **connect to this hotspot**; then open **http://192.168.4.1** (matches firmware SoftAP address).

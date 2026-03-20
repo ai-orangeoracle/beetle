@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="docs/assets/beetle-logo.svg" alt="甲虫" width="64" height="64" />
+  <img src="configure-ui/public/logo.png" alt="甲壳虫" width="64" height="64" />
 </p>
 
-# Beetle（甲虫）
+# Beetle（甲壳虫）
 
 [![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE)
 

@@ -22,7 +22,7 @@ export interface AppPreferencesContextValue extends AppPreferencesState {
 export const defaultPreferences: AppPreferencesState = {
   language: 'zh-CN',
   themeMode: 'dark',
-  themeBrand: 'firmware',
+  themeBrand: 'logo',
 }
 
 export const AppPreferencesContext = createContext<AppPreferencesContextValue | null>(null)

@@ -1,4 +1,4 @@
-//! 甲虫 (beetle) - ESP32-S3 firmware entry.
+//! 甲壳虫 (beetle) - ESP32-S3 firmware entry.
 //! Firmware version is embedded for OTA and ops.
 //! Startup order: NVS → SPIFFS → config → WiFi → memory/session stores → MessageBus → self-check → cron/heartbeat/sinks/dispatch/CLI → agent_loop.
 //! ESP32: no graceful shutdown; process runs until power off.
@@ -99,7 +99,7 @@ fn main() {
         return;
     }
     log::info!("========================================");
-    log::info!("  甲虫 beetle v{}", VERSION);
+    log::info!("  甲壳虫 beetle v{}", VERSION);
     log::info!("========================================");
 
     let config_store = platform.config_store();

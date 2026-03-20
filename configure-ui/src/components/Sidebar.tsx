@@ -112,26 +112,14 @@ export function Sidebar({ drawer }: SidebarProps) {
           "&:hover": { opacity: 0.9 },
         }}
       >
-        <Box
+        <BeetleIcon
           aria-hidden
           sx={{
             width: "var(--icon-container-sm)",
             height: "var(--icon-container-sm)",
             borderRadius: "var(--radius-control)",
-            background:
-              "linear-gradient(135deg, var(--primary), var(--accent))",
-            boxShadow:
-              "0 1px 6px color-mix(in srgb, var(--primary) 10%, transparent)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            flexShrink: 0,
           }}
-        >
-          <BeetleIcon
-            sx={{ color: "var(--primary-fg)", fontSize: "var(--icon-size-sm)" }}
-          />
-        </Box>
+        />
         <Typography
             component="span"
             variant="h6"

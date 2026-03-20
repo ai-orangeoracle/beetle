@@ -1,4 +1,4 @@
-# beetle (甲虫) - Common defaults
+# beetle (甲壳虫) - Common defaults
 # Target-specific: sdkconfig.defaults.esp32s3 / sdkconfig.defaults.esp32c3
 
 # 不用蓝牙时显式关闭，减少链接进固件的组件（若需 BLE 可删此行）

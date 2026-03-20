@@ -1,7 +1,7 @@
 export const zhCN = {
   translation: {
     app: {
-      name: '甲虫',
+      name: '甲壳虫',
       tagline: '配置',
     },
     nav: {
@@ -252,7 +252,7 @@ export const zhCN = {
       dark: '深色',
       blue: '蓝色',
       teal: '青绿',
-      orange: '爱马仕橙',
+      logo: 'Logo（紫青）',
       firmware: '固件内置',
     },
   },

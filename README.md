@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/beetle-logo.svg" alt="Beetle" width="64" height="64" />
+  <img src="configure-ui/public/logo.png" alt="Beetle" width="64" height="64" />
 </p>
 
 # Beetle
