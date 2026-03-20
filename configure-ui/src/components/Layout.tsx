@@ -157,7 +157,14 @@ export function Layout({ onOpenSettings }: LayoutProps) {
 
   return (
     <NavBlockerContext.Provider value={navBlockerValue}>
-    <Box sx={{ display: 'flex', minHeight: '100vh', backgroundColor: 'var(--background)' }}>
+    <Box
+      sx={{
+        display: 'flex',
+        height: '100vh',
+        overflow: 'hidden',
+        backgroundColor: 'var(--background)',
+      }}
+    >
       <ConfirmDialog
         open={showUnsavedDialog}
         onClose={() => setPendingPath(null)}
@@ -286,6 +293,7 @@ export function Layout({ onOpenSettings }: LayoutProps) {
               sx={{
                 flex: 1,
                 minHeight: 0,
+                overflow: 'auto',
                 pt: 3,
                 pb: 5,
                 px: 2,

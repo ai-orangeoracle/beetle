@@ -12,6 +12,34 @@ import { useDeviceApi } from "../hooks/useDeviceApi";
 import type { HealthData, DiagnoseItem } from "../api/endpoints/system";
 import { createAsyncState } from "../types/asyncState";
 
+function kvEntries(obj: object | null | undefined) {
+  if (!obj) return [];
+  return Object.entries(obj as Record<string, unknown>).filter(
+    ([, value]) => value !== undefined && value !== null,
+  );
+}
+
+function KvList({ items }: { items: Array<[string, unknown]> }) {
+  if (!items.length) return null;
+  return (
+    <List dense disablePadding>
+      {items.map(([key, value]) => (
+        <ListItem key={key} sx={{ py: 0.5, px: 0 }}>
+          <ListItemText
+            primary={`${key}: ${String(value)}`}
+            slotProps={{
+              primary: {
+                variant: "body2",
+                sx: { fontFamily: "var(--font-mono)" },
+              },
+            }}
+          />
+        </ListItem>
+      ))}
+    </List>
+  );
+}
+
 export function SystemLogsPage() {
   const { t } = useTranslation();
   const { api, ready } = useDeviceApi();
@@ -81,78 +109,31 @@ export function SystemLogsPage() {
                 >
                   GET /api/health
                 </Typography>
-                <List dense disablePadding>
-                  <ListItem sx={{ py: 0.5, px: 0 }}>
-                    <ListItemText
-                      primary={`wifi: ${logsState.data.health.wifi ?? "—"}`}
-                      slotProps={{
-                        primary: {
-                          variant: "body2",
-                          sx: { fontFamily: "var(--font-mono)" },
-                        },
-                      }}
-                    />
-                  </ListItem>
-                  <ListItem sx={{ py: 0.5, px: 0 }}>
-                    <ListItemText
-                      primary={`inbound_depth: ${logsState.data.health.inbound_depth ?? "—"}`}
-                      slotProps={{
-                        primary: {
-                          variant: "body2",
-                          sx: { fontFamily: "var(--font-mono)" },
-                        },
-                      }}
-                    />
-                  </ListItem>
-                  <ListItem sx={{ py: 0.5, px: 0 }}>
-                    <ListItemText
-                      primary={`outbound_depth: ${logsState.data.health.outbound_depth ?? "—"}`}
-                      slotProps={{
-                        primary: {
-                          variant: "body2",
-                          sx: { fontFamily: "var(--font-mono)" },
-                        },
-                      }}
-                    />
-                  </ListItem>
-                  <ListItem sx={{ py: 0.5, px: 0 }}>
-                    <ListItemText
-                      primary={`last_error: ${logsState.data.health.last_error ?? "none"}`}
-                      slotProps={{
-                        primary: {
-                          variant: "body2",
-                          sx: { fontFamily: "var(--font-mono)" },
-                        },
-                      }}
-                    />
-                  </ListItem>
-                  {logsState.data.health.resource && (
-                    <>
-                      <ListItem sx={{ py: 0.5, px: 0 }}>
-                        <ListItemText
-                          primary={`resource.pressure: ${logsState.data.health.resource.pressure ?? "—"}`}
-                          slotProps={{
-                            primary: {
-                              variant: "body2",
-                              sx: { fontFamily: "var(--font-mono)" },
-                            },
-                          }}
-                        />
-                      </ListItem>
-                      <ListItem sx={{ py: 0.5, px: 0 }}>
-                        <ListItemText
-                          primary={`resource.heap_largest_block_internal: ${logsState.data.health.resource.heap_largest_block_internal ?? "—"}`}
-                          slotProps={{
-                            primary: {
-                              variant: "body2",
-                              sx: { fontFamily: "var(--font-mono)" },
-                            },
-                          }}
-                        />
-                      </ListItem>
-                    </>
-                  )}
-                </List>
+                <Box sx={{ mt: 0.75 }}>
+                  <Typography variant="caption" sx={{ color: "var(--muted)" }}>
+                    health
+                  </Typography>
+                  <KvList
+                    items={kvEntries({
+                      wifi: logsState.data.health.wifi,
+                      inbound_depth: logsState.data.health.inbound_depth,
+                      outbound_depth: logsState.data.health.outbound_depth,
+                      last_error: logsState.data.health.last_error ?? "none",
+                    })}
+                  />
+                </Box>
+                <Box sx={{ mt: 0.75 }}>
+                  <Typography variant="caption" sx={{ color: "var(--muted)" }}>
+                    resource
+                  </Typography>
+                  <KvList items={kvEntries(logsState.data.health.resource)} />
+                </Box>
+                <Box sx={{ mt: 0.75 }}>
+                  <Typography variant="caption" sx={{ color: "var(--muted)" }}>
+                    metrics
+                  </Typography>
+                  <KvList items={kvEntries(logsState.data.health.metrics)} />
+                </Box>
               </Box>
             )}
             {logsState.data.diagnose.length > 0 && (
