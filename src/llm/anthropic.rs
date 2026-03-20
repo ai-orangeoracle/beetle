@@ -6,11 +6,9 @@
 use crate::config::{AppConfig, LlmSource};
 use crate::error::{Error, Result};
 use crate::llm::types::MAX_REQUEST_BODY_LEN;
-use crate::llm::types::{
-    AnthropicRequest, AnthropicRequestMessage, AnthropicResponse, AnthropicTool, StopReason,
-    ToolCall,
-};
+use crate::llm::types::{AnthropicResponse, StopReason, ToolCall};
 use crate::llm::{LlmClient, LlmHttpClient, LlmResponse, Message, ToolSpec};
+use serde::Serialize;
 use serde_json;
 
 const TAG: &str = "llm::anthropic";
@@ -116,34 +114,53 @@ fn build_request_body(
     tools: Option<&[ToolSpec]>,
     stream: bool,
 ) -> Result<Vec<u8>> {
+    #[derive(Serialize)]
+    struct AnthropicToolRef<'a> {
+        name: &'a str,
+        description: &'a str,
+        input_schema: &'a serde_json::Value,
+    }
+    #[derive(Serialize)]
+    struct AnthropicRequestMessageRef<'a> {
+        role: &'a str,
+        content: &'a str,
+    }
+    #[derive(Serialize)]
+    struct AnthropicRequestRef<'a> {
+        model: &'a str,
+        max_tokens: u32,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        system: Option<&'a str>,
+        messages: Vec<AnthropicRequestMessageRef<'a>>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        tools: Option<Vec<AnthropicToolRef<'a>>>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        stream: Option<bool>,
+    }
     let tools_api = tools.and_then(|t| {
         if t.is_empty() {
             None
         } else {
             Some(
                 t.iter()
-                    .map(|s| AnthropicTool {
-                        name: s.name.clone(),
-                        description: s.description.clone(),
-                        input_schema: s.parameters.clone(),
+                    .map(|s| AnthropicToolRef {
+                        name: &s.name,
+                        description: &s.description,
+                        input_schema: &s.parameters,
                     })
                     .collect::<Vec<_>>(),
             )
         }
     });
-    let req = AnthropicRequest {
-        model: model.to_string(),
+    let req = AnthropicRequestRef {
+        model,
         max_tokens,
-        system: if system.is_empty() {
-            None
-        } else {
-            Some(system.to_string())
-        },
+        system: if system.is_empty() { None } else { Some(system) },
         messages: messages
             .iter()
-            .map(|m| AnthropicRequestMessage {
-                role: m.role.clone(),
-                content: m.content.clone(),
+            .map(|m| AnthropicRequestMessageRef {
+                role: &m.role,
+                content: &m.content,
             })
             .collect(),
         tools: tools_api,
@@ -240,12 +257,17 @@ impl AnthropicStreamAccumulator {
         }
     }
 
-    /// 处理单条 SSE 事件（event type + JSON data）。
-    fn handle_event(&mut self, event_type: &str, data: &str) {
+    /// 处理单条 SSE 事件（event type + JSON data），返回 text_delta 供进度回调。
+    fn handle_event_value(
+        &mut self,
+        event_type: &str,
+        data: Option<&serde_json::Value>,
+    ) -> Option<String> {
+        let mut delta_text: Option<String> = None;
         match event_type {
             "content_block_start" => {
                 // content_block_start: 新增 text 或 tool_use block。
-                if let Ok(val) = serde_json::from_str::<serde_json::Value>(data) {
+                if let Some(val) = data {
                     if let Some(cb) = val.get("content_block") {
                         let block_type = cb.get("type").and_then(|v| v.as_str()).unwrap_or("");
                         if block_type == "tool_use" {
@@ -269,13 +291,14 @@ impl AnthropicStreamAccumulator {
                 }
             }
             "content_block_delta" => {
-                if let Ok(val) = serde_json::from_str::<serde_json::Value>(data) {
+                if let Some(val) = data {
                     if let Some(delta) = val.get("delta") {
                         let delta_type = delta.get("type").and_then(|v| v.as_str()).unwrap_or("");
                         match delta_type {
                             "text_delta" => {
                                 if let Some(text) = delta.get("text").and_then(|v| v.as_str()) {
                                     self.content.push_str(text);
+                                    delta_text = Some(text.to_string());
                                 }
                             }
                             "input_json_delta" => {
@@ -293,7 +316,7 @@ impl AnthropicStreamAccumulator {
                 }
             }
             "message_delta" => {
-                if let Ok(val) = serde_json::from_str::<serde_json::Value>(data) {
+                if let Some(val) = data {
                     if let Some(delta) = val.get("delta") {
                         if let Some(sr) = delta.get("stop_reason").and_then(|v| v.as_str()) {
                             self.stop_reason = match sr {
@@ -310,6 +333,7 @@ impl AnthropicStreamAccumulator {
                 // message_start, content_block_stop, message_stop, ping: 忽略。
             }
         }
+        delta_text
     }
 
     /// 流结束，产出最终 LlmResponse。
@@ -364,27 +388,8 @@ fn do_request_streaming(
         .do_post_streaming(url, &headers, body, &mut |chunk| {
             sse_reader.feed(chunk);
             while let Some(event) = sse_reader.next_event() {
-                // Check for text_delta before handling, to capture the delta for progress callback.
-                let delta_text = if event.event == "content_block_delta" {
-                    if let Ok(val) = serde_json::from_str::<serde_json::Value>(&event.data) {
-                        val.get("delta")
-                            .and_then(|d| d.get("type"))
-                            .and_then(|t| t.as_str())
-                            .filter(|&t| t == "text_delta")
-                            .and_then(|_| {
-                                val.get("delta")
-                                    .and_then(|d| d.get("text"))
-                                    .and_then(|t| t.as_str())
-                            })
-                            .map(|s| s.to_string())
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                };
-
-                accumulator.handle_event(&event.event, &event.data);
+                let parsed = serde_json::from_str::<serde_json::Value>(&event.data).ok();
+                let delta_text = accumulator.handle_event_value(&event.event, parsed.as_ref());
 
                 if let (Some(ref delta), Some(ref mut cb)) = (&delta_text, &mut progress_cb) {
                     cb(delta, &accumulator.content);

@@ -359,20 +359,13 @@ impl OpenAiStreamAccumulator {
         }
     }
 
-    /// 处理单条 SSE data（JSON chunk）。data: [DONE] 表示结束。
-    fn handle_data(&mut self, data: &str) {
-        if data == "[DONE]" {
-            return;
-        }
-
-        let val: serde_json::Value = match serde_json::from_str(data) {
-            Ok(v) => v,
-            Err(_) => return,
-        };
+    /// 处理单条 SSE data 的已解析 JSON chunk；返回 content_delta 供进度回调。
+    fn handle_value(&mut self, val: &serde_json::Value) -> Option<String> {
+        let mut delta_text: Option<String> = None;
 
         let choices = match val.get("choices").and_then(|v| v.as_array()) {
             Some(c) => c,
-            None => return,
+            None => return None,
         };
 
         for choice in choices {
@@ -389,6 +382,7 @@ impl OpenAiStreamAccumulator {
             // delta.content
             if let Some(text) = delta.get("content").and_then(|v| v.as_str()) {
                 self.content.push_str(text);
+                delta_text = Some(text.to_string());
             }
 
             // delta.tool_calls
@@ -428,6 +422,7 @@ impl OpenAiStreamAccumulator {
                 }
             }
         }
+        delta_text
     }
 
     fn finish(self) -> LlmResponse {
@@ -457,22 +452,6 @@ impl OpenAiStreamAccumulator {
     }
 }
 
-/// 从 OpenAI SSE data 中提取 choices[0].delta.content 文本（用于进度回调）。
-fn extract_content_delta(data: &str) -> Option<String> {
-    if data == "[DONE]" {
-        return None;
-    }
-    let val: serde_json::Value = serde_json::from_str(data).ok()?;
-    val.get("choices")
-        .and_then(|v| v.as_array())
-        .and_then(|arr| arr.first())
-        .and_then(|c| c.get("delta"))
-        .and_then(|d| d.get("content"))
-        .and_then(|v| v.as_str())
-        .filter(|s| !s.is_empty())
-        .map(|s| s.to_string())
-}
-
 fn do_request_streaming(
     http: &mut dyn LlmHttpClient,
     url: &str,
@@ -499,10 +478,14 @@ fn do_request_streaming(
         .do_post_streaming(url, &headers, body, &mut |chunk| {
             sse_reader.feed(chunk);
             while let Some(event) = sse_reader.next_event() {
-                // Extract delta text before handling, for progress callback.
-                let delta_text = extract_content_delta(&event.data);
-
-                accumulator.handle_data(&event.data);
+                if event.data == "[DONE]" {
+                    continue;
+                }
+                let parsed = match serde_json::from_str::<serde_json::Value>(&event.data) {
+                    Ok(v) => v,
+                    Err(_) => continue,
+                };
+                let delta_text = accumulator.handle_value(&parsed);
 
                 if let (Some(ref delta), Some(ref mut cb)) = (&delta_text, &mut progress_cb) {
                     cb(delta, &accumulator.content);

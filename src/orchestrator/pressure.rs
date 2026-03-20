@@ -1,7 +1,12 @@
 //! 压力等级计算：吸收 resource.rs 的 PressureLevel + ResourceBudget 逻辑。
 //! Pressure level computation: absorbs resource.rs PressureLevel + ResourceBudget.
 
-use crate::constants::{DEFAULT_MESSAGES_MAX_LEN, DEFAULT_SYSTEM_MAX_LEN, MAX_RESPONSE_BODY_LEN};
+use crate::constants::{
+    DEFAULT_MESSAGES_MAX_LEN, DEFAULT_SYSTEM_MAX_LEN, MAX_RESPONSE_BODY_LEN, MAX_CONCURRENT_HTTP,
+    PRESSURE_CAUTIOUS_INTERNAL_MIN_BYTES, PRESSURE_CAUTIOUS_PSRAM_MIN_BYTES,
+    PRESSURE_NORMAL_INTERNAL_MIN_BYTES, PRESSURE_NORMAL_PSRAM_MIN_BYTES,
+    PRESSURE_QUEUE_CONGESTION_THRESHOLD,
+};
 use std::sync::atomic::Ordering;
 
 use super::state::OrchestratorState;
@@ -51,11 +56,6 @@ pub struct ResourceBudget {
     pub llm_hint: &'static str,
 }
 
-const NORMAL_INTERNAL_KB: u32 = 70;
-const NORMAL_PSRAM_MB: u32 = 4;
-const CAUTIOUS_INTERNAL_KB: u32 = 48;
-const CAUTIOUS_PSRAM_MB: u32 = 1;
-
 pub fn budget_for_level(level: PressureLevel) -> ResourceBudget {
     match level {
         PressureLevel::Normal => ResourceBudget {
@@ -87,41 +87,43 @@ pub fn budget_for_level(level: PressureLevel) -> ResourceBudget {
 
 /// 队列深度高压阈值：入站 + 出站总深度达 75% 总容量时视为拥塞。
 /// Queue congestion threshold: total depth ≥ 75% of combined capacity (2 × DEFAULT_CAPACITY).
-const QUEUE_CONGESTION_THRESHOLD: u32 = (crate::constants::DEFAULT_CAPACITY as u32) * 2 * 3 / 4;
-
 /// 根据原子状态计算压力等级，含堆维度 + 连接数维度 + 队列深度维度。
 /// Compute pressure level from atomic state, including heap + active connection + queue depth dimensions.
 pub fn compute_pressure(state: &OrchestratorState) -> PressureLevel {
-    let internal = state.heap_free_internal.load(Ordering::Relaxed);
-    let spiram = state.heap_free_spiram.load(Ordering::Relaxed);
+    let internal = state.heap_free_internal.load(Ordering::Relaxed) as usize;
+    let spiram = state.heap_free_spiram.load(Ordering::Relaxed) as usize;
     let active_http = state.active_http_count.load(Ordering::Relaxed);
-    let internal_kb = internal / 1024;
-    let spiram_mb = spiram / (1024 * 1024);
     let queue_total =
         state.inbound_depth.load(Ordering::Relaxed) + state.outbound_depth.load(Ordering::Relaxed);
 
     // Critical: internal 低于 Cautious 阈值且 PSRAM 也低
-    if internal_kb < CAUTIOUS_INTERNAL_KB && (spiram == 0 || spiram_mb < CAUTIOUS_PSRAM_MB) {
+    if internal < PRESSURE_CAUTIOUS_INTERNAL_MIN_BYTES
+        && (spiram == 0 || spiram < PRESSURE_CAUTIOUS_PSRAM_MIN_BYTES)
+    {
         return PressureLevel::Critical;
     }
 
     // Critical: 队列拥塞 + 堆不足同时出现
-    if queue_total >= QUEUE_CONGESTION_THRESHOLD && internal_kb < NORMAL_INTERNAL_KB {
+    if queue_total >= PRESSURE_QUEUE_CONGESTION_THRESHOLD
+        && internal < PRESSURE_NORMAL_INTERNAL_MIN_BYTES
+    {
         return PressureLevel::Critical;
     }
 
     // Cautious: 堆不足 Normal 阈值
-    if internal_kb < NORMAL_INTERNAL_KB || (spiram > 0 && spiram_mb < NORMAL_PSRAM_MB) {
+    if internal < PRESSURE_NORMAL_INTERNAL_MIN_BYTES
+        || (spiram > 0 && spiram < PRESSURE_NORMAL_PSRAM_MIN_BYTES)
+    {
         return PressureLevel::Cautious;
     }
 
     // Cautious: 连接数过高
-    if active_http >= crate::constants::MAX_CONCURRENT_HTTP as u32 {
+    if active_http >= MAX_CONCURRENT_HTTP as u32 {
         return PressureLevel::Cautious;
     }
 
     // Cautious: 队列深度达到拥塞阈值
-    if queue_total >= QUEUE_CONGESTION_THRESHOLD {
+    if queue_total >= PRESSURE_QUEUE_CONGESTION_THRESHOLD {
         return PressureLevel::Cautious;
     }
 
