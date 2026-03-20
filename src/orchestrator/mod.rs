@@ -105,6 +105,22 @@ pub fn snapshot() -> ResourceSnapshot {
     state::ResourceSnapshot::from_state(&STATE)
 }
 
+/// 单行资源基线字符串，与 [`snapshot`] 及 `GET /api/resource` 字段一致，供心跳与串口对齐观测。
+/// Single-line resource baseline aligned with [`snapshot`] and `GET /api/resource` for heartbeat/serial.
+pub fn format_resource_baseline_line() -> String {
+    let s = snapshot();
+    format!(
+        "resource pressure={:?} heap_internal={} heap_spiram={} heap_largest={} active_http={} inbound={} outbound={}",
+        s.pressure,
+        s.heap_free_internal,
+        s.heap_free_spiram,
+        s.heap_largest_block_internal,
+        s.active_http_count,
+        s.inbound_depth,
+        s.outbound_depth,
+    )
+}
+
 /// 请求 HTTP 准入令牌。
 /// Request HTTP admission permit.
 pub fn request_http_permit(priority: Priority, timeout: Duration) -> Result<HttpPermitGuard> {

@@ -93,3 +93,6 @@ pub const SESSION_METRICS_INTERVAL_ROUNDS: u32 = 10;
 /// 出站门禁 Critical 压力时延迟毫秒数。
 /// Outbound admission defer delay under Critical pressure.
 pub const OUTBOUND_DEFER_DELAY_MS: u64 = 2000;
+/// 出站门禁 Cautious 压力时轻量退避毫秒数（短于 Critical，与队列拥塞→Cautious 闭环）。
+/// Light outbound defer under Cautious pressure (shorter than Critical).
+pub const OUTBOUND_DEFER_DELAY_MS_CAUTIOUS: u64 = 500;

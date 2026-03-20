@@ -245,19 +245,24 @@ This doc is for **developers integrating with the device HTTP API** (e.g. custom
 
 ### GET /api/health
 
-- **Purpose**: Structured health info, same as CLI `health`.
-- **Response**: 200, JSON example:
+- **Purpose**: Structured health info (same spirit as CLI `health`), including nested `metrics` and `resource` (same orchestrator snapshot as `GET /api/resource`).
+- **Response**: 200, JSON example (field names match serde structs; metric fields use `messages_in`, etc.):
   ```json
   {
     "wifi": "connected",
     "inbound_depth": 0,
     "outbound_depth": 0,
-    "last_error": "none"
+    "last_error": "none",
+    "metrics": { "messages_in": 0, "messages_out": 0 },
+    "resource": { "pressure": "Normal", "heap_largest_block_internal": 12345 }
   }
   ```
   - `wifi`: `"connected"` | `"disconnected"`.
   - `inbound_depth` / `outbound_depth`: Queue depths (numbers).
   - `last_error`: Last error summary (stage/message only, no secrets); or `"none"`.
+  - `metrics`: `metrics::MetricsSnapshot` (throughput, LLM/tool, dispatch, per-stage error counts).
+  - `resource`: `orchestrator::ResourceSnapshot` (pressure, heap, queue depths, channel health, etc.); `pressure` is `"Normal"` | `"Cautious"` | `"Critical"`.
+  - **Migration**: External scripts that parsed legacy flat keys such as `msg_in` should use `metrics.messages_in` instead.
 
 ### GET /api/diagnose
 
