@@ -126,12 +126,12 @@ export function TopBar({ onMenuClick, onOpenSettings }: TopBarProps) {
             onClick={handleRestartClick}
             disabled={restarting}
             sx={{
-              color: "var(--rating-low)",
+              color: "var(--semantic-danger)",
               borderRadius: "var(--radius-control)",
-              backgroundColor: "color-mix(in srgb, var(--rating-low) 6%, transparent)",
+              backgroundColor: "color-mix(in srgb, var(--semantic-danger) 6%, transparent)",
               "&:hover:not(:disabled)": {
-                backgroundColor: "color-mix(in srgb, var(--rating-low) 12%, transparent)",
-                color: "var(--rating-low)",
+                backgroundColor: "color-mix(in srgb, var(--semantic-danger) 12%, transparent)",
+                color: "var(--semantic-danger)",
               },
             }}
             aria-label={t("device.restart")}

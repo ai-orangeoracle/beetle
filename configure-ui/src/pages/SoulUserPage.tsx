@@ -81,12 +81,18 @@ export function SoulUserPage() {
 
   useEffect(() => {
     if (!ready) return;
-    loadSoul();
+    // 避免在 effect 主体中同步触发 setState（触发 react-hooks 规则）
+    queueMicrotask(() => {
+      loadSoul();
+    });
   }, [ready, loadSoul]);
 
   useEffect(() => {
     if (!ready) return;
-    loadUser();
+    // 避免在 effect 主体中同步触发 setState（触发 react-hooks 规则）
+    queueMicrotask(() => {
+      loadUser();
+    });
   }, [ready, loadUser]);
 
   const handleSaveSoul = async () => {

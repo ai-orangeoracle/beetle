@@ -330,11 +330,13 @@ export function SkillsPage() {
         onClose={() => !editSaving && closeEditDialog()}
         maxWidth="sm"
         fullWidth
-        PaperProps={{
-          sx: {
-            borderRadius: "var(--radius-card)",
-            border: "1px solid var(--border-subtle)",
-            boxShadow: "var(--shadow-card-hover)",
+        slotProps={{
+          paper: {
+            sx: {
+              borderRadius: "var(--radius-card)",
+              border: "1px solid var(--border-subtle)",
+              boxShadow: "var(--shadow-card-hover)",
+            },
           },
         }}
       >
@@ -390,11 +392,13 @@ export function SkillsPage() {
         onClose={() => !importSaving && setImportOpen(false)}
         maxWidth="sm"
         fullWidth
-        PaperProps={{
-          sx: {
-            borderRadius: "var(--radius-card)",
-            border: "1px solid var(--border-subtle)",
-            boxShadow: "var(--shadow-card-hover)",
+        slotProps={{
+          paper: {
+            sx: {
+              borderRadius: "var(--radius-card)",
+              border: "1px solid var(--border-subtle)",
+              boxShadow: "var(--shadow-card-hover)",
+            },
           },
         }}
       >
@@ -430,7 +434,7 @@ export function SkillsPage() {
           {importError && (
             <Typography
               variant="body2"
-              sx={{ color: "var(--rating-low)", mt: 2, fontWeight: 500 }}
+              sx={{ color: "var(--semantic-danger)", mt: 2, fontWeight: 500 }}
             >
               {importError}
             </Typography>

@@ -162,16 +162,14 @@ export interface ThemeTokens {
 
 /** 语义色：与主题/品牌无关，用于评分高低、积分、警告等；偏淡以保持清爽 */
 export const SEMANTIC_COLORS = {
-  /** 评分高（≥4.5） */
-  ratingHigh: '#22c55e',
-  /** 评分中（3.5～4.5） */
-  ratingMid: '#e9a23c',
-  /** 评分低（<3.5） */
-  ratingLow: '#f87171',
+  /** 成功（保存成功、连接正常等状态） */
+  success: '#22c55e',
+  /** 危险/错误（失败、异常、中断） */
+  danger: '#f87171',
+  /** 警告（需关注但非致命） */
+  warning: '#f59e0b',
   /** 积分默认金黄色 */
   points: '#ca8a04',
-  /** 警告（未保存提示、断开缓存横幅等） */
-  warning: '#f59e0b',
 } as const
 
 /** 品牌主色（设置抽屉色块选择器用）；略淡以保持清爽；firmware 与固件内置配置页 common.css 的 --primary 一致 */

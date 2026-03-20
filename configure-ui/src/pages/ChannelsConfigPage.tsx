@@ -16,7 +16,6 @@ import {
 import { SettingsSection } from "../components/SettingsSection";
 import Typography from "@mui/material/Typography";
 import { useConfig } from "../hooks/useConfig";
-import { useToast } from "../hooks/useToast";
 import { useUnsaved } from "../hooks/useUnsaved";
 import { useRevealedPasswordFields } from "../hooks/useRevealedPassword";
 import { ENABLED_CHANNEL_OPTIONS } from "../types/appConfig";
@@ -46,7 +45,6 @@ function validateChannels(
 export function ChannelsConfigPage() {
   const { t } = useTranslation();
   const { config, loadConfig, saveChannels, loading, error } = useConfig();
-  const { showToast } = useToast();
   const { setDirty } = useUnsaved();
   const [form, setForm] = useState<AppConfig | null>(null);
   const [saveStatus, setSaveStatus] = useState<
@@ -116,9 +114,6 @@ export function ChannelsConfigPage() {
         : (result.error ?? "");
     setSaveError(errMsg);
     if (result.ok) setDirty(false);
-    showToast(result.ok ? t("common.saveOk") : errMsg, {
-      variant: result.ok ? "success" : "error",
-    });
   };
 
   if (loading && !config) {

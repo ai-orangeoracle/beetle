@@ -26,7 +26,6 @@ import {
 } from "../components/form";
 import { SettingsSection } from "../components/SettingsSection";
 import { useConfig } from "../hooks/useConfig";
-import { useToast } from "../hooks/useToast";
 import { useUnsaved } from "../hooks/useUnsaved";
 import { useRevealedPasswordFields } from "../hooks/useRevealedPassword";
 import type { LlmSource } from "../types/appConfig";
@@ -81,7 +80,6 @@ function validateSources(
 export function AIConfigPage() {
   const { t } = useTranslation();
   const { config, loadConfig, saveLlm, loading, error } = useConfig();
-  const { showToast } = useToast();
   const { setDirty } = useUnsaved();
   const [sources, setSources] = useState<SourceFormRow[]>([]);
   const [routerIndex, setRouterIndex] = useState<number | null>(null);
@@ -197,9 +195,6 @@ export function AIConfigPage() {
         : (result.error ?? "");
     setSaveError(errMsg);
     if (result.ok) setDirty(false);
-    showToast(result.ok ? t("common.saveOk") : errMsg, {
-      variant: result.ok ? "success" : "error",
-    });
   };
 
   if (loading && !config) {

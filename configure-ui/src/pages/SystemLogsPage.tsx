@@ -50,13 +50,16 @@ export function SystemLogsPage() {
       });
       return;
     }
-    loadLogs();
+    // 避免在 effect 主体中同步触发 setState（触发 react-hooks 规则）
+    queueMicrotask(() => {
+      loadLogs();
+    });
   }, [ready, loadLogs]);
 
   const severityColor = (s: string) => {
-    if (s === "ok") return "var(--primary)";
-    if (s === "warn") return "var(--warning)";
-    return "var(--error, #b71c1c)";
+    if (s === "ok") return "var(--semantic-success)";
+    if (s === "warn") return "var(--semantic-warning)";
+    return "var(--semantic-danger)";
   };
 
   return (

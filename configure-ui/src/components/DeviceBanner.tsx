@@ -41,15 +41,15 @@ export function DeviceBanner() {
         px: 2,
         py: 1.25,
         borderBottom: "1px solid var(--border-subtle)",
-        borderLeft: "var(--accent-line-width, 3px) solid var(--rating-low)",
+        borderLeft: "var(--accent-line-width, 3px) solid var(--semantic-warning)",
         backgroundColor:
-          "color-mix(in srgb, var(--rating-low) 4%, var(--surface))",
+          "color-mix(in srgb, var(--semantic-warning) 4%, var(--surface))",
       }}
     >
       <Typography
         variant="body2"
         sx={{
-          color: "var(--rating-low)",
+          color: "var(--semantic-warning)",
           fontWeight: 600,
           fontSize: "var(--font-size-body-sm)",
         }}
@@ -68,11 +68,11 @@ export function DeviceBanner() {
             sx={{
               flexShrink: 0,
               borderRadius: "var(--radius-control)",
-              borderColor: "var(--rating-low)",
-              color: "var(--rating-low)",
+              borderColor: "var(--semantic-warning)",
+              color: "var(--semantic-warning)",
               "&:hover": {
-                borderColor: "var(--rating-low)",
-                backgroundColor: "color-mix(in srgb, var(--rating-low) 8%, var(--surface))",
+                borderColor: "var(--semantic-warning)",
+                backgroundColor: "color-mix(in srgb, var(--semantic-warning) 8%, var(--surface))",
               },
             }}
           >
