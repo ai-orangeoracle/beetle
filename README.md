@@ -26,7 +26,7 @@
 | Why Beetle | What you get now |
 |------------|------------------|
 | Hardware-native architecture | ReAct + tools + memory running on-board |
-| Full product loop | Built-in config UI + online portal at [beetle.uno](http://beetle.uno/) |
+| Full product loop | Built-in lightweight config pages + full `configure-ui` web app + portal [beetle.uno](http://beetle.uno/) |
 | Practical deployment target | Cost-effective devices in the **$7-$70** range |
 | Expansion path | ESP32-S3 baseline today, Linux-class and stronger platforms next |
 
@@ -41,7 +41,7 @@ Feishu, DingTalk, WeCom, QQ Channel, Telegram, and WebSocket converge on one boa
 - **Why it matters**: One board handles chat channels, tools, memory, and device actions.
 - **Where it runs**: ESP32-S3 today; Linux-class and stronger platforms are on the roadmap.
 - **What it enables**: Portable intelligent assistants and LLM-driven smart-device interconnection.
-- **UI and delivery**: Full configuration UI is built in, and an online portal is deployed at [beetle.uno](http://beetle.uno/).
+- **UI and delivery**: Firmware includes lightweight on-device config pages, and the full configuration web app is provided via `configure-ui` and [beetle.uno](http://beetle.uno/).
 
 ## Typical use cases
 
