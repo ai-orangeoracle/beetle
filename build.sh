@@ -8,6 +8,8 @@
 set -e
 SCRIPT_ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_ROOT"
+# 固定 target 到本仓库，避免环境/IDE 将 CARGO_TARGET_DIR 指到临时目录导致 esp-idf-sys bindings 与 esp-idf-svc cfg 不一致。
+export CARGO_TARGET_DIR="${SCRIPT_ROOT}/target"
 export PATH="${HOME}/.cargo/bin:${PATH}"
 command -v cargo &>/dev/null || { echo "Error: cargo not found. Install Rust: https://rustup.rs" >&2; exit 1; }
 
@@ -218,15 +220,16 @@ fi
 
 # --- Write sdkconfig board overlay so esp-idf-sys uses correct partition table and flash size ---
 BOARD_SDKCONFIG="$SCRIPT_ROOT/sdkconfig.defaults.esp32s3.board"
+# 与 sdkconfig.defaults.esp32s3 一致：CMake 工程根为 esp-idf-sys 的 out/，分区表路径需相对 out/ 指向仓库根 CSV。
 case "$PARTITION_TABLE" in
   partitions_8mb.csv)
-    printf '%s\n' 'CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y' '# CONFIG_ESPTOOLPY_FLASHSIZE_16MB is not set' 'CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions_8mb.csv"' > "$BOARD_SDKCONFIG"
+    printf '%s\n' 'CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y' '# CONFIG_ESPTOOLPY_FLASHSIZE_16MB is not set' 'CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="../../../../../../partitions_8mb.csv"' > "$BOARD_SDKCONFIG"
     ;;
   partitions_32mb.csv)
-    printf '%s\n' 'CONFIG_ESPTOOLPY_FLASHSIZE_32MB=y' '# CONFIG_ESPTOOLPY_FLASHSIZE_16MB is not set' 'CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions_32mb.csv"' > "$BOARD_SDKCONFIG"
+    printf '%s\n' 'CONFIG_ESPTOOLPY_FLASHSIZE_32MB=y' '# CONFIG_ESPTOOLPY_FLASHSIZE_16MB is not set' 'CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="../../../../../../partitions_32mb.csv"' > "$BOARD_SDKCONFIG"
     ;;
   *)
-    printf '%s\n' 'CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y' 'CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"' > "$BOARD_SDKCONFIG"
+    printf '%s\n' 'CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y' 'CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="../../../../../../partitions.csv"' > "$BOARD_SDKCONFIG"
     ;;
 esac
 

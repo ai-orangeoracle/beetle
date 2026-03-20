@@ -74,9 +74,11 @@ impl Platform for Esp32Platform {
     fn init(&self) -> crate::error::Result<()> {
         esp_idf_svc::sys::link_patches();
         esp_idf_svc::log::EspLogger::initialize_default();
-        // 屏蔽 HTTP 服务器每个 URI 注册的 Info 日志，减少刷屏
-        let _ =
-            esp_idf_svc::log::set_target_level("esp_idf_svc::http::server", log::LevelFilter::Warn);
+        // 屏蔽 HTTP 服务器每个 URI 注册的 Info 日志，减少刷屏（0.52+ 使用 EspIdfLogFilter）
+        let _ = esp_idf_svc::log::EspIdfLogFilter::new().set_target_level(
+            "esp_idf_svc::http::server",
+            log::LevelFilter::Warn,
+        );
         self.init_nvs()?;
         self.init_spiffs()?;
         Ok(())

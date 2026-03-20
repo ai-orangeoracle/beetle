@@ -1,5 +1,6 @@
-//! ESP 平台 WSS 传输：EspWebSocketClient + 事件 channel，实现 WssConnection。
+//! ESP 平台 WSS 传输：`esp-idf-svc::ws::client`（EspWebSocketClient）+ 事件 channel，实现 `WssConnection`。
 //! 仅 xtensa/riscv32 编译；供飞书/QQ WSS 入站共用。
+//! 与根 `Cargo.toml` 中 `[package.metadata.esp-idf-sys] extra_components` 的 `espressif/esp_websocket_client` 配套；相对「仅 `platform/` 依赖 esp-idf-svc」为**固定例外**（见架构文档）。
 
 #![cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 
@@ -97,7 +98,7 @@ impl WssConnection for EspWssConnection {
                 stage: "wss_esp_send",
             });
         }
-        // esp-idf-svc 0.51: Binary(true) 会 panic "Sending of fragmented data"，只有 Binary(false) 走 send_data 发送整帧。
+        // esp-idf-svc：仅 `Binary(false)` / `Text(false)` 走整帧发送；`Binary(true)` 会 panic（fragmented）。
         log::debug!("wss send_binary len={}", data.len());
         self.client
             .send(esp_idf_svc::ws::FrameType::Binary(false), data)
@@ -120,15 +121,18 @@ pub fn connect_esp_wss(url: &str) -> Result<EspWssConnection> {
         Duration::from_secs(WSS_TLS_ADMISSION_TIMEOUT_SECS),
     )?;
 
+    // 与 `platform/http_client.rs` 一致：仅用 `crt_bundle_attach` 挂接证书包；勿与 `use_global_ca_store` 同时开启，
+    // 否则 esp-tls 可能在校验阶段异常，表现为 CONNECTED 未到即 DISCONNECTED / 回调里 `WebSocketEvent::new` 失败。
     let config = esp_idf_svc::ws::client::EspWebSocketClientConfig {
         buffer_size: DEFAULT_BUFFER_SIZE,
         transport: esp_idf_svc::ws::client::EspWebSocketTransport::TransportOverSSL,
-        use_global_ca_store: true,
+        use_global_ca_store: false,
         disable_auto_reconnect: true,
         #[cfg(not(esp_idf_version_major = "4"))]
         crt_bundle_attach: Some(esp_idf_svc::sys::esp_crt_bundle_attach),
         pingpong_timeout_sec: Duration::from_secs(DEFAULT_PINGPONG_TIMEOUT_SEC),
         network_timeout_ms: Duration::from_millis(DEFAULT_WS_TIMEOUT_MS),
+        ping_interval_sec: Duration::from_secs(10),
         keep_alive_idle: Some(Duration::from_secs(KEEPALIVE_IDLE_SECS)),
         keep_alive_interval: Some(Duration::from_secs(KEEPALIVE_INTERVAL_SECS)),
         keep_alive_count: Some(KEEPALIVE_COUNT),
@@ -154,10 +158,19 @@ pub fn connect_esp_wss(url: &str) -> Result<EspWssConnection> {
                         Some(WssEvent::Binary(data.as_bytes().to_vec()))
                     }
                     WebSocketEventType::Disconnected => Some(WssEvent::Disconnected),
-                    WebSocketEventType::Closed => Some(WssEvent::Closed),
-                    _ => None,
+                    WebSocketEventType::Closed | WebSocketEventType::Close(_) => {
+                        Some(WssEvent::Closed)
+                    }
+                    WebSocketEventType::BeforeConnect | WebSocketEventType::Connected => None,
+                    WebSocketEventType::Ping | WebSocketEventType::Pong => None,
                 },
-                Err(_) => Some(WssEvent::Disconnected),
+                Err(e) => {
+                    log::warn!(
+                        "[wss] websocket event decode/handshake error (mapping to disconnect): {}",
+                        e
+                    );
+                    Some(WssEvent::Disconnected)
+                }
             };
             if let Some(e) = event {
                 if tx.try_send(e).is_err() {
@@ -171,7 +184,7 @@ pub fn connect_esp_wss(url: &str) -> Result<EspWssConnection> {
         stage: "wss_esp_connect",
     })?;
     let raw_handle = client.handle() as *mut core::ffi::c_void;
-    log::info!("wss connected url_len={}", url.len());
+    log::info!("wss client started (handshake runs asynchronously), url_len={}", url.len());
     Ok(EspWssConnection {
         client: ManuallyDrop::new(client),
         raw_handle,

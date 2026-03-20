@@ -9,6 +9,7 @@ $ErrorActionPreference = "Stop"
 $OutputEncoding = [System.Text.Encoding]::UTF8
 try { cmd /c chcp 65001 *>$null } catch {}
 Set-Location $PSScriptRoot
+$env:CARGO_TARGET_DIR = Join-Path $PSScriptRoot "target"
 # ESP-IDF / kconfgen 读 sdkconfig 时若用系统默认编码（中文 Windows 为 GBK）会报 UnicodeDecodeError，强制 Python 使用 UTF-8
 if ($env:OS -eq "Windows_NT") { $env:PYTHONUTF8 = "1" }
 
@@ -499,13 +500,13 @@ cargo build --release $argStr
 $boardSdkconfig = Join-Path $BuildRoot "sdkconfig.defaults.esp32s3.board"
 switch ($partitionTable) {
   "partitions_8mb.csv"  {
-    @('CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y', '# CONFIG_ESPTOOLPY_FLASHSIZE_16MB is not set', 'CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions_8mb.csv"') | Set-Content -Path $boardSdkconfig -Encoding UTF8
+    @('CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y', '# CONFIG_ESPTOOLPY_FLASHSIZE_16MB is not set', 'CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="../../../../../../partitions_8mb.csv"') | Set-Content -Path $boardSdkconfig -Encoding UTF8
   }
   "partitions_32mb.csv" {
-    @('CONFIG_ESPTOOLPY_FLASHSIZE_32MB=y', '# CONFIG_ESPTOOLPY_FLASHSIZE_16MB is not set', 'CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions_32mb.csv"') | Set-Content -Path $boardSdkconfig -Encoding UTF8
+    @('CONFIG_ESPTOOLPY_FLASHSIZE_32MB=y', '# CONFIG_ESPTOOLPY_FLASHSIZE_16MB is not set', 'CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="../../../../../../partitions_32mb.csv"') | Set-Content -Path $boardSdkconfig -Encoding UTF8
   }
   default {
-    @('CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y', 'CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"') | Set-Content -Path $boardSdkconfig -Encoding UTF8
+    @('CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y', 'CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="../../../../../../partitions.csv"') | Set-Content -Path $boardSdkconfig -Encoding UTF8
   }
 }
 
