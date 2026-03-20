@@ -12,6 +12,7 @@ import HistoryOutlined from "@mui/icons-material/HistoryOutlined";
 import LinkRounded from "@mui/icons-material/LinkRounded";
 import PaletteOutlined from "@mui/icons-material/PaletteOutlined";
 import SettingsOutlined from "@mui/icons-material/SettingsOutlined";
+import MonitorOutlined from "@mui/icons-material/MonitorOutlined";
 import SmartToyOutlined from "@mui/icons-material/SmartToyOutlined";
 import { BeetleIcon } from "./BeetleIcon";
 import { useTranslation } from "react-i18next";
@@ -62,6 +63,11 @@ const NAV_ITEMS: { path: string; labelKey: string; icon: ReactElement }[] = [
     path: "/system-config",
     labelKey: "nav.systemConfig",
     icon: <SettingsOutlined />,
+  },
+  {
+    path: "/display-config",
+    labelKey: "nav.displayConfig",
+    icon: <MonitorOutlined />,
   },
 ];
 

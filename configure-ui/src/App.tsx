@@ -14,6 +14,7 @@ import { SystemConfigPage } from './pages/SystemConfigPage'
 import { SystemLogsPage } from './pages/SystemLogsPage'
 import { SoulUserPage } from './pages/SoulUserPage'
 import { SkillsPage } from './pages/SkillsPage'
+import { DisplayConfigPage } from './pages/DisplayConfigPage'
 import { PlaceholderPage } from './pages/PlaceholderPage'
 import { useScrollToTop } from './hooks/useScrollToTop'
 
@@ -36,6 +37,7 @@ function App() {
           <Route path="/ai-config" element={<AIConfigPage />} />
           <Route path="/channels-config" element={<ChannelsConfigPage />} />
           <Route path="/system-config" element={<SystemConfigPage />} />
+          <Route path="/display-config" element={<DisplayConfigPage />} />
           <Route path="/system-logs" element={<SystemLogsPage />} />
           <Route path="/soul-user" element={<SoulUserPage />} />
           <Route path="/skills" element={<SkillsPage />} />

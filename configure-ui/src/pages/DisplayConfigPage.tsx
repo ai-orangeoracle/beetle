@@ -1,0 +1,316 @@
+import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
+import Box from "@mui/material/Box";
+import Button from "@mui/material/Button";
+import FormControlLabel from "@mui/material/FormControlLabel";
+import Switch from "@mui/material/Switch";
+import TextField from "@mui/material/TextField";
+import Typography from "@mui/material/Typography";
+import SaveRounded from "@mui/icons-material/SaveRounded";
+import MonitorOutlined from "@mui/icons-material/MonitorOutlined";
+import {
+  FormFieldStack,
+  FormLoadingSkeleton,
+  FormSectionSub,
+  InlineAlert,
+  SaveFeedback,
+} from "../components/form";
+import { SettingsSection } from "../components/SettingsSection";
+import { useConfig } from "../hooks/useConfig";
+import { useSaveFeedback } from "../hooks/useSaveFeedback";
+import { useUnsaved } from "../hooks/useUnsaved";
+import type { DisplayConfig } from "../types/displayConfig";
+import { defaultDisplayConfig } from "../types/displayConfig";
+
+const PIN_MIN = 1;
+const PIN_MAX = 48;
+const DIM_MIN = 1;
+const DIM_MAX = 480;
+const OFFSET_MIN = -480;
+const OFFSET_MAX = 480;
+const FREQ_MIN = 1_000_000;
+const FREQ_MAX = 80_000_000;
+
+function asNumber(v: string): number | null {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+function validate(form: DisplayConfig, t: (k: string) => string): string | null {
+  if (!form.enabled) return null;
+  const dimOk =
+    form.width >= DIM_MIN &&
+    form.width <= DIM_MAX &&
+    form.height >= DIM_MIN &&
+    form.height <= DIM_MAX;
+  if (!dimOk) return t("displayConfig.validation.dimension");
+  if (![0, 90, 180, 270].includes(form.rotation)) return t("displayConfig.validation.rotation");
+  const offsetOk =
+    form.offset_x >= OFFSET_MIN &&
+    form.offset_x <= OFFSET_MAX &&
+    form.offset_y >= OFFSET_MIN &&
+    form.offset_y <= OFFSET_MAX;
+  if (!offsetOk) return t("displayConfig.validation.offset");
+  if (form.spi.freq_hz < FREQ_MIN || form.spi.freq_hz > FREQ_MAX) {
+    return t("displayConfig.validation.freq");
+  }
+  const pins = [form.spi.sclk, form.spi.mosi, form.spi.cs, form.spi.dc];
+  if (pins.some((p) => p < PIN_MIN || p > PIN_MAX)) return t("displayConfig.validation.pin");
+  if (form.spi.rst != null && (form.spi.rst < PIN_MIN || form.spi.rst > PIN_MAX))
+    return t("displayConfig.validation.pin");
+  if (form.spi.bl != null && (form.spi.bl < PIN_MIN || form.spi.bl > PIN_MAX))
+    return t("displayConfig.validation.pin");
+  return null;
+}
+
+export function DisplayConfigPage() {
+  const { t } = useTranslation();
+  const { displayConfig, displayLoading, displayError, loadDisplayConfig, saveDisplayConfig } = useConfig();
+  const saveFeedback = useSaveFeedback(t);
+  const { setDirty } = useUnsaved();
+  const [form, setForm] = useState<DisplayConfig | null>(null);
+
+  useEffect(() => {
+    void loadDisplayConfig();
+  }, [loadDisplayConfig]);
+
+  useEffect(() => {
+    setForm(displayConfig ?? defaultDisplayConfig());
+  }, [displayConfig]);
+
+  const saveDisabled = saveFeedback.status === "saving" || !form;
+  const setField = <K extends keyof DisplayConfig>(key: K, value: DisplayConfig[K]) => {
+    setDirty(true);
+    setForm((prev) => (prev ? { ...prev, [key]: value } : prev));
+  };
+
+  if (displayLoading && !form) {
+    return (
+      <SettingsSection icon={<MonitorOutlined />} label={t("displayConfig.sectionMain")}>
+        <FormLoadingSkeleton />
+      </SettingsSection>
+    );
+  }
+
+  const save = async () => {
+    if (!form) return;
+    const err = validate(form, t);
+    if (err) {
+      saveFeedback.fail(err);
+      return;
+    }
+    saveFeedback.begin();
+    const result = await saveDisplayConfig(form);
+    saveFeedback.finishFromResult(result);
+    if (result.ok) setDirty(false);
+  };
+
+  return (
+    <Box sx={{ display: "flex", flexDirection: "column", gap: 4 }}>
+      <InlineAlert message={displayError} onRetry={loadDisplayConfig} />
+      <SettingsSection
+        icon={<MonitorOutlined sx={{ fontSize: "var(--icon-size-md)" }} />}
+        label={t("displayConfig.sectionMain")}
+        description={t("displayConfig.sectionMainDesc")}
+        accessory={
+          <Button
+            size="small"
+            variant="contained"
+            startIcon={<SaveRounded />}
+            onClick={save}
+            disabled={saveDisabled}
+          >
+            {saveFeedback.status === "saving" ? t("common.saving") : t("common.save")}
+          </Button>
+        }
+        belowTitleRow={
+          saveFeedback.status === "ok" || saveFeedback.status === "fail" ? (
+            <SaveFeedback
+              placement="belowTitle"
+              status={saveFeedback.status}
+              message={saveFeedback.status === "ok" ? t("displayConfig.restartRequired") : saveFeedback.error}
+              autoDismissMs={3000}
+              onDismiss={saveFeedback.dismiss}
+            />
+          ) : null
+        }
+      >
+        {form && (
+          <FormFieldStack>
+            <FormSectionSub title={t("displayConfig.sectionBasic")}>
+              <FormControlLabel
+                control={
+                  <Switch
+                    checked={form.enabled}
+                    onChange={(_, checked) => setField("enabled", checked)}
+                  />
+                }
+                label={t("displayConfig.enabled")}
+              />
+              <TextField
+                select
+                size="small"
+                fullWidth
+                disabled={!form.enabled}
+                value={form.driver}
+                label={t("displayConfig.driver")}
+                onChange={(e) => setField("driver", e.target.value as DisplayConfig["driver"])}
+                slotProps={{ select: { native: true } }}
+              >
+                <option value="st7789">ST7789</option>
+                <option value="ili9341">ILI9341</option>
+              </TextField>
+              <TextField
+                select
+                size="small"
+                fullWidth
+                disabled={!form.enabled}
+                value={form.rotation}
+                label={t("displayConfig.rotation")}
+                onChange={(e) => setField("rotation", Number(e.target.value) as DisplayConfig["rotation"])}
+                slotProps={{ select: { native: true } }}
+              >
+                <option value={0}>0</option>
+                <option value={90}>90</option>
+                <option value={180}>180</option>
+                <option value={270}>270</option>
+              </TextField>
+              <TextField
+                select
+                size="small"
+                fullWidth
+                disabled={!form.enabled}
+                value={form.color_order}
+                label={t("displayConfig.colorOrder")}
+                onChange={(e) => setField("color_order", e.target.value as DisplayConfig["color_order"])}
+                slotProps={{ select: { native: true } }}
+              >
+                <option value="rgb">RGB</option>
+                <option value="bgr">BGR</option>
+              </TextField>
+              <FormControlLabel
+                control={
+                  <Switch
+                    checked={form.invert_colors}
+                    onChange={(_, checked) => setField("invert_colors", checked)}
+                    disabled={!form.enabled}
+                  />
+                }
+                label={t("displayConfig.invertColors")}
+              />
+            </FormSectionSub>
+
+            <FormSectionSub title={t("displayConfig.sectionGeometry")}>
+              <TextField
+                type="number"
+                size="small"
+                label={t("displayConfig.width")}
+                disabled={!form.enabled}
+                value={form.width}
+                onChange={(e) => {
+                  const n = asNumber(e.target.value);
+                  if (n != null) setField("width", n);
+                }}
+              />
+              <TextField
+                type="number"
+                size="small"
+                label={t("displayConfig.height")}
+                disabled={!form.enabled}
+                value={form.height}
+                onChange={(e) => {
+                  const n = asNumber(e.target.value);
+                  if (n != null) setField("height", n);
+                }}
+              />
+              <TextField
+                type="number"
+                size="small"
+                label={t("displayConfig.offsetX")}
+                disabled={!form.enabled}
+                value={form.offset_x}
+                onChange={(e) => {
+                  const n = asNumber(e.target.value);
+                  if (n != null) setField("offset_x", n);
+                }}
+              />
+              <TextField
+                type="number"
+                size="small"
+                label={t("displayConfig.offsetY")}
+                disabled={!form.enabled}
+                value={form.offset_y}
+                onChange={(e) => {
+                  const n = asNumber(e.target.value);
+                  if (n != null) setField("offset_y", n);
+                }}
+              />
+            </FormSectionSub>
+
+            <FormSectionSub title={t("displayConfig.sectionSpi")}>
+              <TextField
+                select
+                size="small"
+                fullWidth
+                disabled={!form.enabled}
+                value={form.spi.host}
+                label={t("displayConfig.spiHost")}
+                onChange={(e) => {
+                  const host = Number(e.target.value) as 2 | 3;
+                  setForm((prev) => (prev ? { ...prev, spi: { ...prev.spi, host } } : prev));
+                  setDirty(true);
+                }}
+                slotProps={{ select: { native: true } }}
+              >
+                <option value={2}>2</option>
+                <option value={3}>3</option>
+              </TextField>
+              {(["sclk", "mosi", "cs", "dc", "rst", "bl"] as const).map((k) => (
+                <TextField
+                  key={k}
+                  type="number"
+                  size="small"
+                  disabled={!form.enabled}
+                  label={t(`displayConfig.spi${k[0].toUpperCase()}${k.slice(1)}`)}
+                  value={form.spi[k] ?? ""}
+                  onChange={(e) => {
+                    const raw = e.target.value.trim();
+                    setForm((prev) => {
+                      if (!prev) return prev;
+                      const next = { ...prev.spi };
+                      if (raw === "" && (k === "rst" || k === "bl")) {
+                        next[k] = null;
+                      } else {
+                        const n = asNumber(raw);
+                        if (n == null) return prev;
+                        next[k] = n as never;
+                      }
+                      return { ...prev, spi: next };
+                    });
+                    setDirty(true);
+                  }}
+                />
+              ))}
+              <TextField
+                type="number"
+                size="small"
+                label={t("displayConfig.spiFreqHz")}
+                disabled={!form.enabled}
+                value={form.spi.freq_hz}
+                onChange={(e) => {
+                  const n = asNumber(e.target.value);
+                  if (n == null) return;
+                  setForm((prev) => (prev ? { ...prev, spi: { ...prev.spi, freq_hz: n } } : prev));
+                  setDirty(true);
+                }}
+              />
+            </FormSectionSub>
+            <Typography variant="caption" sx={{ color: "var(--muted)" }}>
+              {t("displayConfig.footerHint")}
+            </Typography>
+          </FormFieldStack>
+        )}
+      </SettingsSection>
+    </Box>
+  );
+}
