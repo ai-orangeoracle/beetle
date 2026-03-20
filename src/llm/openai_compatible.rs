@@ -56,33 +56,33 @@ impl OpenAiCompatibleClient {
 // --- OpenAI Chat Completions 请求/响应 DTO ---
 
 #[derive(Debug, Serialize)]
-struct OpenAiRequestMessage {
-    role: String,
-    content: String,
+struct OpenAiRequestMessageRef<'a> {
+    role: &'a str,
+    content: &'a str,
 }
 
 #[derive(Debug, Serialize)]
-struct OpenAiFunctionSpec {
-    name: String,
-    description: String,
+struct OpenAiFunctionSpecRef<'a> {
+    name: &'a str,
+    description: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
-    parameters: Option<serde_json::Value>,
+    parameters: Option<&'a serde_json::Value>,
 }
 
 #[derive(Debug, Serialize)]
-struct OpenAiTool {
+struct OpenAiToolRef<'a> {
     #[serde(rename = "type")]
-    tool_type: String,
-    function: OpenAiFunctionSpec,
+    tool_type: &'static str,
+    function: OpenAiFunctionSpecRef<'a>,
 }
 
 #[derive(Debug, Serialize)]
-struct OpenAiRequest {
-    model: String,
+struct OpenAiRequestRef<'a> {
+    model: &'a str,
     max_tokens: u32,
-    messages: Vec<OpenAiRequestMessage>,
+    messages: Vec<OpenAiRequestMessageRef<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    tools: Option<Vec<OpenAiTool>>,
+    tools: Option<Vec<OpenAiToolRef<'a>>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     stream: Option<bool>,
 }
@@ -138,17 +138,18 @@ fn build_request_body(
     tools: Option<&[ToolSpec]>,
     stream: bool,
 ) -> Result<Vec<u8>> {
-    let mut req_messages: Vec<OpenAiRequestMessage> = Vec::new();
+    let mut req_messages: Vec<OpenAiRequestMessageRef<'_>> =
+        Vec::with_capacity(messages.len() + usize::from(!system.is_empty()));
     if !system.is_empty() {
-        req_messages.push(OpenAiRequestMessage {
-            role: "system".to_string(),
-            content: system.to_string(),
+        req_messages.push(OpenAiRequestMessageRef {
+            role: "system",
+            content: system,
         });
     }
     for m in messages {
-        req_messages.push(OpenAiRequestMessage {
-            role: m.role.clone(),
-            content: m.content.clone(),
+        req_messages.push(OpenAiRequestMessageRef {
+            role: &m.role,
+            content: &m.content,
         });
     }
 
@@ -158,12 +159,12 @@ fn build_request_body(
         } else {
             Some(
                 t.iter()
-                    .map(|s| OpenAiTool {
-                        tool_type: "function".to_string(),
-                        function: OpenAiFunctionSpec {
-                            name: s.name.clone(),
-                            description: s.description.clone(),
-                            parameters: Some(s.parameters.clone()),
+                    .map(|s| OpenAiToolRef {
+                        tool_type: "function",
+                        function: OpenAiFunctionSpecRef {
+                            name: &s.name,
+                            description: &s.description,
+                            parameters: Some(&s.parameters),
                         },
                     })
                     .collect::<Vec<_>>(),
@@ -171,8 +172,8 @@ fn build_request_body(
         }
     });
 
-    let req = OpenAiRequest {
-        model: model.to_string(),
+    let req = OpenAiRequestRef {
+        model,
         max_tokens,
         messages: req_messages,
         tools: tools_api,
@@ -283,23 +284,25 @@ fn do_request(
         });
     }
 
-    let parsed: OpenAiResponse =
-        serde_json::from_slice(resp_body.as_ref()).map_err(|e| Error::Other {
-            source: Box::new(e),
-            stage: "llm_parse",
-        })?;
-
-    let choice = parsed
-        .choices
-        .into_iter()
-        .next()
-        .ok_or_else(|| Error::Other {
-            source: Box::new(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "openai response has no choices",
-            )),
-            stage: "llm_parse",
-        })?;
+    let choice = {
+        let parsed: OpenAiResponse =
+            serde_json::from_slice(resp_body.as_ref()).map_err(|e| Error::Other {
+                source: Box::new(e),
+                stage: "llm_parse",
+            })?;
+        parsed
+            .choices
+            .into_iter()
+            .next()
+            .ok_or_else(|| Error::Other {
+                source: Box::new(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "openai response has no choices",
+                )),
+                stage: "llm_parse",
+            })?
+    };
+    drop(resp_body);
 
     let content = choice.message.content.unwrap_or_default();
     let stop_reason = finish_reason_to_stop_reason(choice.finish_reason.as_deref());

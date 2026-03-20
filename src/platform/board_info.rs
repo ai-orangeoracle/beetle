@@ -39,7 +39,7 @@ fn collect_esp() -> String {
 
     let heap_internal = heap_free_internal();
     let psram_free = heap_free_spiram();
-    let heap_free = heap_internal.saturating_add(psram_free);
+    let heap_total = heap_internal.saturating_add(psram_free);
 
     let heap_min_free = crate::platform::heap::heap_min_free_internal() as u64;
 
@@ -61,7 +61,10 @@ fn collect_esp() -> String {
         "chip_model": chip_model,
         "chip_revision": chip_revision,
         "cores": cores,
-        "heap_free": heap_free,
+        // Keep heap_free for backward compatibility; it represents internal + PSRAM total.
+        "heap_free": heap_total,
+        "heap_free_total": heap_total,
+        "heap_free_internal": heap_internal,
         "heap_min_free": heap_min_free,
         "psram_free": psram_free,
         "uptime_secs": uptime_secs,
@@ -91,6 +94,8 @@ fn collect_host() -> String {
         "chip_revision": 0,
         "cores": 0,
         "heap_free": 0,
+        "heap_free_total": 0,
+        "heap_free_internal": 0,
         "heap_min_free": 0,
         "psram_free": 0,
         "uptime_secs": crate::platform::time::uptime_secs(),
