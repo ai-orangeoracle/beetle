@@ -78,7 +78,7 @@ export function Layout({ onOpenSettings }: LayoutProps) {
     if (consumeRestartTimeout()) {
       showToast(t('device.restartTimeout'), { variant: 'error' })
     }
-  })
+  }, [restartPhase, showToast, t])
 
   const showUnsavedDialog = dirty && pendingPath != null
 
@@ -140,14 +140,14 @@ export function Layout({ onOpenSettings }: LayoutProps) {
             px: 2,
             py: 1.25,
             borderBottom: '1px solid var(--border-subtle)',
-            borderLeft: 'var(--accent-line-width, 3px) solid var(--warning)',
-            backgroundColor: 'color-mix(in srgb, var(--warning) 6%, var(--surface))',
+            borderLeft: 'var(--accent-line-width, 3px) solid var(--semantic-warning)',
+            backgroundColor: 'color-mix(in srgb, var(--semantic-warning) 6%, var(--surface))',
           }}
         >
           <Typography
             variant="body2"
             sx={{
-              color: 'var(--warning)',
+              color: 'var(--semantic-warning)',
               fontWeight: 600,
               fontSize: 'var(--font-size-body-sm)',
             }}
@@ -161,8 +161,8 @@ export function Layout({ onOpenSettings }: LayoutProps) {
             sx={{
               flexShrink: 0,
               borderRadius: 'var(--radius-control)',
-              borderColor: 'var(--warning)',
-              color: 'var(--warning)',
+              borderColor: 'var(--semantic-warning)',
+              color: 'var(--semantic-warning)',
             }}
           >
             {t('config.clearCache')}

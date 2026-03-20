@@ -28,8 +28,8 @@ export interface ConfirmDialogProps {
 
 const ICON_COLOR: Record<NonNullable<ConfirmDialogProps["confirmColor"]>, string> = {
   primary: "var(--primary)",
-  error: "var(--rating-low)",
-  warning: "var(--warning)",
+  error: "var(--semantic-danger)",
+  warning: "var(--semantic-warning)",
 };
 
 /**
@@ -60,15 +60,15 @@ export function ConfirmDialog({
       maxWidth="xs"
       slotProps={{
         backdrop: { sx: { backgroundColor: "var(--backdrop-overlay)" } },
-      }}
-      PaperProps={{
-        sx: {
-          width: "100%",
-          maxWidth: 360,
-          borderRadius: "var(--radius-card)",
-          border: "1px solid var(--border-subtle)",
-          boxShadow: "var(--shadow-card-hover)",
-          backgroundColor: "var(--card)",
+        paper: {
+          sx: {
+            width: "100%",
+            maxWidth: 360,
+            borderRadius: "var(--radius-card)",
+            border: "1px solid var(--border-subtle)",
+            boxShadow: "var(--shadow-card-hover)",
+            backgroundColor: "var(--card)",
+          },
         },
       }}
       sx={{ "& .MuiDialog-container": { alignItems: "center", justifyContent: "center" } }}

@@ -12,19 +12,19 @@ const POSITION_MAP: Record<ToastPosition, { vertical: 'top'; horizontal: 'center
 
 const VARIANT_STYLES: Record<ToastVariant, { bg: string; border: string; color: string }> = {
   success: {
-    bg: 'color-mix(in srgb, var(--rating-high) 8%, var(--surface))',
-    border: 'color-mix(in srgb, var(--rating-high) 22%, transparent)',
-    color: 'var(--rating-high)',
+    bg: 'color-mix(in srgb, var(--semantic-success) 8%, var(--surface))',
+    border: 'color-mix(in srgb, var(--semantic-success) 22%, transparent)',
+    color: 'var(--semantic-success)',
   },
   warning: {
-    bg: 'color-mix(in srgb, var(--warning) 8%, var(--surface))',
-    border: 'color-mix(in srgb, var(--warning) 22%, transparent)',
-    color: 'var(--warning)',
+    bg: 'color-mix(in srgb, var(--semantic-warning) 8%, var(--surface))',
+    border: 'color-mix(in srgb, var(--semantic-warning) 22%, transparent)',
+    color: 'var(--semantic-warning)',
   },
   error: {
-    bg: 'color-mix(in srgb, var(--rating-low) 8%, var(--surface))',
-    border: 'color-mix(in srgb, var(--rating-low) 22%, transparent)',
-    color: 'var(--rating-low)',
+    bg: 'color-mix(in srgb, var(--semantic-danger) 8%, var(--surface))',
+    border: 'color-mix(in srgb, var(--semantic-danger) 22%, transparent)',
+    color: 'var(--semantic-danger)',
   },
 }
 
@@ -56,6 +56,12 @@ export function ToastProvider({ children }: { children: ReactNode }) {
         autoHideDuration={autoHideDuration}
         anchorOrigin={POSITION_MAP[position]}
         message={message}
+        slotProps={{
+          content: {
+            role: variant === 'error' ? 'alert' : 'status',
+            'aria-live': variant === 'error' ? 'assertive' : 'polite',
+          },
+        }}
         sx={{
           '& .MuiSnackbarContent-root': {
             borderRadius: 'var(--radius-control)',

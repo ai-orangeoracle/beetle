@@ -12,11 +12,10 @@ import RefreshRounded from "@mui/icons-material/RefreshRounded";
 import CheckCircleOutlined from "@mui/icons-material/CheckCircleOutlined";
 import ErrorOutlined from "@mui/icons-material/ErrorOutlined";
 import RemoveCircleOutlined from "@mui/icons-material/RemoveCircleOutlined";
-import { InlineAlert } from "../components/form";
+import { InlineAlert, SaveFeedback } from "../components/form";
 import { SettingsSection } from "../components/SettingsSection";
 import { useDeviceApi } from "../hooks/useDeviceApi";
 import { useDevice } from "../hooks/useDevice";
-import { useToast } from "../hooks/useToast";
 import { request } from "../api/client";
 import {
   getSystemInfo,
@@ -29,7 +28,6 @@ const DEFAULT_DEVICE_BASE_URL = "http://192.168.4.1";
 
 export function DevicePage() {
   const { t } = useTranslation();
-  const { showToast } = useToast();
   const { baseUrl, pairingCode, setBaseUrl, setPairingCode } = useDevice();
   const { deviceConnected } = useDeviceApi();
   const [urlInput, setUrlInput] = useState(baseUrl || DEFAULT_DEVICE_BASE_URL);
@@ -44,12 +42,13 @@ export function DevicePage() {
   const [channelList, setChannelList] = useState<ChannelConnectivityItem[]>([]);
   const [channelLoading, setChannelLoading] = useState(false);
   const [channelError, setChannelError] = useState("");
+  const [saveStatus, setSaveStatus] = useState<"idle" | "ok">("idle");
 
   const handleSave = () => {
     const url = urlInput.trim().replace(/\/$/, "") || DEFAULT_DEVICE_BASE_URL;
     setBaseUrl(url);
     setPairingCode(codeInput.trim());
-    showToast(t("common.saveOk"), { variant: "success" });
+    setSaveStatus("ok");
   };
 
   const handleProbe = async () => {
@@ -185,7 +184,10 @@ export function DevicePage() {
             label={t("device.baseUrlLabel")}
             placeholder={t("device.baseUrlPlaceholder")}
             value={urlInput}
-            onChange={(e) => setUrlInput(e.target.value)}
+            onChange={(e) => {
+              setUrlInput(e.target.value);
+              setSaveStatus("idle");
+            }}
             size="small"
             fullWidth
             slotProps={{ htmlInput: { style: { fontFamily: "var(--font-mono)" } } }}
@@ -194,7 +196,10 @@ export function DevicePage() {
             label={t("device.pairingCodeLabel")}
             placeholder={t("device.pairingCodePlaceholder")}
             value={codeInput}
-            onChange={(e) => setCodeInput(e.target.value)}
+            onChange={(e) => {
+              setCodeInput(e.target.value);
+              setSaveStatus("idle");
+            }}
             size="small"
             fullWidth
             slotProps={{
@@ -224,9 +229,17 @@ export function DevicePage() {
             </Button>
           </Box>
           {probeStatus === "ok" && (
-            <Typography variant="caption" sx={{ color: "var(--primary)" }}>
+            <Typography variant="caption" sx={{ color: "var(--semantic-success)" }}>
               {t("device.probeOk")}
             </Typography>
+          )}
+          {saveStatus === "ok" && (
+            <SaveFeedback
+              status="ok"
+              message={t("common.saveOk")}
+              autoDismissMs={3000}
+              onDismiss={() => setSaveStatus("idle")}
+            />
           )}
         </Box>
       </SettingsSection>
@@ -283,7 +296,7 @@ export function DevicePage() {
                   />
                 ))}
                 {channelError && (
-                  <Typography variant="caption" sx={{ color: "var(--error)" }}>
+                  <Typography variant="caption" sx={{ color: "var(--semantic-danger)" }}>
                     {channelError === "channel connectivity unavailable"
                       ? t("device.channelConnectivityUnavailable")
                       : channelError}
@@ -383,7 +396,11 @@ function ChannelRow({
       ? t("device.channelOk")
       : message ?? t("device.channelFail")
     : t("device.channelNotConfigured");
-  const statusColor = configured ? (ok ? "var(--rating-high)" : "var(--error)") : "var(--muted)";
+  const statusColor = configured
+    ? ok
+      ? "var(--semantic-success)"
+      : "var(--semantic-danger)"
+    : "var(--muted)";
   const StatusIcon = configured ? (ok ? CheckCircleOutlined : ErrorOutlined) : RemoveCircleOutlined;
   return (
     <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>

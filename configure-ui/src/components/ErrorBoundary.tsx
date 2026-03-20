@@ -48,7 +48,7 @@ export class ErrorBoundaryClass extends Component<
           }}
         >
           <ErrorOutline
-            sx={{ fontSize: 48, color: 'var(--rating-low)' }}
+            sx={{ fontSize: 48, color: 'var(--semantic-danger)' }}
             aria-hidden
           />
           <Typography

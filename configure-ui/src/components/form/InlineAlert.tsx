@@ -57,12 +57,12 @@ export function InlineAlert({ message, onRetry }: InlineAlertProps) {
         py: 1.5,
         borderRadius: 'var(--radius-control)',
         border: '1px solid var(--border-subtle)',
-        borderLeft: 'var(--accent-line-width, 3px) solid var(--rating-low)',
-        backgroundColor: 'color-mix(in srgb, var(--rating-low) 5%, var(--surface))',
+        borderLeft: 'var(--accent-line-width, 3px) solid var(--semantic-danger)',
+        backgroundColor: 'color-mix(in srgb, var(--semantic-danger) 5%, var(--surface))',
       }}
     >
       <ErrorOutline
-        sx={{ fontSize: 'var(--icon-size-md)', color: 'var(--rating-low)', flexShrink: 0, mt: 0.25 }}
+        sx={{ fontSize: 'var(--icon-size-md)', color: 'var(--semantic-danger)', flexShrink: 0, mt: 0.25 }}
         aria-hidden
       />
       <Typography
@@ -71,7 +71,7 @@ export function InlineAlert({ message, onRetry }: InlineAlertProps) {
         sx={{
           flex: '1 1 auto',
           minWidth: 0,
-          color: 'var(--rating-low)',
+          color: 'var(--semantic-danger)',
           fontWeight: 500,
           fontSize: 'var(--font-size-body-sm)',
         }}

@@ -18,7 +18,6 @@ import { SettingsSection } from "../components/SettingsSection";
 import { useConfig } from "../hooks/useConfig";
 import { useDevice } from "../hooks/useDevice";
 import { useRevealedPassword } from "../hooks/useRevealedPassword";
-import { useToast } from "../hooks/useToast";
 import { useUnsaved } from "../hooks/useUnsaved";
 import { getWifiScan, type WifiApEntry } from "../api/endpoints/system";
 import type { AppConfig } from "../types/appConfig";
@@ -60,12 +59,12 @@ export function SystemConfigPage() {
   const [form, setForm] = useState<AppConfig | null>(null);
   const [wifiScanList, setWifiScanList] = useState<WifiApEntry[] | null>(null);
   const [wifiScanLoading, setWifiScanLoading] = useState(false);
+  const [wifiScanError, setWifiScanError] = useState("");
   const [saveStatus, setSaveStatus] = useState<
     "idle" | "saving" | "ok" | "fail"
   >("idle");
   const [saveError, setSaveError] = useState("");
   const loadAttemptedRef = useRef(false);
-  const { showToast } = useToast();
   const { type: wifiPassType, inputProps: wifiPassInputProps } =
     useRevealedPassword();
 
@@ -73,13 +72,15 @@ export function SystemConfigPage() {
     if (!baseUrl?.trim()) return;
     setWifiScanLoading(true);
     setWifiScanList(null);
+    setWifiScanError("");
     const res = await getWifiScan(baseUrl);
     setWifiScanLoading(false);
     if (res.ok && Array.isArray(res.data)) {
       setWifiScanList(res.data);
+      setWifiScanError("");
     } else {
       setWifiScanList([]);
-      showToast(res.error ?? t("config.wifiScanFailed"), { variant: "error" });
+      setWifiScanError(res.error ?? t("config.wifiScanFailed"));
     }
   };
 
@@ -132,9 +133,6 @@ export function SystemConfigPage() {
         : (result.error ?? "");
     setSaveError(errMsg);
     if (result.ok) setDirty(false);
-    showToast(result.ok ? t("common.saveOk") : errMsg, {
-      variant: result.ok ? "success" : "error",
-    });
   };
 
   if (loading && !config) {
@@ -206,7 +204,31 @@ export function SystemConfigPage() {
             >
               {wifiScanLoading ? t("config.wifiScanning") : t("config.wifiScan")}
             </Button>
+            {wifiScanError && (
+              <Button
+                variant="text"
+                size="small"
+                onClick={handleWifiScan}
+                disabled={!baseUrl?.trim() || wifiScanLoading}
+                sx={{ borderRadius: "var(--radius-control)" }}
+              >
+                {t("common.retry")}
+              </Button>
+            )}
           </Box>
+          {wifiScanError && (
+            <Typography
+              variant="caption"
+              sx={{
+                display: "block",
+                mt: 0.5,
+                color: "var(--semantic-danger)",
+                fontWeight: 500,
+              }}
+            >
+              {wifiScanError}
+            </Typography>
+          )}
           {wifiScanList && wifiScanList.length > 0 ? (
             <>
               <TextField
@@ -324,7 +346,7 @@ export function SystemConfigPage() {
               sx={{
                 display: "block",
                 mt: 0.5,
-                color: sessionError ? "var(--rating-low)" : "var(--muted)",
+                color: sessionError ? "var(--semantic-danger)" : "var(--muted)",
               }}
             >
               {sessionError || t("config.sessionMaxMessagesHelp")}

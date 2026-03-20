@@ -161,9 +161,9 @@ export function Sidebar({ drawer }: SidebarProps) {
           border: "1px solid var(--border-subtle)",
           backgroundColor: baseUrl
             ? "var(--surface)"
-            : "color-mix(in srgb, var(--rating-low) 5%, var(--card))",
+            : "color-mix(in srgb, var(--semantic-danger) 5%, var(--card))",
           borderLeftWidth: "var(--accent-line-width, 3px)",
-          borderLeftColor: baseUrl ? "var(--rating-high)" : "var(--rating-low)",
+          borderLeftColor: baseUrl ? "var(--semantic-success)" : "var(--semantic-danger)",
           display: "flex",
           alignItems: "center",
           gap: 0.75,
@@ -198,8 +198,8 @@ export function Sidebar({ drawer }: SidebarProps) {
               height: 8,
               borderRadius: "50%",
               backgroundColor: baseUrl
-                ? "var(--rating-high)"
-                : "var(--rating-low)",
+                ? "var(--semantic-success)"
+                : "var(--semantic-danger)",
               flexShrink: 0,
             }}
           />
@@ -213,7 +213,7 @@ export function Sidebar({ drawer }: SidebarProps) {
               sx={{
                 fontSize: "var(--font-size-caption)",
                 fontWeight: 600,
-                color: deviceConnected ? "var(--rating-high)" : connectionChecking ? "var(--muted)" : "var(--rating-low)",
+                color: deviceConnected ? "var(--semantic-success)" : connectionChecking ? "var(--muted)" : "var(--semantic-danger)",
                 lineHeight: 1.2,
               }}
             >
@@ -267,7 +267,6 @@ export function Sidebar({ drawer }: SidebarProps) {
               e.preventDefault();
               showToast(t(getNavBlockedMessageKey(deviceHintReason)), {
                 variant: "warning",
-                position: "top-left",
               });
               return;
             }

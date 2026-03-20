@@ -37,6 +37,17 @@
 - **卡片 / 列表**：优先用主题提供的 Card、Paper 等组件样式，不额外加重阴影或边框
 - **按钮 / 输入框**：使用主题已定制的 MUI 组件，保持扁平、无强立体感
 
+## 反馈分层与语义色
+
+- **语义色单源**：状态表达只使用 `--semantic-success`、`--semantic-warning`、`--semantic-danger`，禁止继续使用评分色表达成功/错误。
+- **分层规则**：
+  - 配置保存（LLM/通道/系统）仅用页内 `SaveFeedback`，禁止重复 Toast。
+  - 设备连接/配对前置条件使用 `DeviceBanner` + 侧栏禁用提示；点击禁用导航可用 warning Toast。
+  - 全局生命周期事件（如重启完成/超时）与无锚点操作（如技能导入/删除）使用 Toast。
+  - 页面加载失败使用 `InlineAlert` + 重试，不用 Toast 抢焦点。
+  - 局部操作失败（如 WiFi 扫描）优先在操作区就地展示错误并提供重试。
+- **可访问性**：错误 Toast 使用 `role=\"alert\"` + `aria-live=\"assertive\"`；成功/警告使用 `aria-live=\"polite\"`。
+
 ## 设计约束清单（写 UI/样式时必须遵守）
 
 以下为 `.cursor/rules/design-constraints.mdc` 的完整内容来源，AI 与开发写样式时以此为准：

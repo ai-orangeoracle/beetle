@@ -41,24 +41,24 @@ export function SaveFeedback({
         p: 1.5,
         borderRadius: 'var(--radius-control)',
         bgcolor: isOk
-          ? 'color-mix(in srgb, var(--primary) 6%, transparent)'
-          : 'color-mix(in srgb, var(--rating-low) 6%, transparent)',
+          ? 'color-mix(in srgb, var(--semantic-success) 6%, transparent)'
+          : 'color-mix(in srgb, var(--semantic-danger) 6%, transparent)',
         border: '1px solid',
         borderColor: isOk
-          ? 'color-mix(in srgb, var(--primary) 16%, transparent)'
-          : 'color-mix(in srgb, var(--rating-low) 12%, transparent)',
+          ? 'color-mix(in srgb, var(--semantic-success) 16%, transparent)'
+          : 'color-mix(in srgb, var(--semantic-danger) 12%, transparent)',
         transition: 'opacity var(--transition-duration) ease',
       }}
     >
       {isOk ? (
-        <CheckCircleOutlined sx={{ fontSize: 'var(--icon-size-md)', color: 'var(--primary)' }} aria-hidden />
+        <CheckCircleOutlined sx={{ fontSize: 'var(--icon-size-md)', color: 'var(--semantic-success)' }} aria-hidden />
       ) : (
-        <ErrorOutline sx={{ fontSize: 'var(--icon-size-md)', color: 'var(--rating-low)' }} aria-hidden />
+        <ErrorOutline sx={{ fontSize: 'var(--icon-size-md)', color: 'var(--semantic-danger)' }} aria-hidden />
       )}
       <Typography
         variant="body2"
         sx={{
-          color: isOk ? 'var(--primary)' : 'var(--rating-low)',
+          color: isOk ? 'var(--semantic-success)' : 'var(--semantic-danger)',
           fontWeight: 500,
         }}
       >
