@@ -9,9 +9,9 @@ export const enUS = {
       aiConfig: 'AI config',
       channelsConfig: 'Channels',
       systemConfig: 'System',
-      systemLogs: 'System logs',
+      systemLogs: 'Logs',
       soulUser: 'Personalization',
-      skills: 'Skill management',
+      skills: 'Skills',
     },
     device: {
       pageTitle: 'Connect device',
@@ -218,7 +218,7 @@ export const enUS = {
       pageDesc: 'WiFi, proxy, session and other system options.',
     },
     systemLogs: {
-      pageTitle: 'System logs',
+      pageTitle: 'Logs',
       pageDesc: 'Device health and diagnostic info.',
       sectionLogs: 'Logs',
       emptyLogs: 'No logs yet. Connect device to view health / diagnose.',
@@ -234,9 +234,9 @@ export const enUS = {
       userPlaceholder: 'Edit user info here…',
     },
     skills: {
-      pageTitle: 'Skill management',
-      pageDesc: 'Skill list, enable/disable, order, import from URL.',
-      sectionList: 'Skill list',
+      pageTitle: 'Skills',
+      pageDesc: 'Skills list, enable/disable, order, import from URL.',
+      sectionList: 'Skills list',
       sectionListDesc: 'Enable/disable, edit content, delete, or import from URL.',
       importFromUrl: 'Import from URL',
       emptyList: 'No skills yet. Import from URL or add here.',

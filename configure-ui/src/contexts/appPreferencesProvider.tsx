@@ -6,6 +6,7 @@ import {
   isLanguage,
   type AppPreferencesState,
 } from './appPreferencesContext'
+import { resolveLanguageFromBrowser } from '../i18n/language'
 
 const STORAGE_KEY = 'ai-job-market.app.preferences.v1'
 
@@ -23,19 +24,34 @@ function isThemeBrand(value: unknown): value is ThemeBrand {
 }
 
 function loadPreferences(): AppPreferencesState {
+  const browserLanguage = resolveLanguageFromBrowser(defaultPreferences.language)
+
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
-    if (!raw) return defaultPreferences
+    if (!raw) {
+      return {
+        ...defaultPreferences,
+        language: browserLanguage,
+      }
+    }
     const parsed: unknown = JSON.parse(raw)
-    if (!parsed || typeof parsed !== 'object') return defaultPreferences
+    if (!parsed || typeof parsed !== 'object') {
+      return {
+        ...defaultPreferences,
+        language: browserLanguage,
+      }
+    }
     const record = parsed as Record<string, unknown>
     return {
-      language: isLanguage(record.language) ? record.language : defaultPreferences.language,
+      language: isLanguage(record.language) ? record.language : browserLanguage,
       themeMode: isThemeMode(record.themeMode) ? record.themeMode : defaultPreferences.themeMode,
       themeBrand: isThemeBrand(record.themeBrand) ? record.themeBrand : defaultPreferences.themeBrand,
     }
   } catch {
-    return defaultPreferences
+    return {
+      ...defaultPreferences,
+      language: browserLanguage,
+    }
   }
 }
 
