@@ -242,6 +242,20 @@ export function AIConfigPage() {
             {saveStatus === "saving" ? t("common.saving") : t("common.save")}
           </Button>
         }
+        belowTitleRow={
+          saveStatus === "ok" || saveStatus === "fail" ? (
+            <SaveFeedback
+              placement="belowTitle"
+              status={saveStatus}
+              message={saveStatus === "ok" ? t("common.saveOk") : saveError}
+              autoDismissMs={3000}
+              onDismiss={() => {
+                setSaveStatus("idle");
+                setSaveError("");
+              }}
+            />
+          ) : null
+        }
       >
         {!config && !loading && (
           <Typography variant="body2" color="text.secondary" sx={{ pb: 2 }}>
@@ -441,17 +455,6 @@ export function AIConfigPage() {
             </Box>
           </FormSectionSubCollapsible>
         </Stack>
-        {(saveStatus === "ok" || saveStatus === "fail") && (
-          <SaveFeedback
-            status={saveStatus}
-            message={saveStatus === "ok" ? t("common.saveOk") : saveError}
-            autoDismissMs={3000}
-            onDismiss={() => {
-              setSaveStatus("idle");
-              setSaveError("");
-            }}
-          />
-        )}
       </SettingsSection>
     </Box>
   );

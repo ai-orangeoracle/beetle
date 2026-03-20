@@ -9,6 +9,11 @@ interface SettingsSectionProps {
   /** 区块下方、内容区上方的简短说明 */
   description?: string
   accessory?: ReactNode
+  /**
+   * 标题行（图标+标题+accessory）下方的全宽区域，例如保存结果。
+   * Keeps the title row a single-line flex; avoids a tall right column next to the title.
+   */
+  belowTitleRow?: ReactNode
 }
 
 export function SettingsSection({
@@ -16,8 +21,12 @@ export function SettingsSection({
   label,
   description,
   accessory,
+  belowTitleRow,
   children,
 }: PropsWithChildren<SettingsSectionProps>) {
+  const titleRowMb = belowTitleRow ? 1 : description ? 1 : 2
+  const belowRowMb = description ? 1 : 2
+
   return (
     <Box
       sx={{
@@ -33,7 +42,14 @@ export function SettingsSection({
         },
       }}
     >
-      <Stack direction="row" alignItems="center" justifyContent="space-between" flexWrap="wrap" gap={1.5} sx={{ mb: description ? 1 : 2 }}>
+      <Stack
+        direction="row"
+        alignItems="center"
+        justifyContent="space-between"
+        flexWrap="wrap"
+        gap={1.5}
+        sx={{ mb: titleRowMb }}
+      >
         <Stack direction="row" alignItems="center" spacing={1.5}>
           <Box sx={{ color: 'var(--muted)', display: 'flex', alignItems: 'center' }}>{icon}</Box>
           <Typography
@@ -51,6 +67,7 @@ export function SettingsSection({
         </Stack>
         {accessory}
       </Stack>
+      {belowTitleRow ? <Box sx={{ mb: belowRowMb }}>{belowTitleRow}</Box> : null}
       {description && (
         <Typography
           variant="body2"

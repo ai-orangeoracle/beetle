@@ -12,6 +12,11 @@ interface SaveFeedbackProps {
   /** 成功时多少毫秒后自动消失，0 不自动消失 */
   autoDismissMs?: number
   onDismiss?: () => void
+  /**
+   * `form`：表单项下方（默认上边距）。
+   * `belowTitle`：`SettingsSection` 的 `belowTitleRow` 内，全宽、顶栏无额外 margin，与保存按钮仍同区块、但不塞进标题行 flex。
+   */
+  placement?: 'form' | 'belowTitle'
 }
 
 export function SaveFeedback({
@@ -19,8 +24,10 @@ export function SaveFeedback({
   message,
   autoDismissMs = 3000,
   onDismiss,
+  placement = 'form',
 }: SaveFeedbackProps) {
   const isOk = status === 'ok'
+  const isBelowTitle = placement === 'belowTitle'
 
   useEffect(() => {
     if (!isOk || autoDismissMs <= 0 || !onDismiss) return
@@ -35,9 +42,11 @@ export function SaveFeedback({
       aria-atomic
       sx={{
         display: 'flex',
-        alignItems: 'center',
+        alignItems: isBelowTitle ? 'flex-start' : 'center',
         gap: 1,
-        mt: 2,
+        mt: isBelowTitle ? 0 : 2,
+        width: isBelowTitle ? '100%' : undefined,
+        minWidth: 0,
         p: 1.5,
         borderRadius: 'var(--radius-control)',
         bgcolor: isOk
@@ -60,6 +69,9 @@ export function SaveFeedback({
         sx={{
           color: isOk ? 'var(--semantic-success)' : 'var(--semantic-danger)',
           fontWeight: 500,
+          flex: isBelowTitle ? 1 : undefined,
+          minWidth: 0,
+          wordBreak: 'break-word',
         }}
       >
         {message}

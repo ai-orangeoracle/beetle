@@ -41,7 +41,7 @@
 
 - **语义色单源**：状态表达只使用 `--semantic-success`、`--semantic-warning`、`--semantic-danger`，禁止继续使用评分色表达成功/错误。
 - **分层规则**：
-  - 配置保存（LLM/通道/系统）仅用页内 `SaveFeedback`，禁止重复 Toast。
+  - 配置保存（LLM/通道/系统等带标题行「保存」的区块）仅用页内 `SaveFeedback`，经 `SettingsSection` 的 `belowTitleRow` 放在标题行下方全宽（标题行仍为单行 flex），`SaveFeedback placement="belowTitle"`，禁止重复 Toast。
   - 设备连接/配对前置条件使用 `DeviceBanner` + 侧栏禁用提示；点击禁用导航可用 warning Toast。
   - 全局生命周期事件（如重启完成/超时）与无锚点操作（如技能导入/删除）使用 Toast。
   - 页面加载失败使用 `InlineAlert` + 重试，不用 Toast 抢焦点。

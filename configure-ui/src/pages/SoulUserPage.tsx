@@ -6,7 +6,11 @@ import TextField from "@mui/material/TextField";
 import PsychologyOutlined from "@mui/icons-material/PsychologyOutlined";
 import PersonOutlined from "@mui/icons-material/PersonOutlined";
 import SaveRounded from "@mui/icons-material/SaveRounded";
-import { InlineAlert, SaveFeedback, SectionLoadingSkeleton } from "../components/form";
+import {
+  InlineAlert,
+  SaveFeedback,
+  SectionLoadingSkeleton,
+} from "../components/form";
 import { SettingsSection } from "../components/SettingsSection";
 import { useDeviceApi, API_ERROR } from "../hooks/useDeviceApi";
 import { useUnsaved } from "../hooks/useUnsaved";
@@ -148,6 +152,22 @@ export function SoulUserPage() {
               : t("common.save")}
           </Button>
         }
+        belowTitleRow={
+          soulSaveStatus === "ok" || soulSaveStatus === "fail" ? (
+            <SaveFeedback
+              placement="belowTitle"
+              status={soulSaveStatus}
+              message={
+                soulSaveStatus === "ok" ? t("common.saveOk") : soulError
+              }
+              autoDismissMs={3000}
+              onDismiss={() => {
+                setSoulSaveStatus("idle");
+                setSoulError("");
+              }}
+            />
+          ) : null
+        }
       >
         {soulLoading ? (
           <SectionLoadingSkeleton />
@@ -170,19 +190,6 @@ export function SoulUserPage() {
                 },
               }}
             />
-            {(soulSaveStatus === "ok" || soulSaveStatus === "fail") && (
-              <SaveFeedback
-                status={soulSaveStatus}
-                message={
-                  soulSaveStatus === "ok" ? t("common.saveOk") : soulError
-                }
-                autoDismissMs={3000}
-                onDismiss={() => {
-                  setSoulSaveStatus("idle");
-                  setSoulError("");
-                }}
-              />
-            )}
           </>
         )}
       </SettingsSection>
@@ -204,6 +211,22 @@ export function SoulUserPage() {
               ? t("common.saving")
               : t("common.save")}
           </Button>
+        }
+        belowTitleRow={
+          userSaveStatus === "ok" || userSaveStatus === "fail" ? (
+            <SaveFeedback
+              placement="belowTitle"
+              status={userSaveStatus}
+              message={
+                userSaveStatus === "ok" ? t("common.saveOk") : userError
+              }
+              autoDismissMs={3000}
+              onDismiss={() => {
+                setUserSaveStatus("idle");
+                setUserError("");
+              }}
+            />
+          ) : null
         }
       >
         {userLoading ? (
@@ -227,19 +250,6 @@ export function SoulUserPage() {
                 },
               }}
             />
-            {(userSaveStatus === "ok" || userSaveStatus === "fail") && (
-              <SaveFeedback
-                status={userSaveStatus}
-                message={
-                  userSaveStatus === "ok" ? t("common.saveOk") : userError
-                }
-                autoDismissMs={3000}
-                onDismiss={() => {
-                  setUserSaveStatus("idle");
-                  setUserError("");
-                }}
-              />
-            )}
           </>
         )}
       </SettingsSection>
