@@ -29,16 +29,19 @@ interface LayoutProps {
 }
 
 export function Layout({ onOpenSettings }: LayoutProps) {
+  const AUTO_REFRESH_SECONDS = 5
   const theme = useTheme()
   const { t } = useTranslation()
   const navigate = useNavigate()
   const location = useLocation()
   const { dirty } = useContext(UnsavedContext)
-  const { config, clearCachedConfig } = useConfig()
+  const { config, clearCachedConfig, refreshCachedConfig } = useConfig()
   const { showToast } = useToast()
   const deviceConnected = useDeviceConnected()
   const restartPhase = useRestartPhase()
   const [pendingPath, setPendingPath] = useState<string | null>(null)
+  const [refreshingCache, setRefreshingCache] = useState(false)
+  const [refreshCountdown, setRefreshCountdown] = useState(AUTO_REFRESH_SECONDS)
   const showRestartBanner = restartPhase !== 'idle'
   const showDisconnectedCacheBanner =
     !deviceConnected && config != null && !showRestartBanner
@@ -87,12 +90,44 @@ export function Layout({ onOpenSettings }: LayoutProps) {
     setPendingPath(null)
   }, [navigate, pendingPath])
 
-  /** 全屏磨砂底：不抢点击（pointer-events: none），仅提示条可点 */
+  const handleRefreshCachedConfig = useCallback(async () => {
+    if (refreshingCache) return
+    setRefreshingCache(true)
+    const result = await refreshCachedConfig()
+    if (!result.ok && result.error) {
+      showToast(result.error, { variant: 'warning' })
+    }
+    setRefreshingCache(false)
+    setRefreshCountdown(AUTO_REFRESH_SECONDS)
+  }, [refreshingCache, refreshCachedConfig, showToast])
+
+  useEffect(() => {
+    if (!showDisconnectedCacheBanner) {
+      queueMicrotask(() => {
+        setRefreshingCache(false)
+        setRefreshCountdown(AUTO_REFRESH_SECONDS)
+      })
+      return
+    }
+    if (refreshingCache) return
+    const timer = window.setInterval(() => {
+      setRefreshCountdown((prev) => {
+        if (prev <= 1) {
+          void handleRefreshCachedConfig()
+          return AUTO_REFRESH_SECONDS
+        }
+        return prev - 1
+      })
+    }, 1000)
+    return () => window.clearInterval(timer)
+  }, [showDisconnectedCacheBanner, refreshingCache, handleRefreshCachedConfig])
+
+  /** 全屏磨砂底：拦截底层交互，避免可视蒙层下仍可点击 */
   const statusOverlayBackdropSx = {
     position: 'fixed' as const,
     inset: 0,
     zIndex: 1100,
-    pointerEvents: 'none' as const,
+    pointerEvents: 'auto' as const,
     backgroundColor: 'color-mix(in srgb, var(--foreground) 10%, transparent)',
     backdropFilter: 'blur(12px)',
     WebkitBackdropFilter: 'blur(12px)',
@@ -182,6 +217,27 @@ export function Layout({ onOpenSettings }: LayoutProps) {
             >
               {t('config.deviceDisconnectedCache')}
             </Typography>
+            <Button
+              size="small"
+              variant="contained"
+              onClick={() => {
+                void handleRefreshCachedConfig()
+              }}
+              disabled={refreshingCache}
+              sx={{
+                flexShrink: 0,
+                borderRadius: 'var(--radius-control)',
+                backgroundColor: 'var(--primary)',
+                color: 'var(--primary-fg)',
+                '&:hover:not(:disabled)': {
+                  backgroundColor: 'color-mix(in srgb, var(--primary) 86%, black)',
+                },
+              }}
+            >
+              {refreshingCache
+                ? `${t('common.loading')}…`
+                : `${t('common.retry')} (${refreshCountdown}s)`}
+            </Button>
             <Button
               size="small"
               variant="outlined"

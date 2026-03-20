@@ -10,43 +10,38 @@ import { InlineAlert, SectionLoadingSkeleton } from "../components/form";
 import { SettingsSection } from "../components/SettingsSection";
 import { useDeviceApi } from "../hooks/useDeviceApi";
 import type { HealthData, DiagnoseItem } from "../api/endpoints/system";
+import { createAsyncState } from "../types/asyncState";
 
 export function SystemLogsPage() {
   const { t } = useTranslation();
   const { api, ready } = useDeviceApi();
-  const [health, setHealth] = useState<HealthData | null>(null);
-  const [diagnose, setDiagnose] = useState<DiagnoseItem[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
+  const [logsState, setLogsState] = useState(
+    createAsyncState<{ health: HealthData | null; diagnose: DiagnoseItem[] }>({
+      health: null,
+      diagnose: [],
+    }),
+  );
 
   const loadLogs = useCallback(() => {
     if (!ready) return;
-    setLoading(true);
-    setError("");
+    setLogsState((prev) => ({ ...prev, loading: true, error: "" }));
     Promise.all([api.system.health(), api.system.diagnose()])
       .then(([healthRes, diagnoseRes]) => {
-        if (healthRes.ok && healthRes.data) setHealth(healthRes.data);
-        else {
-          setHealth(null);
-          if (!healthRes.ok) setError(healthRes.error ?? "");
-        }
-        if (diagnoseRes.ok && diagnoseRes.data) setDiagnose(diagnoseRes.data);
-        else {
-          setDiagnose([]);
-          if (!diagnoseRes.ok && !healthRes.ok)
-            setError(diagnoseRes.error ?? "");
-        }
+        const nextHealth = healthRes.ok && healthRes.data ? healthRes.data : null;
+        const nextDiagnose = diagnoseRes.ok && diagnoseRes.data ? diagnoseRes.data : [];
+        const nextError =
+          !healthRes.ok ? (healthRes.error ?? "") : !diagnoseRes.ok ? (diagnoseRes.error ?? "") : "";
+        setLogsState({ loading: false, error: nextError, data: { health: nextHealth, diagnose: nextDiagnose } });
       })
-      .catch(() => setError("config.errorNetwork"))
-      .finally(() => setLoading(false));
+      .catch(() =>
+        setLogsState((prev) => ({ ...prev, loading: false, error: "config.errorNetwork" })),
+      );
   }, [api.system, ready]);
 
   useEffect(() => {
     if (!ready) {
       queueMicrotask(() => {
-        setHealth(null);
-        setDiagnose([]);
-        setError("");
+        setLogsState(createAsyncState({ health: null, diagnose: [] }));
       });
       return;
     }
@@ -64,7 +59,8 @@ export function SystemLogsPage() {
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 4 }}>
-      <InlineAlert message={error || null} onRetry={loadLogs} />
+      <InlineAlert message={logsState.error || null} onRetry={loadLogs} />
+      
       <SettingsSection
         icon={<DescriptionOutlined sx={{ fontSize: "var(--icon-size-md)" }} />}
         label={t("systemLogs.sectionLogs")}
@@ -73,11 +69,11 @@ export function SystemLogsPage() {
           <Typography variant="body2" color="text.secondary">
             {t("device.pageDesc")}
           </Typography>
-        ) : loading ? (
+        ) : logsState.loading ? (
           <SectionLoadingSkeleton />
         ) : (
           <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
-            {health && (
+            {logsState.data.health && (
               <Box>
                 <Typography
                   variant="caption"
@@ -88,7 +84,7 @@ export function SystemLogsPage() {
                 <List dense disablePadding>
                   <ListItem sx={{ py: 0.5, px: 0 }}>
                     <ListItemText
-                      primary={`wifi: ${health.wifi ?? "—"}`}
+                      primary={`wifi: ${logsState.data.health.wifi ?? "—"}`}
                       slotProps={{
                         primary: {
                           variant: "body2",
@@ -99,7 +95,7 @@ export function SystemLogsPage() {
                   </ListItem>
                   <ListItem sx={{ py: 0.5, px: 0 }}>
                     <ListItemText
-                      primary={`inbound_depth: ${health.inbound_depth ?? "—"}`}
+                      primary={`inbound_depth: ${logsState.data.health.inbound_depth ?? "—"}`}
                       slotProps={{
                         primary: {
                           variant: "body2",
@@ -110,7 +106,7 @@ export function SystemLogsPage() {
                   </ListItem>
                   <ListItem sx={{ py: 0.5, px: 0 }}>
                     <ListItemText
-                      primary={`outbound_depth: ${health.outbound_depth ?? "—"}`}
+                      primary={`outbound_depth: ${logsState.data.health.outbound_depth ?? "—"}`}
                       slotProps={{
                         primary: {
                           variant: "body2",
@@ -121,7 +117,7 @@ export function SystemLogsPage() {
                   </ListItem>
                   <ListItem sx={{ py: 0.5, px: 0 }}>
                     <ListItemText
-                      primary={`last_error: ${health.last_error ?? "none"}`}
+                      primary={`last_error: ${logsState.data.health.last_error ?? "none"}`}
                       slotProps={{
                         primary: {
                           variant: "body2",
@@ -130,11 +126,11 @@ export function SystemLogsPage() {
                       }}
                     />
                   </ListItem>
-                  {health.resource && (
+                  {logsState.data.health.resource && (
                     <>
                       <ListItem sx={{ py: 0.5, px: 0 }}>
                         <ListItemText
-                          primary={`resource.pressure: ${health.resource.pressure ?? "—"}`}
+                          primary={`resource.pressure: ${logsState.data.health.resource.pressure ?? "—"}`}
                           slotProps={{
                             primary: {
                               variant: "body2",
@@ -145,7 +141,7 @@ export function SystemLogsPage() {
                       </ListItem>
                       <ListItem sx={{ py: 0.5, px: 0 }}>
                         <ListItemText
-                          primary={`resource.heap_largest_block_internal: ${health.resource.heap_largest_block_internal ?? "—"}`}
+                          primary={`resource.heap_largest_block_internal: ${logsState.data.health.resource.heap_largest_block_internal ?? "—"}`}
                           slotProps={{
                             primary: {
                               variant: "body2",
@@ -159,7 +155,7 @@ export function SystemLogsPage() {
                 </List>
               </Box>
             )}
-            {diagnose.length > 0 && (
+            {logsState.data.diagnose.length > 0 && (
               <Box>
                 <Typography
                   variant="caption"
@@ -168,7 +164,7 @@ export function SystemLogsPage() {
                   GET /api/diagnose
                 </Typography>
                 <List dense disablePadding>
-                  {diagnose.map((item, i) => (
+                  {logsState.data.diagnose.map((item, i) => (
                     <ListItem
                       key={i}
                       sx={{ py: 0.5, px: 0, alignItems: "flex-start" }}
@@ -201,7 +197,7 @@ export function SystemLogsPage() {
                 </List>
               </Box>
             )}
-            {!health && diagnose.length === 0 && !loading && ready && (
+            {!logsState.data.health && logsState.data.diagnose.length === 0 && !logsState.loading && ready && (
               <Typography variant="body2" color="text.secondary">
                 {t("systemLogs.emptyLogs")}
               </Typography>

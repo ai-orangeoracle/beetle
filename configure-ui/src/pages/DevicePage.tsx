@@ -16,10 +16,7 @@ import { InlineAlert, SaveFeedback } from "../components/form";
 import { SettingsSection } from "../components/SettingsSection";
 import { useDeviceApi } from "../hooks/useDeviceApi";
 import { useDevice } from "../hooks/useDevice";
-import { request } from "../api/client";
 import {
-  getSystemInfo,
-  getChannelConnectivity,
   type SystemInfoData,
   type ChannelConnectivityItem,
 } from "../api/endpoints/system";
@@ -29,7 +26,7 @@ const DEFAULT_DEVICE_BASE_URL = "http://192.168.4.1";
 export function DevicePage() {
   const { t } = useTranslation();
   const { baseUrl, pairingCode, setBaseUrl, setPairingCode } = useDevice();
-  const { deviceConnected } = useDeviceApi();
+  const { api, deviceConnected } = useDeviceApi();
   const [urlInput, setUrlInput] = useState(baseUrl || DEFAULT_DEVICE_BASE_URL);
   const [codeInput, setCodeInput] = useState(pairingCode);
   const [probeStatus, setProbeStatus] = useState<
@@ -55,7 +52,7 @@ export function DevicePage() {
     const url = urlInput.trim().replace(/\/$/, "") || DEFAULT_DEVICE_BASE_URL;
     setProbeStatus("checking");
     setProbeError("");
-    const res = await request(url, "/");
+    const res = await api.device.probe(url);
     if (res.ok) {
       setProbeStatus("ok");
     } else {
@@ -66,7 +63,6 @@ export function DevicePage() {
 
   useEffect(() => {
     if (!deviceConnected || !baseUrl?.trim()) return;
-    const url = baseUrl.trim().replace(/\/$/, "");
     let cancelled = false;
     const tid = window.setTimeout(() => {
       if (!cancelled) {
@@ -74,7 +70,8 @@ export function DevicePage() {
         setSystemInfoError("");
       }
     }, 0);
-    getSystemInfo(url, pairingCode || undefined)
+    api.system
+      .info()
       .then((res) => {
         if (cancelled) return;
         setSystemInfoLoading(false);
@@ -91,11 +88,10 @@ export function DevicePage() {
       cancelled = true;
       window.clearTimeout(tid);
     };
-  }, [deviceConnected, baseUrl, pairingCode]);
+  }, [api.system, deviceConnected, baseUrl]);
 
   useEffect(() => {
     if (!deviceConnected || !baseUrl?.trim()) return;
-    const url = baseUrl.trim().replace(/\/$/, "");
     let cancelled = false;
     const tid = window.setTimeout(() => {
       if (!cancelled) {
@@ -103,7 +99,8 @@ export function DevicePage() {
         setChannelError("");
       }
     }, 0);
-    getChannelConnectivity(url, pairingCode || undefined)
+    api.system
+      .channelConnectivity()
       .then((res) => {
         if (cancelled) return;
         setChannelLoading(false);
@@ -120,15 +117,15 @@ export function DevicePage() {
       cancelled = true;
       window.clearTimeout(tid);
     };
-  }, [deviceConnected, baseUrl, pairingCode]);
+  }, [api.system, deviceConnected, baseUrl]);
 
   const reloadSystemInfo = () => {
     setSystemInfo(null);
     setSystemInfoError("");
     if (!deviceConnected || !baseUrl?.trim()) return;
-    const url = baseUrl.trim().replace(/\/$/, "");
     setSystemInfoLoading(true);
-    getSystemInfo(url, pairingCode || undefined)
+    api.system
+      .info()
       .then((res) => {
         setSystemInfoLoading(false);
         if (res.ok && res.data) setSystemInfo(res.data);
@@ -143,9 +140,9 @@ export function DevicePage() {
   const reloadChannelConnectivity = () => {
     setChannelError("");
     if (!deviceConnected || !baseUrl?.trim()) return;
-    const url = baseUrl.trim().replace(/\/$/, "");
     setChannelLoading(true);
-    getChannelConnectivity(url, pairingCode || undefined)
+    api.system
+      .channelConnectivity()
       .then((res) => {
         setChannelLoading(false);
         if (res.ok && res.data?.channels) setChannelList(res.data.channels);

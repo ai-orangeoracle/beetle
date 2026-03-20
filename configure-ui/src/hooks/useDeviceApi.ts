@@ -2,6 +2,7 @@ import { useMemo } from 'react'
 import { useDeviceStatus, useDeviceConnected } from '../store/deviceStatusStore'
 import { useDevice } from './useDevice'
 import { API_ERROR } from '../api/client'
+import { request } from '../api/client'
 import * as configApi from '../api/endpoints/config'
 import * as soulUserApi from '../api/endpoints/soulUser'
 import * as skillsApi from '../api/endpoints/skills'
@@ -53,6 +54,13 @@ export function useDeviceApi() {
       system: {
         health: () => systemApi.getHealth(baseUrl ?? ''),
         diagnose: () => systemApi.getDiagnose(baseUrl ?? ''),
+        wifiScan: () => systemApi.getWifiScan(baseUrl ?? ''),
+        info: () => systemApi.getSystemInfo(baseUrl ?? '', pairingCode ?? undefined),
+        channelConnectivity: () =>
+          systemApi.getChannelConnectivity(baseUrl ?? '', pairingCode ?? undefined),
+      },
+      device: {
+        probe: (targetBaseUrl?: string) => request(targetBaseUrl ?? baseUrl ?? '', '/'),
       },
     }),
     [baseUrl, pairingCode],
