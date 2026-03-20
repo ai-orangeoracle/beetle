@@ -18,7 +18,7 @@ use crate::metrics;
 use crate::orchestrator::admission::{AdmissionDecision, LlmDecision, ToolDecision};
 use crate::state;
 use crate::tools::ToolContext;
-use crate::util::{truncate_content_to_max, truncate_to_byte_len};
+use crate::util::truncate_content_to_max;
 use crate::PlatformHttpClient;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
@@ -36,6 +36,31 @@ const ROUTER_SYSTEM: &str =
 const LOW_MEMORY_USER_MESSAGE: &str = "设备内存紧张，请稍后再试。";
 /// 同一 chat_id 的 "low memory, defer" 日志最少间隔，避免刷屏。
 const LOW_MEM_DEFER_LOG_INTERVAL: Duration = Duration::from_secs(60);
+
+/// 将文本按 UTF-8 边界追加到 dst，确保总字节不超过 max_bytes。
+/// 返回 true 表示本次发生截断（达到上限）。
+fn push_bounded_utf8(dst: &mut String, text: &str, max_bytes: usize) -> bool {
+    if dst.len() >= max_bytes {
+        return true;
+    }
+    let remain = max_bytes - dst.len();
+    if text.len() <= remain {
+        dst.push_str(text);
+        return false;
+    }
+    let mut end = 0usize;
+    for (i, ch) in text.char_indices() {
+        let next = i + ch.len_utf8();
+        if next > remain {
+            break;
+        }
+        end = next;
+    }
+    if end > 0 {
+        dst.push_str(&text[..end]);
+    }
+    true
+}
 
 /// 在 run_worker_path 内包装 http，注入当前 msg 的 chat_id/channel，供 remind_at 等工具使用。
 struct AgentToolCtx<'a, H: PlatformHttpClient> {
@@ -697,9 +722,9 @@ fn run_worker_path<H: PlatformHttpClient>(
                     response.content
                 },
             });
-            let mut user_content_raw = String::with_capacity(
-                MAX_TOOL_RESULTS_USER_MESSAGE_LEN.min(tool_calls.len() * 256),
-            );
+            let mut user_content_raw =
+                String::with_capacity(MAX_TOOL_RESULTS_USER_MESSAGE_LEN.min(tool_calls.len() * 192));
+            let mut truncated = false;
             for (i, tc) in tool_calls.iter().enumerate() {
                 // 工具执行门控
                 let needs_net = registry.is_network_tool(&tc.name);
@@ -730,19 +755,45 @@ fn run_worker_path<H: PlatformHttpClient>(
                     }
                 };
                 crate::platform::task_wdt::feed_current_task();
-                if i > 0 {
-                    user_content_raw.push('\n');
+                if i > 0 && push_bounded_utf8(
+                    &mut user_content_raw,
+                    "\n",
+                    MAX_TOOL_RESULTS_USER_MESSAGE_LEN,
+                ) {
+                    truncated = true;
+                    break;
                 }
-                user_content_raw.push('[');
-                user_content_raw.push_str(&tc.id);
-                user_content_raw.push_str("]: ");
-                user_content_raw.push_str(&result);
+                if push_bounded_utf8(
+                    &mut user_content_raw,
+                    "[",
+                    MAX_TOOL_RESULTS_USER_MESSAGE_LEN,
+                ) || push_bounded_utf8(
+                    &mut user_content_raw,
+                    &tc.id,
+                    MAX_TOOL_RESULTS_USER_MESSAGE_LEN,
+                ) || push_bounded_utf8(
+                    &mut user_content_raw,
+                    "]: ",
+                    MAX_TOOL_RESULTS_USER_MESSAGE_LEN,
+                ) || push_bounded_utf8(
+                    &mut user_content_raw,
+                    &result,
+                    MAX_TOOL_RESULTS_USER_MESSAGE_LEN,
+                ) {
+                    truncated = true;
+                    break;
+                }
             }
-            let user_content =
-                truncate_to_byte_len(&user_content_raw, MAX_TOOL_RESULTS_USER_MESSAGE_LEN);
+            if truncated && user_content_raw.len() < MAX_TOOL_RESULTS_USER_MESSAGE_LEN {
+                let _ = push_bounded_utf8(
+                    &mut user_content_raw,
+                    "\n[truncated]",
+                    MAX_TOOL_RESULTS_USER_MESSAGE_LEN,
+                );
+            }
             messages.push(Message {
                 role: "user".to_string(),
-                content: format!("Tool results:\n{}", user_content),
+                content: format!("Tool results:\n{}", user_content_raw),
             });
             // 流式编辑：tool_use 轮进入下一轮前，更新消息提示用户正在处理中。
             if let (Some(ref mid), Some(ed)) = (&stream_msg_id, editor) {

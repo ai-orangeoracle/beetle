@@ -210,6 +210,7 @@ fn do_request(
             source: Box::new(e),
             stage: "llm_parse",
         })?;
+    drop(resp_body);
 
     Ok(LlmResponse::from_anthropic(parsed))
 }
