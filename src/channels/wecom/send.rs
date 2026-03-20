@@ -16,6 +16,9 @@ pub struct WecomTokenResponse {
     #[serde(default)]
     pub errmsg: String,
     pub access_token: Option<String>,
+    /// 秒；缺省为 0 时按 7200 处理（与官方 gettoken 一致）。
+    #[serde(default)]
+    pub expires_in: u64,
 }
 
 #[derive(serde::Deserialize)]
@@ -143,11 +146,12 @@ pub fn check_connectivity<H: ChannelHttpClient + ?Sized>(
     connectivity::item("wecom", configured, ok, message)
 }
 
-fn acquire_wecom_token<H: ChannelHttpClient>(
+/// Returns `(access_token, expires_in_secs)` for sender-loop caching.
+fn acquire_wecom_token_with_expiry<H: ChannelHttpClient>(
     http: &mut H,
     corp_id: &str,
     corp_secret: &str,
-) -> Option<String> {
+) -> Option<(String, u64)> {
     const TAG: &str = "wecom_send";
     let url = format!(
         "{}?corpid={}&corpsecret={}",
@@ -181,12 +185,27 @@ fn acquire_wecom_token<H: ChannelHttpClient>(
         return None;
     }
     match token_resp.access_token {
-        Some(t) if !t.is_empty() => Some(t),
+        Some(t) if !t.is_empty() => {
+            let exp_secs = if token_resp.expires_in == 0 {
+                7200
+            } else {
+                token_resp.expires_in
+            };
+            Some((t, exp_secs.max(60)))
+        }
         _ => {
             log::warn!("[{}] gettoken empty access_token", TAG);
             None
         }
     }
+}
+
+fn acquire_wecom_token<H: ChannelHttpClient>(
+    http: &mut H,
+    corp_id: &str,
+    corp_secret: &str,
+) -> Option<String> {
+    acquire_wecom_token_with_expiry(http, corp_id, corp_secret).map(|(t, _)| t)
 }
 
 fn send_one_wecom<H: ChannelHttpClient>(
@@ -276,7 +295,10 @@ pub fn flush_wecom_sends<H: ChannelHttpClient>(
     }
 }
 
-/// 持续运行的企业微信发送循环；按需创建 HTTP 客户端，发完即释放。
+/// access_token 缓存提前刷新余量（秒）。
+const WECOM_TOKEN_CACHE_MARGIN_SECS: u64 = 120;
+
+/// 持续运行的企业微信发送循环：sender 线程内**复用** HTTP，并按 `expires_in` **缓存** token。
 pub fn run_wecom_sender_loop<H, F>(
     rx: std::sync::mpsc::Receiver<(String, String)>,
     corp_id: &str,
@@ -303,6 +325,8 @@ pub fn run_wecom_sender_loop<H, F>(
     crate::platform::task_wdt::register_current_task_to_task_wdt();
     log::info!("[{}] sender loop started", TAG);
 
+    let mut http: Option<H> = None;
+    let mut token_cache: Option<(String, std::time::Instant)> = None;
     let recv_timeout = std::time::Duration::from_secs(30);
     loop {
         let (chat_id, content) = match rx.recv_timeout(recv_timeout) {
@@ -323,32 +347,71 @@ pub fn run_wecom_sender_loop<H, F>(
                 std::thread::sleep(std::time::Duration::from_secs(2));
                 crate::platform::task_wdt::feed_current_task();
             }
-            let mut http = match create_http() {
-                Ok(h) => h,
-                Err(e) => {
-                    log::warn!(
-                        "[{}] create http failed (attempt {}): {}",
-                        TAG,
-                        retry + 1,
-                        e
-                    );
-                    continue;
+
+            let now = std::time::Instant::now();
+            let mut token_opt: Option<String> = token_cache
+                .as_ref()
+                .filter(|(_, exp)| now < *exp)
+                .map(|(t, _)| t.clone());
+            if token_opt.is_none() {
+                token_cache = None;
+                if http.is_none() {
+                    match create_http() {
+                        Ok(h) => http = Some(h),
+                        Err(e) => {
+                            log::warn!(
+                                "[{}] create http failed (attempt {}): {}",
+                                TAG,
+                                retry + 1,
+                                e
+                            );
+                            continue;
+                        }
+                    }
                 }
-            };
-            let token = match acquire_wecom_token(&mut http, corp_id, corp_secret) {
+                let Some(h) = http.as_mut() else {
+                    continue;
+                };
+                match acquire_wecom_token_with_expiry(h, corp_id, corp_secret) {
+                    Some((t, exp_secs)) => {
+                        let keep = exp_secs
+                            .saturating_sub(WECOM_TOKEN_CACHE_MARGIN_SECS)
+                            .max(30);
+                        token_cache = Some((t.clone(), now + std::time::Duration::from_secs(keep)));
+                        token_opt = Some(t);
+                    }
+                    None => {
+                        http = None;
+                        continue;
+                    }
+                }
+            }
+
+            let token = match token_opt {
                 Some(t) => t,
                 None => continue,
             };
-            send_one_wecom(
-                &mut http,
-                &token,
-                agent_id_u32,
-                &chat_id,
-                default_touser,
-                &content,
-            );
+
+            if http.is_none() {
+                match create_http() {
+                    Ok(h) => http = Some(h),
+                    Err(e) => {
+                        log::warn!(
+                            "[{}] create http failed (attempt {}): {}",
+                            TAG,
+                            retry + 1,
+                            e
+                        );
+                        continue;
+                    }
+                }
+            }
+            let Some(h) = http.as_mut() else {
+                continue;
+            };
+            send_one_wecom(h, &token, agent_id_u32, &chat_id, default_touser, &content);
             while let Ok((cid, cnt)) = rx.try_recv() {
-                send_one_wecom(&mut http, &token, agent_id_u32, &cid, default_touser, &cnt);
+                send_one_wecom(h, &token, agent_id_u32, &cid, default_touser, &cnt);
             }
             sent = true;
             break;
