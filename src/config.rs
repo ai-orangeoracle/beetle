@@ -3,6 +3,10 @@
 //! Build-time / env config with validation; secrets never logged or written to SPIFFS.
 
 use crate::error::{Error, Result};
+use crate::display::{
+    default_disabled_display_config, validate_display_config_core, DisplayConfig,
+    DISPLAY_CONFIG_VERSION,
+};
 use crate::platform::ConfigStore;
 use serde::{Deserialize, Serialize};
 
@@ -176,6 +180,10 @@ pub struct AppConfig {
     #[serde(skip, default)]
     pub hardware_devices: Vec<DeviceEntry>,
 
+    /// 显示配置（从 SPIFFS config/display.json 加载），不序列化到 NVS。
+    #[serde(skip, default)]
+    pub display: Option<DisplayConfig>,
+
     /// 加载过程中产生的可观测错误（NVS/SPIFFS/JSON 解析），仅 load() 内写入，不序列化。
     #[serde(skip, default)]
     pub load_errors: Option<Vec<String>>,
@@ -257,6 +265,7 @@ impl AppConfig {
                 .map(|s| s == "1" || s.eq_ignore_ascii_case("true"))
                 .unwrap_or(false),
             hardware_devices: vec![],
+            display: None,
             load_errors: None,
         }
     }
@@ -347,6 +356,16 @@ impl AppConfig {
                     load_errors.push("spiffs_hardware_read_error".into());
                 }
             }
+            match r.read_config_file("config/display.json") {
+                Ok(Some(b)) => {
+                    let s = String::from_utf8_lossy(&b);
+                    c.merge_display_from_json(&s, &mut load_errors);
+                }
+                Ok(None) => {}
+                Err(_) => {
+                    load_errors.push("spiffs_display_read_error".into());
+                }
+            }
         }
         if c.llm_sources.is_empty() {
             c.llm_sources = vec![LlmSource {
@@ -435,6 +454,27 @@ impl AppConfig {
             Err(e) => {
                 log::warn!("[config] merge_hardware_from_json parse failed: {}", e);
                 errors.push("hardware_json_invalid".into());
+            }
+        }
+    }
+
+    /// 从 SPIFFS 读到的 display.json 字符串合并到当前 config。
+    pub fn merge_display_from_json(&mut self, json: &str, errors: &mut Vec<String>) {
+        match serde_json::from_str::<DisplayConfig>(json) {
+            Ok(mut cfg) => {
+                if cfg.version == 0 {
+                    cfg.version = DISPLAY_CONFIG_VERSION;
+                }
+                if let Err(e) = validate_display_segment(&cfg, &self.hardware_devices) {
+                    log::warn!("[config] merge_display_from_json validation failed: {}", e);
+                    errors.push("display_validation_failed".into());
+                    return;
+                }
+                self.display = Some(cfg);
+            }
+            Err(e) => {
+                log::warn!("[config] merge_display_from_json parse failed: {}", e);
+                errors.push("display_json_invalid".into());
             }
         }
     }
@@ -1136,6 +1176,85 @@ fn validate_hardware_segment(seg: &HardwareSegment) -> Result<()> {
     Ok(())
 }
 
+fn validate_pin_range(pin: i32) -> Result<()> {
+    if !(HARDWARE_PIN_MIN..=HARDWARE_PIN_MAX).contains(&pin) {
+        return Err(Error::config(
+            "display",
+            format!(
+                "DISPLAY_CONFIG_INVALID_GPIO: pin {} out of range {}..={}",
+                pin, HARDWARE_PIN_MIN, HARDWARE_PIN_MAX
+            ),
+        ));
+    }
+    if HARDWARE_FORBIDDEN_PINS.contains(&pin) {
+        return Err(Error::config(
+            "display",
+            format!(
+                "DISPLAY_CONFIG_INVALID_GPIO: pin {} is forbidden (strapping pin)",
+                pin
+            ),
+        ));
+    }
+    Ok(())
+}
+
+fn collect_display_pins(cfg: &DisplayConfig) -> Vec<(String, i32)> {
+    let mut out = vec![
+        ("sclk".to_string(), cfg.spi.sclk),
+        ("mosi".to_string(), cfg.spi.mosi),
+        ("cs".to_string(), cfg.spi.cs),
+        ("dc".to_string(), cfg.spi.dc),
+    ];
+    if let Some(v) = cfg.spi.rst {
+        out.push(("rst".to_string(), v));
+    }
+    if let Some(v) = cfg.spi.bl {
+        out.push(("bl".to_string(), v));
+    }
+    out
+}
+
+fn validate_display_segment(cfg: &DisplayConfig, hardware_devices: &[DeviceEntry]) -> Result<()> {
+    validate_display_config_core(cfg)?;
+    if !cfg.enabled {
+        return Ok(());
+    }
+
+    let pins = collect_display_pins(cfg);
+    let mut seen = std::collections::HashSet::new();
+    for (name, pin) in &pins {
+        validate_pin_range(*pin)?;
+        if !seen.insert(*pin) {
+            return Err(Error::config(
+                "display",
+                format!(
+                    "DISPLAY_CONFIG_PIN_CONFLICT_INTERNAL: duplicate pin {} found at {}",
+                    pin, name
+                ),
+            ));
+        }
+    }
+
+    let mut external = std::collections::HashSet::new();
+    for dev in hardware_devices {
+        for pin in dev.pins.values() {
+            external.insert(*pin);
+        }
+    }
+    for (name, pin) in pins {
+        if external.contains(&pin) {
+            return Err(Error::config(
+                "display",
+                format!(
+                    "DISPLAY_CONFIG_PIN_CONFLICT_EXTERNAL: display {} pin {} conflicts with hardware_devices",
+                    name, pin
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// 校验 LlmSegment 并写入 SPIFFS config/llm.json；body 即全量，不做合并。
 pub fn save_llm_segment(writer: &dyn ConfigFileStore, body: &str) -> Result<()> {
     let seg: LlmSegment =
@@ -1201,6 +1320,32 @@ pub fn save_hardware_segment(writer: &dyn ConfigFileStore, body: &str) -> Result
     let json =
         serde_json::to_string(&seg).map_err(|e| Error::config("serialize", e.to_string()))?;
     writer.write_config_file("config/hardware.json", json.as_bytes())?;
+    Ok(())
+}
+
+/// GET /api/config/display：返回 display.json 内容（不存在时返回 disabled 默认配置）。
+pub fn get_display_segment(reader: &dyn ConfigFileStore) -> Result<String> {
+    match reader.read_config_file("config/display.json")? {
+        Some(b) => Ok(String::from_utf8_lossy(&b).into_owned()),
+        None => serde_json::to_string(&default_disabled_display_config())
+            .map_err(|e| Error::config("display", e.to_string())),
+    }
+}
+
+/// POST /api/config/display：校验并写入 SPIFFS config/display.json；body 即全量，不做合并。
+pub fn save_display_segment(
+    writer: &dyn ConfigFileStore,
+    hardware_devices: &[DeviceEntry],
+    body: &str,
+) -> Result<()> {
+    let mut seg: DisplayConfig =
+        serde_json::from_str(body).map_err(|e| Error::config("deserialize", e.to_string()))?;
+    if seg.version == 0 {
+        seg.version = DISPLAY_CONFIG_VERSION;
+    }
+    validate_display_segment(&seg, hardware_devices)?;
+    let json = serde_json::to_string(&seg).map_err(|e| Error::config("serialize", e.to_string()))?;
+    writer.write_config_file("config/display.json", json.as_bytes())?;
     Ok(())
 }
 

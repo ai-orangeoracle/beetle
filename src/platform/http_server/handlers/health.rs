@@ -8,11 +8,17 @@ use crate::state;
 use std::sync::atomic::Ordering;
 
 #[derive(serde::Serialize)]
+struct DisplayHealth {
+    available: bool,
+}
+
+#[derive(serde::Serialize)]
 struct HealthBody {
     wifi: &'static str,
     inbound_depth: usize,
     outbound_depth: usize,
     last_error: String,
+    display: DisplayHealth,
     metrics: metrics::MetricsSnapshot,
     resource: orchestrator::ResourceSnapshot,
 }
@@ -30,6 +36,9 @@ pub fn body(ctx: &HandlerContext) -> Result<String, std::io::Error> {
         inbound_depth: ctx.inbound_depth.load(Ordering::Relaxed),
         outbound_depth: ctx.outbound_depth.load(Ordering::Relaxed),
         last_error: last_err,
+        display: DisplayHealth {
+            available: ctx.platform.display_available(),
+        },
         metrics: metrics::snapshot(),
         resource: orchestrator::snapshot(),
     };

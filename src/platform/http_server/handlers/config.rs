@@ -92,3 +92,23 @@ pub fn post_hardware(ctx: &HandlerContext, body: &str) -> Result<ApiResponse, st
         Err(e) => Ok(ApiResponse::err_400(&user_message::from_error(&e, &locale))),
     }
 }
+
+/// GET /api/config/display：返回 DisplayConfig JSON（文件不存在时返回 disabled 默认配置）。
+pub fn get_display_body(ctx: &HandlerContext) -> Result<String, std::io::Error> {
+    config::get_display_segment(ctx.config_file_store.as_ref()).map_err(|e| to_io(e.to_string()))
+}
+
+/// POST /api/config/display：校验并写入 DisplayConfig 到 SPIFFS config/display.json。
+pub fn post_display(ctx: &HandlerContext, body: &str) -> Result<ApiResponse, std::io::Error> {
+    let locale = config::get_locale(ctx.config_store.as_ref());
+    let current = AppConfig::load(
+        ctx.config_store.as_ref(),
+        Some(ctx.config_file_store.as_ref()),
+    );
+    match config::save_display_segment(ctx.config_file_store.as_ref(), &current.hardware_devices, body) {
+        Ok(()) => Ok(ApiResponse::ok_200_json(
+            r#"{"ok":true,"restart_required":true}"#,
+        )),
+        Err(e) => Ok(ApiResponse::err_400(&user_message::from_error(&e, &locale))),
+    }
+}

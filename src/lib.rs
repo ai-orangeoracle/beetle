@@ -15,6 +15,7 @@ pub mod bus;
 pub mod channels;
 pub mod config;
 pub mod doctor;
+pub mod display;
 pub mod error;
 pub mod llm;
 pub mod memory;
@@ -52,6 +53,10 @@ pub use channels::{
 pub use config::{
     parse_allowed_chat_ids, save_hardware_segment, AppConfig, DeviceEntry, HardwareSegment,
     LlmSource, PinConfig,
+};
+pub use display::{
+    default_disabled_display_config, validate_display_config_core, DisplayBus, DisplayChannelStatus,
+    DisplayColorOrder, DisplayCommand, DisplayConfig, DisplayDriver, DisplayPressureLevel,
 };
 pub use error::{Error, Result};
 pub use llm::{

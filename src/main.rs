@@ -12,7 +12,8 @@ use beetle::Platform;
 use beetle::PlatformHttpClient;
 use beetle::{
     parse_allowed_chat_ids, run_agent_loop, run_dispatch, send_chat_action, AppConfig,
-    Esp32Platform, MessageBus, DEFAULT_CAPACITY,
+    DisplayChannelStatus, DisplayCommand, DisplayPressureLevel, Esp32Platform, MessageBus,
+    DEFAULT_CAPACITY,
 };
 
 use std::collections::HashMap;
@@ -139,6 +140,21 @@ fn main() {
         }
     };
 
+    if let Some(display_cfg) = config.display.as_ref() {
+        if display_cfg.enabled {
+            if let Err(e) = platform.init_display(display_cfg) {
+                log::warn!("[{}] display init failed (degraded): {}", TAG, e);
+            } else {
+                log::info!("[{}] display initialized", TAG);
+            }
+        }
+    }
+    if wifi_connected && platform.display_available() {
+        let _ = platform.display_command(DisplayCommand::UpdateIp {
+            ip: "192.168.4.1".to_string(),
+        });
+    }
+
     run_app(platform, Arc::new(config), wifi_connected);
 }
 
@@ -255,6 +271,34 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
         Arc::clone(&outbound_depth),
         Arc::clone(&session_store),
     );
+
+    if platform.display_available() {
+        let display_platform = Arc::clone(&platform);
+        std::thread::spawn(move || loop {
+            std::thread::sleep(std::time::Duration::from_secs(30));
+            let snapshot = beetle::orchestrator::snapshot();
+            let pressure = match snapshot.pressure {
+                beetle::orchestrator::PressureLevel::Normal => DisplayPressureLevel::Normal,
+                beetle::orchestrator::PressureLevel::Cautious => DisplayPressureLevel::Cautious,
+                beetle::orchestrator::PressureLevel::Critical => DisplayPressureLevel::Critical,
+            };
+            let cmd = DisplayCommand::RefreshDashboard {
+                wifi_connected: beetle::platform::is_wifi_sta_connected(),
+                ip_address: Some("192.168.4.1".to_string()),
+                channels: vec![DisplayChannelStatus {
+                    name: "primary".to_string(),
+                    healthy: snapshot.channels.telegram.healthy
+                        || snapshot.channels.feishu.healthy
+                        || snapshot.channels.dingtalk.healthy
+                        || snapshot.channels.wecom.healthy
+                        || snapshot.channels.qq_channel.healthy,
+                }],
+                pressure,
+                heap_percent: 0,
+            };
+            let _ = display_platform.display_command(cmd);
+        });
+    }
 
     beetle::memory::run_remind_loop(Arc::clone(&remind_at_store), inbound_tx.clone(), 60);
 

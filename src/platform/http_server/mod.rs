@@ -490,6 +490,51 @@ pub fn run(
         }
     );
 
+    // ── /api/config/display ──
+    let store_display_get = std::sync::Arc::clone(&config_store);
+    let ctx_display_get = Arc::clone(&ctx);
+    register!(
+        server,
+        "/api/config/display",
+        Method::Get,
+        move |req| -> HandlerResult {
+            activated_get_json!(
+                req,
+                store_display_get,
+                ctx_display_get,
+                handlers::config::get_display_body
+            )
+        }
+    );
+    register!(
+        server,
+        "/api/config/display",
+        Method::Options,
+        |req| -> HandlerResult { resp_options!(req) }
+    );
+    let store_display_post = std::sync::Arc::clone(&config_store);
+    let ctx_display_post = Arc::clone(&ctx);
+    register!(
+        server,
+        "/api/config/display",
+        Method::Post,
+        move |mut req| -> HandlerResult {
+            require_pairing_code!(req, store_display_post);
+            let body = read_body_utf8!(req, POST_BODY_MAX_LEN, store_display_post);
+            let r = handlers::config::post_display(ctx_display_post.as_ref(), &body).map_err(to_io)?;
+            let should_restart = r.status == 200 && common::restart_requested_from_uri(req.uri());
+            write_api_resp!(req, r)?;
+            if should_restart {
+                let platform = Arc::clone(&ctx_display_post.platform);
+                std::thread::spawn(move || {
+                    std::thread::sleep(Duration::from_millis(300));
+                    platform.request_restart();
+                });
+            }
+            Ok(())
+        }
+    );
+
     let ctx_wifi_scan = Arc::clone(&ctx);
     register!(
         server,
