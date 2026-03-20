@@ -111,7 +111,9 @@ pub fn build_default_registry(
     registry.register(Box::new(super::WebSearchTool::new(config)));
     registry.register(Box::new(super::AnalyzeImageTool::new(config)));
     registry.register(Box::new(super::FetchUrlTool));
+    let remind_at_store_for_list = Arc::clone(&remind_at_store);
     registry.register(Box::new(super::RemindAtTool::new(remind_at_store)));
+    registry.register(Box::new(super::RemindListTool::new(remind_at_store_for_list)));
     registry.register(Box::new(super::UpdateSessionSummaryTool::new(
         session_summary_store,
         session_store,

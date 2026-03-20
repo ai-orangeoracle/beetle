@@ -26,7 +26,7 @@ pub use hardware::DeviceControlTool;
 pub use http_post::HttpPostTool;
 pub use kv_store::KvStoreTool;
 pub use registry::{build_default_registry, ToolRegistry};
-pub use remind_at::RemindAtTool;
+pub use remind_at::{RemindAtTool, RemindListTool};
 pub use update_session_summary::UpdateSessionSummaryTool;
 pub use web_search::WebSearchTool;
 

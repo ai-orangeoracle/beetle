@@ -62,6 +62,14 @@ pub trait RemindAtStore: Send + Sync {
     fn add(&self, channel: &str, chat_id: &str, at_unix_secs: u64, context: &str) -> Result<()>;
     /// 移除并返回一条 at <= now 的条目（任选其一）；无到点项返回 Ok(None)。
     fn pop_due(&self, now_unix_secs: u64) -> Result<Option<(String, String, String)>>;
+    /// 查询当前会话未到点提醒，按 at 升序返回，limit 由调用方控制。
+    fn list_upcoming(
+        &self,
+        channel: &str,
+        chat_id: &str,
+        now_unix_secs: u64,
+        limit: usize,
+    ) -> Result<Vec<(u64, String)>>;
 }
 
 /// 情绪信号存储。本轮模型输出带 [SIGNAL:comfort] 时 set，下一轮 build_context 时 get_then_clear 注入 system 后清除。

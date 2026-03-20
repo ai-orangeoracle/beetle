@@ -4,7 +4,7 @@ use crate::error::{Error, Result};
 use crate::memory::RemindAtStore;
 use crate::tools::{parse_tool_args, Tool, ToolContext};
 use crate::util::parse_iso8601;
-use serde_json::Value;
+use serde_json::{json, Value};
 
 /// 需要注入 RemindAtStore；由 main 注册时传入。
 pub struct RemindAtTool {
@@ -67,5 +67,71 @@ impl Tool for RemindAtTool {
         let at_secs = parse_at_to_unix_secs(at_val)?;
         self.store.add(channel, chat_id, at_secs, context)?;
         Ok("已设置提醒。".to_string())
+    }
+}
+
+/// remind_list 工具：查询当前会话未到点提醒。
+pub struct RemindListTool {
+    store: std::sync::Arc<dyn RemindAtStore + Send + Sync>,
+}
+
+impl RemindListTool {
+    pub fn new(store: std::sync::Arc<dyn RemindAtStore + Send + Sync>) -> Self {
+        Self { store }
+    }
+}
+
+impl Tool for RemindListTool {
+    fn name(&self) -> &str {
+        "remind_list"
+    }
+
+    fn description(&self) -> &str {
+        "List upcoming reminders for current chat. Args: limit (optional, default 10, max 20)."
+    }
+
+    fn schema(&self) -> serde_json::Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "limit": { "type": "number", "description": "max items to return, default 10, max 20" }
+            }
+        })
+    }
+
+    fn execute(&self, args: &str, ctx: &mut dyn ToolContext) -> Result<String> {
+        let chat_id = ctx.current_chat_id().ok_or_else(|| {
+            Error::config(
+                "remind_list",
+                "no current chat_id (tool used outside session)",
+            )
+        })?;
+        let channel = ctx.current_channel().ok_or_else(|| {
+            Error::config(
+                "remind_list",
+                "no current channel (tool used outside session)",
+            )
+        })?;
+        let obj = parse_tool_args(args, "remind_list")?;
+        let limit = obj.get("limit").and_then(Value::as_u64).unwrap_or(10).clamp(1, 20) as usize;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let items = self.store.list_upcoming(channel, chat_id, now, limit)?;
+        let entries: Vec<serde_json::Value> = items
+            .into_iter()
+            .map(|(at_unix_secs, context)| {
+                json!({
+                    "at_unix_secs": at_unix_secs,
+                    "context": context
+                })
+            })
+            .collect();
+        Ok(json!({
+            "count": entries.len(),
+            "items": entries
+        })
+        .to_string())
     }
 }
