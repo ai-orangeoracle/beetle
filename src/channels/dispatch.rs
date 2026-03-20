@@ -2,7 +2,6 @@
 //! Outbound dispatch: recv from outbound_rx, send via MessageSink; per-channel circuit breaker.
 
 use crate::bus::{OutboundRx, MAX_CONTENT_LEN};
-use crate::channels::ChannelHttpClient;
 use crate::config::AppConfig;
 use crate::error::Result;
 use crate::metrics;
