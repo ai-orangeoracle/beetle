@@ -21,7 +21,14 @@ fn parse_cron_field(s: &str, min_val: u32, max_val: u32) -> Result<Vec<u32>> {
     for part in s.split(',') {
         let part = part.trim();
         let (range, step) = if let Some((r, st)) = part.split_once('/') {
-            (r.trim(), Some(st.trim().parse::<u32>().map_err(|_| Error::config("tool_cron", "invalid step"))?))
+            (
+                r.trim(),
+                Some(
+                    st.trim()
+                        .parse::<u32>()
+                        .map_err(|_| Error::config("tool_cron", "invalid step"))?,
+                ),
+            )
         } else {
             (part, None)
         };
@@ -33,14 +40,22 @@ fn parse_cron_field(s: &str, min_val: u32, max_val: u32) -> Result<Vec<u32>> {
             continue;
         }
         let (lo, hi) = if let Some((a, b)) = range.split_once('-') {
-            let a = a.trim().parse::<u32>().map_err(|_| Error::config("tool_cron", "invalid range"))?;
-            let b = b.trim().parse::<u32>().map_err(|_| Error::config("tool_cron", "invalid range"))?;
+            let a = a
+                .trim()
+                .parse::<u32>()
+                .map_err(|_| Error::config("tool_cron", "invalid range"))?;
+            let b = b
+                .trim()
+                .parse::<u32>()
+                .map_err(|_| Error::config("tool_cron", "invalid range"))?;
             if a > b || b > max_val || a < min_val {
                 return Err(Error::config("tool_cron", "range out of bounds"));
             }
             (a, b)
         } else {
-            let v = range.parse::<u32>().map_err(|_| Error::config("tool_cron", "invalid number"))?;
+            let v = range
+                .parse::<u32>()
+                .map_err(|_| Error::config("tool_cron", "invalid number"))?;
             if v < min_val || v > max_val {
                 return Err(Error::config("tool_cron", "value out of bounds"));
             }
@@ -98,7 +113,10 @@ impl Tool for CronTool {
 
         let parts: Vec<&str> = expr.split_whitespace().collect();
         if parts.len() != 5 {
-            return Err(Error::config("tool_cron", "expr must have exactly 5 fields: min hour dom month dow"));
+            return Err(Error::config(
+                "tool_cron",
+                "expr must have exactly 5 fields: min hour dom month dow",
+            ));
         }
         let minutes = parse_cron_field(parts[0], 0, 59)?;
         let hours = parse_cron_field(parts[1], 0, 23)?;
@@ -128,7 +146,8 @@ impl Tool for CronTool {
                     "next_unix": secs,
                     "next_iso": next_iso
                 });
-                return Ok(serde_json::to_string(&out).map_err(|e| Error::config("tool_cron", e.to_string()))?);
+                return Ok(serde_json::to_string(&out)
+                    .map_err(|e| Error::config("tool_cron", e.to_string()))?);
             }
             secs += 60;
         }

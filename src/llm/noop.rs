@@ -21,7 +21,8 @@ impl LlmClient for NoopLlmClient {
         _tools: Option<&[ToolSpec]>,
     ) -> Result<LlmResponse> {
         Ok(LlmResponse {
-            content: "LLM 未配置或配置无效，请通过 Web UI / 配置 API 设置 llm_sources 或 api_key。".to_string(),
+            content: "LLM 未配置或配置无效，请通过 Web UI / 配置 API 设置 llm_sources 或 api_key。"
+                .to_string(),
             stop_reason: StopReason::EndTurn,
             tool_calls: None,
         })

@@ -33,8 +33,7 @@ fn send_one_telegram<H: ChannelHttpClient>(
     content: &str,
 ) {
     const TAG: &str = "telegram_send";
-    let chunks =
-        crate::channels::chunk::chunk_str_by_char_count(content, TELEGRAM_MAX_MESSAGE_LEN);
+    let chunks = crate::channels::chunk::chunk_str_by_char_count(content, TELEGRAM_MAX_MESSAGE_LEN);
     let mut reply_to_message_id: Option<i64> = None;
     for chunk in chunks {
         let mut body = serde_json::json!({
@@ -123,7 +122,12 @@ pub fn run_telegram_sender_loop<H, F>(
             let mut http = match create_http() {
                 Ok(h) => h,
                 Err(e) => {
-                    log::warn!("[{}] create http failed (attempt {}): {}", TAG, retry + 1, e);
+                    log::warn!(
+                        "[{}] create http failed (attempt {}): {}",
+                        TAG,
+                        retry + 1,
+                        e
+                    );
                     continue;
                 }
             };
@@ -135,7 +139,11 @@ pub fn run_telegram_sender_loop<H, F>(
             break;
         }
         if !sent {
-            log::error!("[{}] message dropped after 3 retries, chat_id={}", TAG, chat_id);
+            log::error!(
+                "[{}] message dropped after 3 retries, chat_id={}",
+                TAG,
+                chat_id
+            );
         }
     }
 }
@@ -239,15 +247,23 @@ pub fn send_and_get_id<H: ChannelHttpClient>(
         stage: "telegram_send",
     })?;
     let url = format!("{}{}/sendMessage", TELEGRAM_API_BASE, token);
-    let (status, resp_body) = http.http_post(&url, &body_bytes)
+    let (status, resp_body) = http
+        .http_post(&url, &body_bytes)
         .map_err(|e| map_stage(e, "telegram_send"))?;
     if status >= 400 {
-        return Err(Error::Http { status_code: status, stage: "telegram_send" });
+        return Err(Error::Http {
+            status_code: status,
+            stage: "telegram_send",
+        });
     }
     #[derive(serde::Deserialize)]
-    struct R { result: Option<Inner> }
+    struct R {
+        result: Option<Inner>,
+    }
     #[derive(serde::Deserialize)]
-    struct Inner { message_id: Option<i64> }
+    struct Inner {
+        message_id: Option<i64>,
+    }
     let r: R = serde_json::from_slice(resp_body.as_ref()).map_err(|e| Error::Other {
         source: Box::new(e),
         stage: "telegram_send_parse",
@@ -263,7 +279,9 @@ pub fn edit_message_text<H: ChannelHttpClient>(
     message_id: &str,
     content: &str,
 ) -> Result<()> {
-    let msg_id: i64 = message_id.parse().map_err(|_| Error::config("telegram_edit", "invalid message_id"))?;
+    let msg_id: i64 = message_id
+        .parse()
+        .map_err(|_| Error::config("telegram_edit", "invalid message_id"))?;
     let body = serde_json::json!({
         "chat_id": chat_id,
         "message_id": msg_id,
@@ -274,10 +292,14 @@ pub fn edit_message_text<H: ChannelHttpClient>(
         stage: "telegram_edit",
     })?;
     let url = format!("{}{}/editMessageText", TELEGRAM_API_BASE, token);
-    let (status, _) = http.http_post(&url, &body_bytes)
+    let (status, _) = http
+        .http_post(&url, &body_bytes)
         .map_err(|e| map_stage(e, "telegram_edit"))?;
     if status >= 400 {
-        return Err(Error::Http { status_code: status, stage: "telegram_edit" });
+        return Err(Error::Http {
+            status_code: status,
+            stage: "telegram_edit",
+        });
     }
     Ok(())
 }

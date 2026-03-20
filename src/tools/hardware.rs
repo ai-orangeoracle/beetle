@@ -105,11 +105,12 @@ impl DeviceControlTool {
     }
 
     fn build_description(devices: &[DeviceEntry]) -> String {
-        let mut desc = String::from(
-            "Control or read hardware devices. Available devices:\n",
-        );
+        let mut desc = String::from("Control or read hardware devices. Available devices:\n");
         for dev in devices {
-            let line = format!("- {} ({}): {} — {}\n", dev.id, dev.device_type, dev.what, dev.how);
+            let line = format!(
+                "- {} ({}): {} — {}\n",
+                dev.id, dev.device_type, dev.what, dev.how
+            );
             if desc.len() + line.len() > MAX_TOOL_DESCRIPTION_LEN {
                 desc.push_str("...(truncated)");
                 break;
@@ -120,7 +121,10 @@ impl DeviceControlTool {
     }
 
     fn build_schema(devices: &[DeviceEntry]) -> Value {
-        let ids: Vec<Value> = devices.iter().map(|d| Value::String(d.id.clone())).collect();
+        let ids: Vec<Value> = devices
+            .iter()
+            .map(|d| Value::String(d.id.clone()))
+            .collect();
         json!({
             "type": "object",
             "properties": {
@@ -182,7 +186,10 @@ impl DeviceControlTool {
             "gpio_in" => hardware_drivers::drive_gpio_in(&dev.pins, params, &dev.options),
             "pwm_out" => {
                 let (ch, timer_idx) = *self.pwm_channels.get(&dev.id).ok_or_else(|| {
-                    Error::config("device_control", "no LEDC channel allocated for this pwm_out device")
+                    Error::config(
+                        "device_control",
+                        "no LEDC channel allocated for this pwm_out device",
+                    )
                 })?;
                 hardware_drivers::drive_pwm_out(&dev.pins, params, &dev.options, ch, timer_idx)
             }
@@ -190,7 +197,10 @@ impl DeviceControlTool {
             "buzzer" => hardware_drivers::drive_buzzer(&dev.pins, params),
             other => Err(Error::config(
                 "device_control",
-                format!("unsupported device_type '{}' (driver not yet implemented)", other),
+                format!(
+                    "unsupported device_type '{}' (driver not yet implemented)",
+                    other
+                ),
             )),
         }
     }
@@ -237,7 +247,10 @@ impl Tool for DeviceControlTool {
         guard.release();
 
         // Update last-op time after completion (success or failure) for rate limit.
-        let mut last = self.states[idx].last_op.lock().unwrap_or_else(|e| e.into_inner());
+        let mut last = self.states[idx]
+            .last_op
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         *last = Some(Instant::now());
 
         match &result {

@@ -201,7 +201,14 @@ impl LlmClient for OpenAiCompatibleClient {
         messages: &[Message],
         tools: Option<&[ToolSpec]>,
     ) -> Result<LlmResponse> {
-        let body = build_request_body(&self.model, self.max_tokens, system, messages, tools, self.stream)?;
+        let body = build_request_body(
+            &self.model,
+            self.max_tokens,
+            system,
+            messages,
+            tools,
+            self.stream,
+        )?;
         let url = format!("{}{}", self.api_base, CHAT_PATH);
         if self.stream {
             crate::llm::retry::with_retry(2, 500, TAG, http, |http| {
@@ -276,10 +283,11 @@ fn do_request(
         });
     }
 
-    let parsed: OpenAiResponse = serde_json::from_slice(resp_body.as_ref()).map_err(|e| Error::Other {
-        source: Box::new(e),
-        stage: "llm_parse",
-    })?;
+    let parsed: OpenAiResponse =
+        serde_json::from_slice(resp_body.as_ref()).map_err(|e| Error::Other {
+            source: Box::new(e),
+            stage: "llm_parse",
+        })?;
 
     let choice = parsed
         .choices
@@ -387,7 +395,11 @@ impl OpenAiStreamAccumulator {
                     // Guard against malicious index values that could cause OOM.
                     const MAX_TOOL_CALL_INDEX: usize = 128;
                     if index > MAX_TOOL_CALL_INDEX {
-                        log::warn!("[openai_stream] tool_calls index {} exceeds max {}, skipping", index, MAX_TOOL_CALL_INDEX);
+                        log::warn!(
+                            "[openai_stream] tool_calls index {} exceeds max {}, skipping",
+                            index,
+                            MAX_TOOL_CALL_INDEX
+                        );
                         continue;
                     }
                     // 确保 tool_calls vec 足够长。
@@ -416,19 +428,28 @@ impl OpenAiStreamAccumulator {
     }
 
     fn finish(self) -> LlmResponse {
-        let tool_calls: Vec<ToolCall> = self.tool_calls
+        let tool_calls: Vec<ToolCall> = self
+            .tool_calls
             .into_iter()
             .filter(|tc| !tc.name.is_empty())
             .map(|tc| ToolCall {
                 id: tc.id,
                 name: tc.name,
-                input: if tc.arguments.is_empty() { "{}".to_string() } else { tc.arguments },
+                input: if tc.arguments.is_empty() {
+                    "{}".to_string()
+                } else {
+                    tc.arguments
+                },
             })
             .collect();
         LlmResponse {
             content: self.content,
             stop_reason: self.stop_reason,
-            tool_calls: if tool_calls.is_empty() { None } else { Some(tool_calls) },
+            tool_calls: if tool_calls.is_empty() {
+                None
+            } else {
+                Some(tool_calls)
+            },
         }
     }
 }
@@ -471,32 +492,34 @@ fn do_request_streaming(
     let mut sse_reader = crate::llm::sse::SseLineReader::new();
     let mut progress_cb = on_progress;
 
-    let status = http.do_post_streaming(url, &headers, body, &mut |chunk| {
-        sse_reader.feed(chunk);
-        while let Some(event) = sse_reader.next_event() {
-            // Extract delta text before handling, for progress callback.
-            let delta_text = extract_content_delta(&event.data);
+    let status = http
+        .do_post_streaming(url, &headers, body, &mut |chunk| {
+            sse_reader.feed(chunk);
+            while let Some(event) = sse_reader.next_event() {
+                // Extract delta text before handling, for progress callback.
+                let delta_text = extract_content_delta(&event.data);
 
-            accumulator.handle_data(&event.data);
+                accumulator.handle_data(&event.data);
 
-            if let (Some(ref delta), Some(ref mut cb)) = (&delta_text, &mut progress_cb) {
-                cb(delta, &accumulator.content);
+                if let (Some(ref delta), Some(ref mut cb)) = (&delta_text, &mut progress_cb) {
+                    cb(delta, &accumulator.content);
+                }
             }
-        }
-        Ok(())
-    }).map_err(|e| match e {
-        Error::Http { status_code, .. } => Error::Http {
-            status_code,
-            stage: "llm_request",
-        },
-        _ => Error::Other {
-            source: Box::new(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("{:?}", e),
-            )),
-            stage: "llm_request",
-        },
-    })?;
+            Ok(())
+        })
+        .map_err(|e| match e {
+            Error::Http { status_code, .. } => Error::Http {
+                status_code,
+                stage: "llm_request",
+            },
+            _ => Error::Other {
+                source: Box::new(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("{:?}", e),
+                )),
+                stage: "llm_request",
+            },
+        })?;
 
     if status == 429 {
         log::warn!("[{}] rate limited (429)", TAG);

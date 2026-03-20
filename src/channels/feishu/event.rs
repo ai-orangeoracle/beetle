@@ -36,16 +36,16 @@ pub fn handle_http_event(
     };
 
     if v.get("type").and_then(|t| t.as_str()) == Some("url_verification") {
-        let challenge = v
-            .get("challenge")
-            .and_then(|c| c.as_str())
-            .unwrap_or("");
+        let challenge = v.get("challenge").and_then(|c| c.as_str()).unwrap_or("");
         let out = serde_json::json!({ "challenge": challenge }).to_string();
         return FeishuEventResponse::Ok200Json(out);
     }
 
     if v.get("encrypt").is_some() {
-        log::warn!("[{}] encrypted payload not supported, returning error to trigger retry", TAG);
+        log::warn!(
+            "[{}] encrypted payload not supported, returning error to trigger retry",
+            TAG
+        );
         return FeishuEventResponse::Err400("encrypted payload not supported");
     }
 

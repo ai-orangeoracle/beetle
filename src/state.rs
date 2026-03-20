@@ -30,7 +30,9 @@ pub fn set_last_error(e: &Error) {
 
 /// 返回自启动以来 set_last_error 被调用的次数，上限为 10（轻量可观测，不存完整内容）。
 pub fn get_last_errors_count() -> usize {
-    LAST_ERRORS_COUNT.load(Ordering::Relaxed).min(LAST_ERRORS_COUNT_CAP)
+    LAST_ERRORS_COUNT
+        .load(Ordering::Relaxed)
+        .min(LAST_ERRORS_COUNT_CAP)
 }
 
 /// 读取最近错误摘要。

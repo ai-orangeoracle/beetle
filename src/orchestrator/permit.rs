@@ -2,8 +2,8 @@
 //! HTTP admission permit: priority + TLS single-concurrency + heap check, merging tls_admission.rs.
 
 use crate::constants::{
-    TLS_ADMISSION_MIN_INTERNAL_BYTES, TLS_ADMISSION_MIN_LARGEST_BLOCK_BYTES,
-    TLS_ADMISSION_NO_PSRAM_MIN_BYTES, MAX_CONCURRENT_HTTP,
+    MAX_CONCURRENT_HTTP, TLS_ADMISSION_MIN_INTERNAL_BYTES, TLS_ADMISSION_MIN_LARGEST_BLOCK_BYTES,
+    TLS_ADMISSION_NO_PSRAM_MIN_BYTES,
 };
 use crate::error::{Error, Result};
 use std::sync::atomic::Ordering;
@@ -19,10 +19,10 @@ const TRY_INTERVAL_MS: u64 = 50;
 /// HTTP request priority.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Priority {
-    Low = 0,       // cron、remind_at 等后台任务
-    Normal = 1,    // 通道 sender（发消息）
-    High = 2,      // agent LLM 请求（用户等待中）
-    Critical = 3,  // 健康检查、配置 API
+    Low = 0,      // cron、remind_at 等后台任务
+    Normal = 1,   // 通道 sender（发消息）
+    High = 2,     // agent LLM 请求（用户等待中）
+    Critical = 3, // 健康检查、配置 API
 }
 
 /// RAII guard：Drop 时递减 active_http_count + 释放 TLS 令牌。
@@ -34,9 +34,7 @@ pub struct HttpPermitGuard {
 
 impl Drop for HttpPermitGuard {
     fn drop(&mut self) {
-        self.state
-            .active_http_count
-            .fetch_sub(1, Ordering::Relaxed);
+        self.state.active_http_count.fetch_sub(1, Ordering::Relaxed);
     }
 }
 
@@ -48,8 +46,7 @@ pub fn request_http_permit(
     priority: Priority,
     timeout: Duration,
 ) -> Result<HttpPermitGuard> {
-    let pressure =
-        PressureLevel::from_byte(state.pressure_level.load(Ordering::Relaxed));
+    let pressure = PressureLevel::from_byte(state.pressure_level.load(Ordering::Relaxed));
 
     // 快速路径：Critical 压力下仅放行 Critical/High 优先级
     if pressure == PressureLevel::Critical && priority < Priority::High {

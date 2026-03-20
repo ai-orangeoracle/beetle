@@ -193,43 +193,27 @@ impl AppConfig {
     /// Load from compile-time env (option_env!). Set e.g. BEETLE_WIFI_SSID before build.
     pub fn load_from_env() -> Self {
         Self {
-            wifi_ssid: option_env!("BEETLE_WIFI_SSID")
-                .unwrap_or("")
-                .into(),
-            wifi_pass: option_env!("BEETLE_WIFI_PASS")
-                .unwrap_or("")
-                .into(),
+            wifi_ssid: option_env!("BEETLE_WIFI_SSID").unwrap_or("").into(),
+            wifi_pass: option_env!("BEETLE_WIFI_PASS").unwrap_or("").into(),
             tg_token: option_env!("BEETLE_TG_TOKEN").unwrap_or("").into(),
             tg_allowed_chat_ids: option_env!("BEETLE_TG_ALLOWED_CHAT_IDS")
                 .unwrap_or("")
                 .into(),
-            feishu_app_id: option_env!("BEETLE_FEISHU_APP_ID")
-                .unwrap_or("")
-                .into(),
-            feishu_app_secret: option_env!("BEETLE_FEISHU_APP_SECRET")
-                .unwrap_or("")
-                .into(),
+            feishu_app_id: option_env!("BEETLE_FEISHU_APP_ID").unwrap_or("").into(),
+            feishu_app_secret: option_env!("BEETLE_FEISHU_APP_SECRET").unwrap_or("").into(),
             feishu_allowed_chat_ids: option_env!("BEETLE_FEISHU_ALLOWED_CHAT_IDS")
                 .unwrap_or("")
                 .into(),
             dingtalk_webhook_url: option_env!("BEETLE_DINGTALK_WEBHOOK_URL")
                 .unwrap_or("")
                 .into(),
-            wecom_corp_id: option_env!("BEETLE_WECOM_CORP_ID")
-                .unwrap_or("")
-                .into(),
-            wecom_corp_secret: option_env!("BEETLE_WECOM_CORP_SECRET")
-                .unwrap_or("")
-                .into(),
-            wecom_agent_id: option_env!("BEETLE_WECOM_AGENT_ID")
-                .unwrap_or("")
-                .into(),
+            wecom_corp_id: option_env!("BEETLE_WECOM_CORP_ID").unwrap_or("").into(),
+            wecom_corp_secret: option_env!("BEETLE_WECOM_CORP_SECRET").unwrap_or("").into(),
+            wecom_agent_id: option_env!("BEETLE_WECOM_AGENT_ID").unwrap_or("").into(),
             wecom_default_touser: option_env!("BEETLE_WECOM_DEFAULT_TOUSER")
                 .unwrap_or("")
                 .into(),
-            wecom_token: option_env!("BEETLE_WECOM_TOKEN")
-                .unwrap_or("")
-                .into(),
+            wecom_token: option_env!("BEETLE_WECOM_TOKEN").unwrap_or("").into(),
             wecom_encoding_aes_key: option_env!("BEETLE_WECOM_ENCODING_AES_KEY")
                 .unwrap_or("")
                 .into(),
@@ -244,15 +228,9 @@ impl AppConfig {
                 .unwrap_or("anthropic")
                 .into(),
             api_url: option_env!("BEETLE_API_URL").unwrap_or("").into(),
-            proxy_url: option_env!("BEETLE_PROXY_URL")
-                .unwrap_or("")
-                .into(),
-            search_key: option_env!("BEETLE_SEARCH_KEY")
-                .unwrap_or("")
-                .into(),
-            tavily_key: option_env!("BEETLE_TAVILY_KEY")
-                .unwrap_or("")
-                .into(),
+            proxy_url: option_env!("BEETLE_PROXY_URL").unwrap_or("").into(),
+            search_key: option_env!("BEETLE_SEARCH_KEY").unwrap_or("").into(),
+            tavily_key: option_env!("BEETLE_TAVILY_KEY").unwrap_or("").into(),
             tg_group_activation: match option_env!("BEETLE_TG_GROUP_ACTIVATION") {
                 Some("always") => "always".into(),
                 _ => "mention".into(),
@@ -265,18 +243,10 @@ impl AppConfig {
             webhook_enabled: option_env!("BEETLE_WEBHOOK_ENABLED")
                 .map(|s| s == "1" || s.eq_ignore_ascii_case("true"))
                 .unwrap_or(false),
-            webhook_token: option_env!("BEETLE_WEBHOOK_TOKEN")
-                .unwrap_or("")
-                .into(),
-            enabled_channel: option_env!("BEETLE_ENABLED_CHANNEL")
-                .unwrap_or("")
-                .into(),
-            qq_channel_app_id: option_env!("BEETLE_QQ_CHANNEL_APP_ID")
-                .unwrap_or("")
-                .into(),
-            qq_channel_secret: option_env!("BEETLE_QQ_CHANNEL_SECRET")
-                .unwrap_or("")
-                .into(),
+            webhook_token: option_env!("BEETLE_WEBHOOK_TOKEN").unwrap_or("").into(),
+            enabled_channel: option_env!("BEETLE_ENABLED_CHANNEL").unwrap_or("").into(),
+            qq_channel_app_id: option_env!("BEETLE_QQ_CHANNEL_APP_ID").unwrap_or("").into(),
+            qq_channel_secret: option_env!("BEETLE_QQ_CHANNEL_SECRET").unwrap_or("").into(),
             llm_sources: vec![],
             llm_router_source_index: None,
             llm_worker_source_index: None,
@@ -311,24 +281,36 @@ impl AppConfig {
         let opt = |i: usize| values.get(i).and_then(|v| v.as_ref());
         // NVS 6 键：wifi_ssid, wifi_pass, proxy_url, session_max_messages, tg_group_activation, locale
         if let Some(s) = opt(0) {
-            if !s.is_empty() { c.wifi_ssid = s.clone(); }
+            if !s.is_empty() {
+                c.wifi_ssid = s.clone();
+            }
         }
         if let Some(s) = opt(1) {
-            if !s.is_empty() { c.wifi_pass = s.clone(); }
+            if !s.is_empty() {
+                c.wifi_pass = s.clone();
+            }
         }
         if let Some(s) = opt(2) {
-            if !s.is_empty() { c.proxy_url = s.clone(); }
+            if !s.is_empty() {
+                c.proxy_url = s.clone();
+            }
         }
         if let Some(s) = opt(3) {
             if let Ok(n) = s.parse::<u32>() {
-                if (1..=128).contains(&n) { c.session_max_messages = n; }
+                if (1..=128).contains(&n) {
+                    c.session_max_messages = n;
+                }
             }
         }
         if let Some(s) = opt(4) {
-            if s == "mention" || s == "always" { c.tg_group_activation = s.clone(); }
+            if s == "mention" || s == "always" {
+                c.tg_group_activation = s.clone();
+            }
         }
         if let Some(s) = opt(5) {
-            if s == "zh" || s == "en" { c.locale = Some(s.clone()); }
+            if s == "zh" || s == "en" {
+                c.locale = Some(s.clone());
+            }
         }
         if let Some(r) = reader {
             match r.read_config_file("config/llm.json") {
@@ -410,26 +392,26 @@ impl AppConfig {
     pub fn merge_channels_from_json(&mut self, json: &str, errors: &mut Vec<String>) {
         match serde_json::from_str::<ChannelsSegment>(json) {
             Ok(seg) => {
-            self.tg_token = seg.tg_token;
-            self.tg_allowed_chat_ids = seg.tg_allowed_chat_ids;
-            self.feishu_app_id = seg.feishu_app_id;
-            self.feishu_app_secret = seg.feishu_app_secret;
-            self.feishu_allowed_chat_ids = seg.feishu_allowed_chat_ids;
-            self.dingtalk_webhook_url = seg.dingtalk_webhook_url;
-            self.wecom_corp_id = seg.wecom_corp_id;
-            self.wecom_corp_secret = seg.wecom_corp_secret;
-            self.wecom_agent_id = seg.wecom_agent_id;
-            self.wecom_default_touser = seg.wecom_default_touser;
-            self.wecom_token = seg.wecom_token;
-            self.wecom_encoding_aes_key = seg.wecom_encoding_aes_key;
-            self.dingtalk_app_secret = seg.dingtalk_app_secret;
-            self.qq_channel_app_id = seg.qq_channel_app_id;
-            self.qq_channel_secret = seg.qq_channel_secret;
-            self.webhook_enabled = seg.webhook_enabled;
-            self.webhook_token = seg.webhook_token;
-            if is_valid_enabled_channel(seg.enabled_channel.as_str()) {
-                self.enabled_channel = seg.enabled_channel;
-            }
+                self.tg_token = seg.tg_token;
+                self.tg_allowed_chat_ids = seg.tg_allowed_chat_ids;
+                self.feishu_app_id = seg.feishu_app_id;
+                self.feishu_app_secret = seg.feishu_app_secret;
+                self.feishu_allowed_chat_ids = seg.feishu_allowed_chat_ids;
+                self.dingtalk_webhook_url = seg.dingtalk_webhook_url;
+                self.wecom_corp_id = seg.wecom_corp_id;
+                self.wecom_corp_secret = seg.wecom_corp_secret;
+                self.wecom_agent_id = seg.wecom_agent_id;
+                self.wecom_default_touser = seg.wecom_default_touser;
+                self.wecom_token = seg.wecom_token;
+                self.wecom_encoding_aes_key = seg.wecom_encoding_aes_key;
+                self.dingtalk_app_secret = seg.dingtalk_app_secret;
+                self.qq_channel_app_id = seg.qq_channel_app_id;
+                self.qq_channel_secret = seg.qq_channel_secret;
+                self.webhook_enabled = seg.webhook_enabled;
+                self.webhook_token = seg.webhook_token;
+                if is_valid_enabled_channel(seg.enabled_channel.as_str()) {
+                    self.enabled_channel = seg.enabled_channel;
+                }
             }
             Err(e) => {
                 log::warn!("[config] merge_channels_from_json parse failed: {}", e);
@@ -527,26 +509,50 @@ impl AppConfig {
         match ch {
             "telegram" => {
                 if self.tg_token.trim().is_empty() {
-                    return Err(Error::config("config", "enabled_channel=telegram requires tg_token"));
+                    return Err(Error::config(
+                        "config",
+                        "enabled_channel=telegram requires tg_token",
+                    ));
                 }
                 if self.tg_token.len() > CONFIG_FIELD_MAX_LEN {
-                    return Err(Error::config("config", format!("tg_token length must be <= {}", CONFIG_FIELD_MAX_LEN)));
+                    return Err(Error::config(
+                        "config",
+                        format!("tg_token length must be <= {}", CONFIG_FIELD_MAX_LEN),
+                    ));
                 }
             }
             "feishu" => {
-                if self.feishu_app_id.trim().is_empty() || self.feishu_app_secret.trim().is_empty() {
-                    return Err(Error::config("config", "enabled_channel=feishu requires feishu_app_id and feishu_app_secret"));
+                if self.feishu_app_id.trim().is_empty() || self.feishu_app_secret.trim().is_empty()
+                {
+                    return Err(Error::config(
+                        "config",
+                        "enabled_channel=feishu requires feishu_app_id and feishu_app_secret",
+                    ));
                 }
-                if self.feishu_app_id.len() > CONFIG_FIELD_MAX_LEN || self.feishu_app_secret.len() > CONFIG_FIELD_MAX_LEN {
-                    return Err(Error::config("config", format!("feishu field length must be <= {}", CONFIG_FIELD_MAX_LEN)));
+                if self.feishu_app_id.len() > CONFIG_FIELD_MAX_LEN
+                    || self.feishu_app_secret.len() > CONFIG_FIELD_MAX_LEN
+                {
+                    return Err(Error::config(
+                        "config",
+                        format!("feishu field length must be <= {}", CONFIG_FIELD_MAX_LEN),
+                    ));
                 }
             }
             "dingtalk" => {
                 if self.dingtalk_webhook_url.trim().is_empty() {
-                    return Err(Error::config("config", "enabled_channel=dingtalk requires dingtalk_webhook_url"));
+                    return Err(Error::config(
+                        "config",
+                        "enabled_channel=dingtalk requires dingtalk_webhook_url",
+                    ));
                 }
                 if self.dingtalk_webhook_url.len() > CONFIG_URL_MAX_LEN {
-                    return Err(Error::config("config", format!("dingtalk_webhook_url length must be <= {}", CONFIG_URL_MAX_LEN)));
+                    return Err(Error::config(
+                        "config",
+                        format!(
+                            "dingtalk_webhook_url length must be <= {}",
+                            CONFIG_URL_MAX_LEN
+                        ),
+                    ));
                 }
             }
             "wecom" => {
@@ -557,15 +563,28 @@ impl AppConfig {
                     return Err(Error::config("config", "enabled_channel=wecom requires wecom_corp_id, wecom_corp_secret, wecom_agent_id"));
                 }
                 if self.wecom_agent_id.trim().parse::<u32>().is_err() {
-                    return Err(Error::config("config", "wecom_agent_id must be a valid u32"));
+                    return Err(Error::config(
+                        "config",
+                        "wecom_agent_id must be a valid u32",
+                    ));
                 }
             }
             "qq_channel" => {
-                if self.qq_channel_app_id.trim().is_empty() || self.qq_channel_secret.trim().is_empty() {
+                if self.qq_channel_app_id.trim().is_empty()
+                    || self.qq_channel_secret.trim().is_empty()
+                {
                     return Err(Error::config("config", "enabled_channel=qq_channel requires qq_channel_app_id and qq_channel_secret"));
                 }
-                if self.qq_channel_app_id.len() > CONFIG_FIELD_MAX_LEN || self.qq_channel_secret.len() > CONFIG_FIELD_MAX_LEN {
-                    return Err(Error::config("config", format!("qq_channel field length must be <= {}", CONFIG_FIELD_MAX_LEN)));
+                if self.qq_channel_app_id.len() > CONFIG_FIELD_MAX_LEN
+                    || self.qq_channel_secret.len() > CONFIG_FIELD_MAX_LEN
+                {
+                    return Err(Error::config(
+                        "config",
+                        format!(
+                            "qq_channel field length must be <= {}",
+                            CONFIG_FIELD_MAX_LEN
+                        ),
+                    ));
                 }
             }
             _ => {}
@@ -628,18 +647,38 @@ impl AppConfig {
         validate_field_len(&c.wifi_pass, CONFIG_FIELD_MAX_LEN, "wifi_pass")?;
         validate_field_len(&c.tg_token, CONFIG_FIELD_MAX_LEN, "tg_token")?;
         validate_field_len(&c.feishu_app_id, CONFIG_FIELD_MAX_LEN, "feishu_app_id")?;
-        validate_field_len(&c.feishu_app_secret, CONFIG_FIELD_MAX_LEN, "feishu_app_secret")?;
+        validate_field_len(
+            &c.feishu_app_secret,
+            CONFIG_FIELD_MAX_LEN,
+            "feishu_app_secret",
+        )?;
         validate_field_len(&c.api_key, CONFIG_FIELD_MAX_LEN, "api_key")?;
         validate_field_len(&c.search_key, CONFIG_FIELD_MAX_LEN, "search_key")?;
         validate_field_len(&c.tavily_key, CONFIG_FIELD_MAX_LEN, "tavily_key")?;
         validate_field_len(&c.webhook_token, CONFIG_FIELD_MAX_LEN, "webhook_token")?;
-        validate_field_len(&c.qq_channel_app_id, CONFIG_FIELD_MAX_LEN, "qq_channel_app_id")?;
-        validate_field_len(&c.qq_channel_secret, CONFIG_FIELD_MAX_LEN, "qq_channel_secret")?;
+        validate_field_len(
+            &c.qq_channel_app_id,
+            CONFIG_FIELD_MAX_LEN,
+            "qq_channel_app_id",
+        )?;
+        validate_field_len(
+            &c.qq_channel_secret,
+            CONFIG_FIELD_MAX_LEN,
+            "qq_channel_secret",
+        )?;
         validate_url_len(&c.dingtalk_webhook_url, "dingtalk_webhook_url")?;
         validate_field_len(&c.wecom_corp_id, CONFIG_FIELD_MAX_LEN, "wecom_corp_id")?;
-        validate_field_len(&c.wecom_corp_secret, CONFIG_FIELD_MAX_LEN, "wecom_corp_secret")?;
+        validate_field_len(
+            &c.wecom_corp_secret,
+            CONFIG_FIELD_MAX_LEN,
+            "wecom_corp_secret",
+        )?;
         validate_field_len(&c.wecom_agent_id, CONFIG_FIELD_MAX_LEN, "wecom_agent_id")?;
-        validate_field_len(&c.wecom_default_touser, CONFIG_WECOM_TOUSER_MAX, "wecom_default_touser")?;
+        validate_field_len(
+            &c.wecom_default_touser,
+            CONFIG_WECOM_TOUSER_MAX,
+            "wecom_default_touser",
+        )?;
         if c.llm_sources.is_empty() {
             c.llm_sources = vec![LlmSource {
                 provider: c.model_provider.clone(),
@@ -683,10 +722,7 @@ impl AppConfig {
 /// 仅写入 NVS 保留的 6 个键；LLM/通道由 save_llm_segment / save_channels_segment 写 SPIFFS。
 pub fn save_to_nvs(store: &dyn ConfigStore, config: &AppConfig) -> Result<()> {
     let session_str = config.session_max_messages.to_string();
-    let locale = config
-        .locale
-        .as_deref()
-        .unwrap_or("zh");
+    let locale = config.locale.as_deref().unwrap_or("zh");
     store.write_strings(&[
         (NVS_KEY_WIFI_SSID, &config.wifi_ssid),
         (NVS_KEY_WIFI_PASS, &config.wifi_pass),
@@ -751,7 +787,8 @@ pub struct LlmSegment {
 }
 
 /// 允许的 enabled_channel 取值；空表示不启用任何通道。
-pub const ALLOWED_ENABLED_CHANNELS: &[&str] = &["", "telegram", "feishu", "dingtalk", "wecom", "qq_channel"];
+pub const ALLOWED_ENABLED_CHANNELS: &[&str] =
+    &["", "telegram", "feishu", "dingtalk", "wecom", "qq_channel"];
 
 fn is_valid_enabled_channel(s: &str) -> bool {
     ALLOWED_ENABLED_CHANNELS.contains(&s)
@@ -982,7 +1019,10 @@ fn validate_hardware_segment(seg: &HardwareSegment) -> Result<()> {
         if dev.id.is_empty() || dev.id.len() > HARDWARE_ID_MAX_LEN {
             return Err(Error::config(
                 "hardware",
-                format!("hardware_devices[{}].id must be 1..={} chars", i, HARDWARE_ID_MAX_LEN),
+                format!(
+                    "hardware_devices[{}].id must be 1..={} chars",
+                    i, HARDWARE_ID_MAX_LEN
+                ),
             ));
         }
         if !seen_ids.insert(&dev.id) {
@@ -1005,13 +1045,19 @@ fn validate_hardware_segment(seg: &HardwareSegment) -> Result<()> {
         if dev.what.len() > HARDWARE_WHAT_MAX_LEN {
             return Err(Error::config(
                 "hardware",
-                format!("hardware_devices[{}].what length must be <= {}", i, HARDWARE_WHAT_MAX_LEN),
+                format!(
+                    "hardware_devices[{}].what length must be <= {}",
+                    i, HARDWARE_WHAT_MAX_LEN
+                ),
             ));
         }
         if dev.how.len() > HARDWARE_HOW_MAX_LEN {
             return Err(Error::config(
                 "hardware",
-                format!("hardware_devices[{}].how length must be <= {}", i, HARDWARE_HOW_MAX_LEN),
+                format!(
+                    "hardware_devices[{}].how length must be <= {}",
+                    i, HARDWARE_HOW_MAX_LEN
+                ),
             ));
         }
         // pins: must have "pin" key
@@ -1044,7 +1090,10 @@ fn validate_hardware_segment(seg: &HardwareSegment) -> Result<()> {
             if !seen_pins.insert(pv) {
                 return Err(Error::config(
                     "hardware",
-                    format!("pin {} is used by multiple devices (conflict at devices[{}].pins.{})", pv, i, role),
+                    format!(
+                        "pin {} is used by multiple devices (conflict at devices[{}].pins.{})",
+                        pv, i, role
+                    ),
                 ));
             }
         }
@@ -1078,7 +1127,10 @@ fn validate_hardware_segment(seg: &HardwareSegment) -> Result<()> {
     if pwm_count > MAX_PWM_DEVICES {
         return Err(Error::config(
             "hardware",
-            format!("pwm_out device count {} exceeds max {}", pwm_count, MAX_PWM_DEVICES),
+            format!(
+                "pwm_out device count {} exceeds max {}",
+                pwm_count, MAX_PWM_DEVICES
+            ),
         ));
     }
     Ok(())

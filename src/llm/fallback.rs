@@ -50,10 +50,7 @@ impl LlmClient for FallbackLlmClient {
         tools: Option<&[ToolSpec]>,
     ) -> Result<LlmResponse> {
         if self.clients.is_empty() {
-            let err = crate::error::Error::config(
-                "fallback_llm",
-                "no LLM sources configured",
-            );
+            let err = crate::error::Error::config("fallback_llm", "no LLM sources configured");
             self.set_last_error(&err.to_string());
             return Err(err);
         }
@@ -73,9 +70,9 @@ impl LlmClient for FallbackLlmClient {
                 }
             }
         }
-        let err = last_err.unwrap_or_else(||
+        let err = last_err.unwrap_or_else(|| {
             crate::error::Error::config("fallback_llm", "llm fallback returned no result")
-        );
+        });
         self.set_last_error(&err.to_string());
         Err(err)
     }
@@ -89,15 +86,13 @@ impl LlmClient for FallbackLlmClient {
         on_progress: crate::llm::StreamProgressFn,
     ) -> Result<LlmResponse> {
         if self.clients.is_empty() {
-            let err = crate::error::Error::config(
-                "fallback_llm",
-                "no LLM sources configured",
-            );
+            let err = crate::error::Error::config("fallback_llm", "no LLM sources configured");
             self.set_last_error(&err.to_string());
             return Err(err);
         }
         // 第一个源使用 progress 回调。
-        let first_result = self.clients[0].chat_with_progress(http, system, messages, tools, on_progress);
+        let first_result =
+            self.clients[0].chat_with_progress(http, system, messages, tools, on_progress);
         match first_result {
             Ok(r) => {
                 crate::platform::task_wdt::feed_current_task();
@@ -130,9 +125,9 @@ impl LlmClient for FallbackLlmClient {
                 }
             }
         }
-        let err = last_err.unwrap_or_else(||
+        let err = last_err.unwrap_or_else(|| {
             crate::error::Error::config("fallback_llm", "llm fallback returned no result")
-        );
+        });
         self.set_last_error(&err.to_string());
         Err(err)
     }

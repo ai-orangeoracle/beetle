@@ -40,8 +40,7 @@ pub fn should_accept_inbound(
     _channel: &str,
     chat_id: &str,
 ) -> AdmissionDecision {
-    let pressure =
-        PressureLevel::from_byte(state.pressure_level.load(Ordering::Relaxed));
+    let pressure = PressureLevel::from_byte(state.pressure_level.load(Ordering::Relaxed));
     let is_cron = chat_id == "cron";
 
     match pressure {
@@ -70,8 +69,7 @@ pub fn should_accept_inbound(
 /// agent 准备调用 LLM 前调用。
 /// Called by agent before invoking LLM.
 pub fn can_call_llm(state: &OrchestratorState) -> LlmDecision {
-    let pressure =
-        PressureLevel::from_byte(state.pressure_level.load(Ordering::Relaxed));
+    let pressure = PressureLevel::from_byte(state.pressure_level.load(Ordering::Relaxed));
 
     match pressure {
         PressureLevel::Critical => LlmDecision::Degrade {
@@ -91,9 +89,12 @@ pub fn can_call_llm(state: &OrchestratorState) -> LlmDecision {
 
 /// agent 准备执行工具前调用；`requires_network` 由调用方从 ToolRegistry 推导。
 /// Called by agent before executing a tool; `requires_network` is derived from ToolRegistry by the caller.
-pub fn can_execute_tool(state: &OrchestratorState, _tool_name: &str, requires_network: bool) -> ToolDecision {
-    let pressure =
-        PressureLevel::from_byte(state.pressure_level.load(Ordering::Relaxed));
+pub fn can_execute_tool(
+    state: &OrchestratorState,
+    _tool_name: &str,
+    requires_network: bool,
+) -> ToolDecision {
+    let pressure = PressureLevel::from_byte(state.pressure_level.load(Ordering::Relaxed));
 
     match pressure {
         PressureLevel::Critical => {

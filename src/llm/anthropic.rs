@@ -5,12 +5,12 @@
 
 use crate::config::{AppConfig, LlmSource};
 use crate::error::{Error, Result};
+use crate::llm::types::MAX_REQUEST_BODY_LEN;
 use crate::llm::types::{
-    AnthropicRequest, AnthropicRequestMessage, AnthropicResponse, AnthropicTool,
-    StopReason, ToolCall,
+    AnthropicRequest, AnthropicRequestMessage, AnthropicResponse, AnthropicTool, StopReason,
+    ToolCall,
 };
 use crate::llm::{LlmClient, LlmHttpClient, LlmResponse, Message, ToolSpec};
-use crate::llm::types::MAX_REQUEST_BODY_LEN;
 use serde_json;
 
 const TAG: &str = "llm::anthropic";
@@ -65,7 +65,14 @@ impl LlmClient for AnthropicClient {
         messages: &[Message],
         tools: Option<&[ToolSpec]>,
     ) -> Result<LlmResponse> {
-        let body = build_request_body(&self.model, self.max_tokens, system, messages, tools, self.stream)?;
+        let body = build_request_body(
+            &self.model,
+            self.max_tokens,
+            system,
+            messages,
+            tools,
+            self.stream,
+        )?;
 
         if self.stream {
             crate::llm::retry::with_retry(2, 500, TAG, http, |http| {
@@ -91,7 +98,13 @@ impl LlmClient for AnthropicClient {
         }
         let body = build_request_body(&self.model, self.max_tokens, system, messages, tools, true)?;
         // Cannot use retry wrapper with mutable on_progress, so do single attempt.
-        do_request_streaming(http, &self.api_base, &self.api_key, &body, Some(on_progress))
+        do_request_streaming(
+            http,
+            &self.api_base,
+            &self.api_key,
+            &body,
+            Some(on_progress),
+        )
     }
 }
 
@@ -192,10 +205,11 @@ fn do_request(
         });
     }
 
-    let parsed: AnthropicResponse = serde_json::from_slice(resp_body.as_ref()).map_err(|e| Error::Other {
-        source: Box::new(e),
-        stage: "llm_parse",
-    })?;
+    let parsed: AnthropicResponse =
+        serde_json::from_slice(resp_body.as_ref()).map_err(|e| Error::Other {
+            source: Box::new(e),
+            stage: "llm_parse",
+        })?;
 
     Ok(LlmResponse::from_anthropic(parsed))
 }
@@ -234,8 +248,16 @@ impl AnthropicStreamAccumulator {
                     if let Some(cb) = val.get("content_block") {
                         let block_type = cb.get("type").and_then(|v| v.as_str()).unwrap_or("");
                         if block_type == "tool_use" {
-                            let id = cb.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                            let name = cb.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                            let id = cb
+                                .get("id")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_string();
+                            let name = cb
+                                .get("name")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_string();
                             self.tool_calls.push(ToolCallBuilder {
                                 id,
                                 name,
@@ -256,7 +278,9 @@ impl AnthropicStreamAccumulator {
                                 }
                             }
                             "input_json_delta" => {
-                                if let Some(partial) = delta.get("partial_json").and_then(|v| v.as_str()) {
+                                if let Some(partial) =
+                                    delta.get("partial_json").and_then(|v| v.as_str())
+                                {
                                     if let Some(tc) = self.tool_calls.last_mut() {
                                         tc.input_json.push_str(partial);
                                     }
@@ -289,18 +313,27 @@ impl AnthropicStreamAccumulator {
 
     /// 流结束，产出最终 LlmResponse。
     fn finish(self) -> LlmResponse {
-        let tool_calls: Vec<ToolCall> = self.tool_calls
+        let tool_calls: Vec<ToolCall> = self
+            .tool_calls
             .into_iter()
             .map(|tc| ToolCall {
                 id: tc.id,
                 name: tc.name,
-                input: if tc.input_json.is_empty() { "{}".to_string() } else { tc.input_json },
+                input: if tc.input_json.is_empty() {
+                    "{}".to_string()
+                } else {
+                    tc.input_json
+                },
             })
             .collect();
         LlmResponse {
             content: self.content,
             stop_reason: self.stop_reason,
-            tool_calls: if tool_calls.is_empty() { None } else { Some(tool_calls) },
+            tool_calls: if tool_calls.is_empty() {
+                None
+            } else {
+                Some(tool_calls)
+            },
         }
     }
 }
@@ -326,45 +359,51 @@ fn do_request_streaming(
     let mut sse_reader = crate::llm::sse::SseLineReader::new();
     let mut progress_cb = on_progress;
 
-    let status = http.do_post_streaming(url, &headers, body, &mut |chunk| {
-        sse_reader.feed(chunk);
-        while let Some(event) = sse_reader.next_event() {
-            // Check for text_delta before handling, to capture the delta for progress callback.
-            let delta_text = if event.event == "content_block_delta" {
-                if let Ok(val) = serde_json::from_str::<serde_json::Value>(&event.data) {
-                    val.get("delta")
-                        .and_then(|d| d.get("type"))
-                        .and_then(|t| t.as_str())
-                        .filter(|&t| t == "text_delta")
-                        .and_then(|_| val.get("delta").and_then(|d| d.get("text")).and_then(|t| t.as_str()))
-                        .map(|s| s.to_string())
+    let status = http
+        .do_post_streaming(url, &headers, body, &mut |chunk| {
+            sse_reader.feed(chunk);
+            while let Some(event) = sse_reader.next_event() {
+                // Check for text_delta before handling, to capture the delta for progress callback.
+                let delta_text = if event.event == "content_block_delta" {
+                    if let Ok(val) = serde_json::from_str::<serde_json::Value>(&event.data) {
+                        val.get("delta")
+                            .and_then(|d| d.get("type"))
+                            .and_then(|t| t.as_str())
+                            .filter(|&t| t == "text_delta")
+                            .and_then(|_| {
+                                val.get("delta")
+                                    .and_then(|d| d.get("text"))
+                                    .and_then(|t| t.as_str())
+                            })
+                            .map(|s| s.to_string())
+                    } else {
+                        None
+                    }
                 } else {
                     None
+                };
+
+                accumulator.handle_event(&event.event, &event.data);
+
+                if let (Some(ref delta), Some(ref mut cb)) = (&delta_text, &mut progress_cb) {
+                    cb(delta, &accumulator.content);
                 }
-            } else {
-                None
-            };
-
-            accumulator.handle_event(&event.event, &event.data);
-
-            if let (Some(ref delta), Some(ref mut cb)) = (&delta_text, &mut progress_cb) {
-                cb(delta, &accumulator.content);
             }
-        }
-        Ok(())
-    }).map_err(|e| match e {
-        Error::Http { status_code, .. } => Error::Http {
-            status_code,
-            stage: "llm_request",
-        },
-        _ => Error::Other {
-            source: Box::new(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("{:?}", e),
-            )),
-            stage: "llm_request",
-        },
-    })?;
+            Ok(())
+        })
+        .map_err(|e| match e {
+            Error::Http { status_code, .. } => Error::Http {
+                status_code,
+                stage: "llm_request",
+            },
+            _ => Error::Other {
+                source: Box::new(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("{:?}", e),
+                )),
+                stage: "llm_request",
+            },
+        })?;
 
     if status == 429 {
         log::warn!("[{}] rate limited (429)", TAG);

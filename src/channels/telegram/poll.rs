@@ -11,8 +11,7 @@ use crate::memory::SessionStore;
 use super::send::set_message_reaction;
 
 const TAG_POLL: &str = "telegram";
-const BIND_HINT_EMPTY: &str =
-    "Bind: set BEETLE_TG_ALLOWED_CHAT_IDS=<your_chat_id> and rebuild.";
+const BIND_HINT_EMPTY: &str = "Bind: set BEETLE_TG_ALLOWED_CHAT_IDS=<your_chat_id> and rebuild.";
 const BIND_HINT_NOT_IN_LIST: &str =
     "Bind: add your chat_id to BEETLE_TG_ALLOWED_CHAT_IDS (comma-separated) and rebuild.";
 
@@ -312,12 +311,7 @@ pub fn run_telegram_poll_loop<H, F>(
         ) {
             Ok(next) => offset = next,
             Err(e) => {
-                log::warn!(
-                    "[{}] poll failed: {}, backoff {}s",
-                    TAG_TG,
-                    e,
-                    BACKOFF_SECS
-                );
+                log::warn!("[{}] poll failed: {}, backoff {}s", TAG_TG, e, BACKOFF_SECS);
                 ChannelHttpClient::reset_connection_for_retry(&mut http);
                 std::thread::sleep(std::time::Duration::from_secs(BACKOFF_SECS));
             }

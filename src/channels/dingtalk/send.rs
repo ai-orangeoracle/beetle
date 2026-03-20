@@ -25,11 +25,15 @@ pub fn check_connectivity<H: ChannelHttpClient + ?Sized>(
         });
         let body_bytes = match serde_json::to_vec(&body) {
             Ok(b) => b,
-            Err(e) => return connectivity::item("dingtalk", configured, false, Some(e.to_string())),
+            Err(e) => {
+                return connectivity::item("dingtalk", configured, false, Some(e.to_string()))
+            }
         };
         let (status, _) = match http.http_post(config.dingtalk_webhook_url.trim(), &body_bytes) {
             Ok(r) => r,
-            Err(e) => return connectivity::item("dingtalk", configured, false, Some(e.to_string())),
+            Err(e) => {
+                return connectivity::item("dingtalk", configured, false, Some(e.to_string()))
+            }
         };
         if status >= 200 && status < 300 {
             (true, None)
@@ -40,11 +44,7 @@ pub fn check_connectivity<H: ChannelHttpClient + ?Sized>(
     connectivity::item("dingtalk", configured, ok, message)
 }
 
-fn send_one_dingtalk<H: ChannelHttpClient>(
-    http: &mut H,
-    webhook_url: &str,
-    content: &str,
-) {
+fn send_one_dingtalk<H: ChannelHttpClient>(http: &mut H, webhook_url: &str, content: &str) {
     const TAG: &str = "dingtalk_send";
     let chunks = crate::channels::chunk::chunk_str_by_char_count(content, DINGTALK_MAX_MESSAGE_LEN);
     for chunk in chunks {
@@ -117,7 +117,12 @@ pub fn run_dingtalk_sender_loop<H, F>(
             let mut http = match create_http() {
                 Ok(h) => h,
                 Err(e) => {
-                    log::warn!("[{}] create http failed (attempt {}): {}", TAG, retry + 1, e);
+                    log::warn!(
+                        "[{}] create http failed (attempt {}): {}",
+                        TAG,
+                        retry + 1,
+                        e
+                    );
                     continue;
                 }
             };

@@ -28,10 +28,7 @@ const CLOSE_TIMEOUT_TICKS: u32 = 200;
 // `esp_websocket_client_handle_t` 是 `*mut esp_websocket_client`（不透明），
 // `esp-idf-svc` 内部可见但未 re-export，我们通过 `RawHandle::handle()` 拿到后用 *mut c_void 桥接。
 extern "C" {
-    fn esp_websocket_client_close(
-        client: *mut core::ffi::c_void,
-        timeout: u32,
-    ) -> i32;
+    fn esp_websocket_client_close(client: *mut core::ffi::c_void, timeout: u32) -> i32;
     fn esp_websocket_client_destroy(client: *mut core::ffi::c_void) -> i32;
 }
 
@@ -91,7 +88,11 @@ impl WssConnection for EspWssConnection {
             return Err(Error::Other {
                 source: Box::new(std::io::Error::new(
                     std::io::ErrorKind::InvalidInput,
-                    format!("wss payload too large: {} > {}", data.len(), MAX_SEND_PAYLOAD),
+                    format!(
+                        "wss payload too large: {} > {}",
+                        data.len(),
+                        MAX_SEND_PAYLOAD
+                    ),
                 )),
                 stage: "wss_esp_send",
             });

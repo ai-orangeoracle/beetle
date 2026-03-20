@@ -4,5 +4,8 @@
 mod context;
 mod r#loop;
 
-pub use context::{build_context, ContextParams, DEFAULT_MESSAGES_MAX_LEN, DEFAULT_SYSTEM_MAX_LEN, SESSION_RECENT_N};
+pub use context::{
+    build_context, ContextParams, DEFAULT_MESSAGES_MAX_LEN, DEFAULT_SYSTEM_MAX_LEN,
+    SESSION_RECENT_N,
+};
 pub use r#loop::{run_agent_loop, AgentLoopConfig, StreamEditor};

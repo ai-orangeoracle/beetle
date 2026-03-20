@@ -2,8 +2,8 @@
 //! LLM trait and implementations; HTTP client injected by main.
 
 mod retry;
-mod types;
 pub mod sse;
+mod types;
 
 pub mod anthropic;
 pub mod fallback;
@@ -16,8 +16,8 @@ pub use noop::NoopLlmClient;
 pub use openai_compatible::OpenAiCompatibleClient;
 
 pub use types::{
-    LlmResponse, Message, StopReason, StreamProgressFn, ToolCall, ToolSpec, MAX_MESSAGE_CONTENT_LEN,
-    MAX_REQUEST_BODY_LEN,
+    LlmResponse, Message, StopReason, StreamProgressFn, ToolCall, ToolSpec,
+    MAX_MESSAGE_CONTENT_LEN, MAX_REQUEST_BODY_LEN,
 };
 
 use crate::config::AppConfig;
@@ -25,9 +25,7 @@ use crate::error::Result;
 
 /// 从配置构建 (router, worker) LLM 客户端对。
 /// router 用于分发判断（可选），worker 用于实际 LLM 请求。空列表返回 (None, NoopLlmClient)。
-pub fn build_llm_clients(
-    config: &AppConfig,
-) -> (Option<Box<dyn LlmClient>>, Box<dyn LlmClient>) {
+pub fn build_llm_clients(config: &AppConfig) -> (Option<Box<dyn LlmClient>>, Box<dyn LlmClient>) {
     const TAG: &str = "beetle";
 
     let global_stream = config.llm_stream;
@@ -77,7 +75,9 @@ pub fn build_llm_clients(
         let idx = config.llm_router_source_index.unwrap_or(0) as usize;
         let s = &config.llm_sources[idx];
         Some(match s.provider.as_str() {
-            "openai" | "openai_compatible" => Box::new(OpenAiCompatibleClient::from_source(s, global_stream)),
+            "openai" | "openai_compatible" => {
+                Box::new(OpenAiCompatibleClient::from_source(s, global_stream))
+            }
             _ => Box::new(AnthropicClient::from_source(s, global_stream)),
         })
     } else {

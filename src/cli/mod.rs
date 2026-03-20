@@ -120,10 +120,17 @@ fn cmd_memory_write(ctx: &CliContext, args: Vec<&str>) -> String {
     if content.is_empty() {
         return "Usage: memory_write <content>\n".into();
     }
-    audit_log("memory_write", Some(&format!("len={}", content.len())), None);
+    audit_log(
+        "memory_write",
+        Some(&format!("len={}", content.len())),
+        None,
+    );
     match ctx.memory.set_memory(&content) {
         Ok(()) => "MEMORY.md updated.\n".into(),
-        Err(e) => format!("memory_write error: {}\n", state::sanitize_error_for_log(&e)),
+        Err(e) => format!(
+            "memory_write error: {}\n",
+            state::sanitize_error_for_log(&e)
+        ),
     }
 }
 
@@ -159,7 +166,10 @@ fn cmd_session_clear(ctx: &CliContext, args: Vec<&str>) -> String {
     audit_log("session_clear", None, Some(chat_id));
     match ctx.session.clear(chat_id) {
         Ok(()) => "Session cleared.\n".into(),
-        Err(e) => format!("Session clear error: {}\n", state::sanitize_error_for_log(&e)),
+        Err(e) => format!(
+            "Session clear error: {}\n",
+            state::sanitize_error_for_log(&e)
+        ),
     }
 }
 
@@ -193,12 +203,19 @@ fn cmd_config_reset(ctx: &CliContext, args: Vec<&str>) -> String {
     audit_log("config_reset", None, None);
     match config::reset_to_defaults(ctx.config_store.as_ref()) {
         Ok(()) => "Config reset. Restart to use env defaults.\n".into(),
-        Err(e) => format!("config_reset error: {}\n", state::sanitize_error_for_log(&e)),
+        Err(e) => format!(
+            "config_reset error: {}\n",
+            state::sanitize_error_for_log(&e)
+        ),
     }
 }
 
 fn cmd_health(ctx: &CliContext) -> String {
-    let wifi = if ctx.wifi_connected { "connected" } else { "disconnected" };
+    let wifi = if ctx.wifi_connected {
+        "connected"
+    } else {
+        "disconnected"
+    };
     let inbound = ctx
         .inbound_depth
         .as_ref()

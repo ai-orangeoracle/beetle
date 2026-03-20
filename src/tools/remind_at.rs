@@ -47,18 +47,23 @@ impl Tool for RemindAtTool {
         })
     }
     fn execute(&self, args: &str, ctx: &mut dyn ToolContext) -> Result<String> {
-        let chat_id = ctx
-            .current_chat_id()
-            .ok_or_else(|| Error::config("remind_at", "no current chat_id (tool used outside session)"))?;
-        let channel = ctx
-            .current_channel()
-            .ok_or_else(|| Error::config("remind_at", "no current channel (tool used outside session)"))?;
+        let chat_id = ctx.current_chat_id().ok_or_else(|| {
+            Error::config(
+                "remind_at",
+                "no current chat_id (tool used outside session)",
+            )
+        })?;
+        let channel = ctx.current_channel().ok_or_else(|| {
+            Error::config(
+                "remind_at",
+                "no current channel (tool used outside session)",
+            )
+        })?;
         let obj = parse_tool_args(args, "remind_at")?;
-        let at_val = obj.get("at").ok_or_else(|| Error::config("remind_at", "missing at"))?;
-        let context = obj
-            .get("context")
-            .and_then(Value::as_str)
-            .unwrap_or("");
+        let at_val = obj
+            .get("at")
+            .ok_or_else(|| Error::config("remind_at", "missing at"))?;
+        let context = obj.get("context").and_then(Value::as_str).unwrap_or("");
         let at_secs = parse_at_to_unix_secs(at_val)?;
         self.store.add(channel, chat_id, at_secs, context)?;
         Ok("已设置提醒。".to_string())

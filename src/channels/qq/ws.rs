@@ -3,10 +3,10 @@
 //! 与 HTTP webhook 可并存，由 main 按配置决定是否 spawn。
 
 use crate::bus::PcMsg;
-use crate::channels::ChannelHttpClient;
 use crate::channels::wss_gateway::{
     run_wss_gateway_loop, WssConnection, WssGatewayDriver, WssRecvAction, WssSessionState,
 };
+use crate::channels::ChannelHttpClient;
 use crate::error::{Error, Result};
 
 use super::send::{QqMsgIdCache, QqTokenRequest, QqTokenResponse, QQ_GET_APP_ACCESS_TOKEN_URL};
@@ -28,7 +28,11 @@ const PUBLIC_GUILD_MESSAGES_INTENT: u64 = 1 << 30;
 /// 群聊与私聊 intent（GROUP_AT_MESSAGE_CREATE + C2C_MESSAGE_CREATE）
 const GROUP_AND_C2C_INTENT: u64 = 1 << 25;
 
-fn get_qq_access_token<H: ChannelHttpClient + ?Sized>(http: &mut H, app_id: &str, client_secret: &str) -> Result<String> {
+fn get_qq_access_token<H: ChannelHttpClient + ?Sized>(
+    http: &mut H,
+    app_id: &str,
+    client_secret: &str,
+) -> Result<String> {
     let body = QqTokenRequest {
         app_id: app_id.to_string(),
         client_secret: client_secret.to_string(),
@@ -37,36 +41,39 @@ fn get_qq_access_token<H: ChannelHttpClient + ?Sized>(http: &mut H, app_id: &str
         source: Box::new(e),
         stage: "qq_ws_token",
     })?;
-    let (status, resp_body) = http.http_post(QQ_GET_APP_ACCESS_TOKEN_URL, &body_bytes).map_err(|e| Error::Other {
-        source: Box::new(e),
-        stage: "qq_ws_token",
-    })?;
+    let (status, resp_body) = http
+        .http_post(QQ_GET_APP_ACCESS_TOKEN_URL, &body_bytes)
+        .map_err(|e| Error::Other {
+            source: Box::new(e),
+            stage: "qq_ws_token",
+        })?;
     if status >= 400 {
         return Err(Error::Http {
             status_code: status,
             stage: "qq_ws_token",
         });
     }
-    let r: QqTokenResponse = serde_json::from_slice(resp_body.as_ref()).map_err(|e| Error::Other {
-        source: Box::new(e),
-        stage: "qq_ws_token",
-    })?;
-    r.access_token
-        .filter(|t| !t.is_empty())
-        .ok_or_else(|| {
-            // 打印响应体帮助诊断 QQ API 返回的错误信息
-            let body_preview = String::from_utf8_lossy(
-                &resp_body.as_ref()[..resp_body.as_ref().len().min(256)],
-            );
-            log::warn!("[qq_ws] token response has no access_token, body: {}", body_preview);
-            Error::Other {
-                source: Box::new(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "qq_ws no access_token",
-                )),
-                stage: "qq_ws_token",
-            }
-        })
+    let r: QqTokenResponse =
+        serde_json::from_slice(resp_body.as_ref()).map_err(|e| Error::Other {
+            source: Box::new(e),
+            stage: "qq_ws_token",
+        })?;
+    r.access_token.filter(|t| !t.is_empty()).ok_or_else(|| {
+        // 打印响应体帮助诊断 QQ API 返回的错误信息
+        let body_preview =
+            String::from_utf8_lossy(&resp_body.as_ref()[..resp_body.as_ref().len().min(256)]);
+        log::warn!(
+            "[qq_ws] token response has no access_token, body: {}",
+            body_preview
+        );
+        Error::Other {
+            source: Box::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "qq_ws no access_token",
+            )),
+            stage: "qq_ws_token",
+        }
+    })
 }
 
 fn get_gateway_url<H: ChannelHttpClient + ?Sized>(http: &mut H, token: &str) -> Result<String> {
@@ -150,10 +157,11 @@ impl WssGatewayDriver for QqWssDriver {
     }
 
     fn on_hello(&mut self, first_message: &[u8]) -> Result<WssSessionState> {
-        let value: serde_json::Value = serde_json::from_slice(first_message).map_err(|e| Error::Other {
-            source: Box::new(e),
-            stage: "qq_ws_hello",
-        })?;
+        let value: serde_json::Value =
+            serde_json::from_slice(first_message).map_err(|e| Error::Other {
+                source: Box::new(e),
+                stage: "qq_ws_hello",
+            })?;
         let op = value.get("op").and_then(|v| v.as_u64()).unwrap_or(0);
         if op != QQ_OP_HELLO {
             return Ok(WssSessionState {
@@ -245,7 +253,8 @@ impl WssGatewayDriver for QqWssDriver {
                     C2C_MESSAGE_CREATE => {
                         // C2C 单聊：用 author.user_openid 标识对方，chat_id = "c2c:{user_openid}"
                         if let Some(d) = d {
-                            let user_openid = d.get("author")
+                            let user_openid = d
+                                .get("author")
                                 .and_then(|a| a.get("user_openid"))
                                 .and_then(|v| v.as_str());
                             let content = d.get("content").and_then(|v| v.as_str());
@@ -283,9 +292,11 @@ impl WssGatewayDriver for QqWssDriver {
     fn build_heartbeat(&self, seq: Option<u64>) -> Result<Vec<u8>> {
         let d = seq.unwrap_or(0);
         log::debug!("[{}] build_heartbeat seq={}", TAG, d);
-        serde_json::to_vec(&serde_json::json!({ "op": QQ_OP_HEARTBEAT, "d": d })).map_err(|e| Error::Other {
-            source: Box::new(e),
-            stage: "qq_ws_heartbeat",
+        serde_json::to_vec(&serde_json::json!({ "op": QQ_OP_HEARTBEAT, "d": d })).map_err(|e| {
+            Error::Other {
+                source: Box::new(e),
+                stage: "qq_ws_heartbeat",
+            }
         })
     }
 }

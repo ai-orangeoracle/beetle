@@ -5,10 +5,7 @@ use crate::error::{Error, Result};
 use crate::platform::{SkillMetaStore, SkillStorage};
 
 fn is_skill_name_valid(name: &str) -> bool {
-    !name.is_empty()
-        && !name.contains("..")
-        && !name.contains('/')
-        && !name.contains('\\')
+    !name.is_empty() && !name.contains("..") && !name.contains('/') && !name.contains('\\')
 }
 
 const TAG: &str = "skills";

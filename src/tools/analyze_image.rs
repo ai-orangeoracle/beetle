@@ -232,7 +232,10 @@ impl Tool for AnalyzeImageTool {
             .ok_or_else(|| Error::config(STAGE, "missing or invalid image_url"))?;
 
         if !image_url.starts_with("http://") && !image_url.starts_with("https://") {
-            return Err(Error::config(STAGE, "image_url must start with http:// or https://"));
+            return Err(Error::config(
+                STAGE,
+                "image_url must start with http:// or https://",
+            ));
         }
         if image_url.len() > 2048 {
             return Err(Error::config(STAGE, "image_url too long (max 2048)"));
@@ -259,7 +262,11 @@ impl Tool for AnalyzeImageTool {
                     if i + 1 < self.sources.len() {
                         log::warn!(
                             "[{}] source {} ({}/{}) failed, trying next: {}",
-                            TAG, i, source.provider, source.model, e
+                            TAG,
+                            i,
+                            source.provider,
+                            source.model,
+                            e
                         );
                     }
                     last_err = Some(e);

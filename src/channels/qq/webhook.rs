@@ -1,8 +1,8 @@
 //! QQ 入站 HTTP 回调：op=13 验址、op=0 Ed25519 验签，支持 AT_MESSAGE_CREATE / GROUP_AT_MESSAGE_CREATE / C2C_MESSAGE_CREATE 入队。
 
+use super::send::{sign_qq_url_verify, verify_qq_signature, QqMsgIdCache};
 use crate::bus::{InboundTx, PcMsg};
 use crate::error::{Error, Result};
-use super::send::{sign_qq_url_verify, verify_qq_signature, QqMsgIdCache};
 
 /// Body 最大字节（拒绝超长请求）。与 http_server 读 body 上限一致，单一数据源。
 pub const QQ_WEBHOOK_BODY_MAX: usize = 64 * 1024;
@@ -10,7 +10,10 @@ pub const QQ_WEBHOOK_BODY_MAX: usize = 64 * 1024;
 /// 入站处理结果，供 HTTP 层写响应。
 pub enum QqHandlerResult {
     /// op=13：需返回 200 且 body {"plain_token":"...","signature":"..."}
-    UrlVerification { plain_token: String, signature: String },
+    UrlVerification {
+        plain_token: String,
+        signature: String,
+    },
     /// 已处理（含 op=0 或其他 op），返回 200 空 body 或 ACK。
     EventHandled,
 }
@@ -68,22 +71,40 @@ pub fn handle_webhook(
             let (chat_id, content, msg_id) = match t {
                 "AT_MESSAGE_CREATE" => {
                     // 频道消息：chat_id = channel_id
-                    let ch = d.get("channel_id").and_then(|v| v.as_str()).map(|s| s.to_string());
-                    let ct = d.get("content").and_then(|v| v.as_str()).map(|s| s.to_string());
+                    let ch = d
+                        .get("channel_id")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
+                    let ct = d
+                        .get("content")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
                     let mid = d.get("id").and_then(|v| v.as_str()).map(|s| s.to_string());
                     (ch, ct, mid)
                 }
                 "GROUP_AT_MESSAGE_CREATE" => {
                     // 群聊 @ 消息：chat_id = "group:{group_openid}"
-                    let gid = d.get("group_openid").and_then(|v| v.as_str()).map(|s| format!("group:{}", s));
-                    let ct = d.get("content").and_then(|v| v.as_str()).map(|s| s.to_string());
+                    let gid = d
+                        .get("group_openid")
+                        .and_then(|v| v.as_str())
+                        .map(|s| format!("group:{}", s));
+                    let ct = d
+                        .get("content")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
                     let mid = d.get("id").and_then(|v| v.as_str()).map(|s| s.to_string());
                     (gid, ct, mid)
                 }
                 "C2C_MESSAGE_CREATE" => {
                     // 私聊消息：chat_id = "c2c:{guild_id}"（私信频道 ID，发消息用 /dms/{guild_id}/messages）
-                    let gid = d.get("guild_id").and_then(|v| v.as_str()).map(|s| format!("c2c:{}", s));
-                    let ct = d.get("content").and_then(|v| v.as_str()).map(|s| s.to_string());
+                    let gid = d
+                        .get("guild_id")
+                        .and_then(|v| v.as_str())
+                        .map(|s| format!("c2c:{}", s));
+                    let ct = d
+                        .get("content")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
                     let mid = d.get("id").and_then(|v| v.as_str()).map(|s| s.to_string());
                     (gid, ct, mid)
                 }

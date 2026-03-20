@@ -57,9 +57,7 @@ pub fn update_heap_state() {
     let largest = heap_largest_free_block_internal() as u32;
     STATE.update_heap(internal, spiram, largest);
     let level = pressure::compute_pressure(&STATE);
-    STATE
-        .pressure_level
-        .store(level as u8, Ordering::Relaxed);
+    STATE.pressure_level.store(level as u8, Ordering::Relaxed);
 }
 
 #[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
@@ -109,10 +107,7 @@ pub fn snapshot() -> ResourceSnapshot {
 
 /// 请求 HTTP 准入令牌。
 /// Request HTTP admission permit.
-pub fn request_http_permit(
-    priority: Priority,
-    timeout: Duration,
-) -> Result<HttpPermitGuard> {
+pub fn request_http_permit(priority: Priority, timeout: Duration) -> Result<HttpPermitGuard> {
     permit::request_http_permit(&STATE, &TLS_PERMIT, priority, timeout)
 }
 
@@ -136,16 +131,26 @@ pub fn should_accept_inbound_pub(channel: &str, chat_id: &str) -> AdmissionDecis
 /// 更新队列深度（由 heartbeat 定期调用）。
 /// Update queue depth snapshot (called periodically by heartbeat).
 pub fn update_queue_depth(inbound: u32, outbound: u32) {
-    STATE.inbound_depth.store(inbound, std::sync::atomic::Ordering::Relaxed);
-    STATE.outbound_depth.store(outbound, std::sync::atomic::Ordering::Relaxed);
+    STATE
+        .inbound_depth
+        .store(inbound, std::sync::atomic::Ordering::Relaxed);
+    STATE
+        .outbound_depth
+        .store(outbound, std::sync::atomic::Ordering::Relaxed);
 }
 
 /// 更新会话与存储指标（由 heartbeat 定期调用）。
 /// Update session & storage metrics (called periodically by heartbeat).
 pub fn update_session_storage(session_count: u32, storage_used_kb: u32, storage_total_kb: u32) {
-    STATE.session_count.store(session_count, std::sync::atomic::Ordering::Relaxed);
-    STATE.storage_used_kb.store(storage_used_kb, std::sync::atomic::Ordering::Relaxed);
-    STATE.storage_total_kb.store(storage_total_kb, std::sync::atomic::Ordering::Relaxed);
+    STATE
+        .session_count
+        .store(session_count, std::sync::atomic::Ordering::Relaxed);
+    STATE
+        .storage_used_kb
+        .store(storage_used_kb, std::sync::atomic::Ordering::Relaxed);
+    STATE
+        .storage_total_kb
+        .store(storage_total_kb, std::sync::atomic::Ordering::Relaxed);
 }
 
 /// LLM 调用门控。
