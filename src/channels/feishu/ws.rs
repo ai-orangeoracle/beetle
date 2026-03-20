@@ -3,10 +3,10 @@
 //! 委托 wss_gateway 统一循环，本模块实现 FeishuWssDriver。
 
 use crate::bus::InboundTx;
-use crate::channels::ChannelHttpClient;
 use crate::channels::wss_gateway::{
     run_wss_gateway_loop, WssConnection, WssGatewayDriver, WssRecvAction, WssSessionState,
 };
+use crate::channels::ChannelHttpClient;
 use crate::error::{Error, Result};
 use prost::Message;
 
@@ -122,11 +122,7 @@ pub fn get_ws_url(
     })
 }
 
-fn encode_control_frame(
-    header_type: &str,
-    log_id: u64,
-    log_id_new: &str,
-) -> Result<Vec<u8>> {
+fn encode_control_frame(header_type: &str, log_id: u64, log_id_new: &str) -> Result<Vec<u8>> {
     let frame = pbbp2::Frame {
         seq_id: 0,
         log_id,
@@ -204,7 +200,11 @@ impl WssGatewayDriver for FeishuWssDriver {
             Ok(s) => s,
             Err(_) => return Ok(WssRecvAction::Ignore),
         };
-        log::info!("[{}] event frame received, payload_len={}", TAG, frame.payload.len());
+        log::info!(
+            "[{}] event frame received, payload_len={}",
+            TAG,
+            frame.payload.len()
+        );
         if let Some(event_id) = extract_event_id(payload_str) {
             if self.dedup.contains_or_insert(&event_id) {
                 log::info!("[{}] duplicate event_id, ack only", TAG);

@@ -1,8 +1,8 @@
 //! LLM 请求重试：指数退避，共 retries 次；全部失败返回最后一 Err。重试前调用 http.reset_connection_for_retry 避免 "connection is not in initial phase"。
 //! Shared retry helper for LLM clients.
 
-use crate::error::Result;
 use super::LlmHttpClient;
+use crate::error::Result;
 
 /// ESP 上重试前最小等待（毫秒），给 WSS/TLS 释放 internal 堆的机会，缓解 esp-aes 分配失败。
 const RETRY_MIN_DELAY_MS_ESP: u64 = 2000;
@@ -36,7 +36,12 @@ where
                         let d = d.max(RETRY_MIN_DELAY_MS_ESP);
                         d
                     };
-                    log::warn!("[{}] attempt {} failed, retry in {}ms", tag, attempt + 1, delay_ms);
+                    log::warn!(
+                        "[{}] attempt {} failed, retry in {}ms",
+                        tag,
+                        attempt + 1,
+                        delay_ms
+                    );
                     std::thread::sleep(std::time::Duration::from_millis(delay_ms));
                     http.reset_connection_for_retry();
                 }
@@ -44,9 +49,6 @@ where
         }
     }
     Err(last_err.unwrap_or_else(|| {
-        crate::error::Error::config(
-            "retry",
-            "with_retry requires retries >= 1",
-        )
+        crate::error::Error::config("retry", "with_retry requires retries >= 1")
     }))
 }

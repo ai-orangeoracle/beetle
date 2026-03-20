@@ -25,7 +25,7 @@ pub use get_time::GetTimeTool;
 pub use hardware::DeviceControlTool;
 pub use http_post::HttpPostTool;
 pub use kv_store::KvStoreTool;
-pub use registry::{ToolRegistry, build_default_registry};
+pub use registry::{build_default_registry, ToolRegistry};
 pub use remind_at::RemindAtTool;
 pub use update_session_summary::UpdateSessionSummaryTool;
 pub use web_search::WebSearchTool;
@@ -55,7 +55,11 @@ pub trait ToolContext {
     fn get(&mut self, url: &str) -> Result<(u16, crate::platform::ResponseBody)> {
         self.get_with_headers(url, &[])
     }
-    fn get_with_headers(&mut self, url: &str, headers: &[(&str, &str)]) -> Result<(u16, crate::platform::ResponseBody)>;
+    fn get_with_headers(
+        &mut self,
+        url: &str,
+        headers: &[(&str, &str)],
+    ) -> Result<(u16, crate::platform::ResponseBody)>;
     /// POST 请求，自定义 headers（须含 Content-Type 等）；供 web_search Tavily 等使用。
     fn post_with_headers(
         &mut self,

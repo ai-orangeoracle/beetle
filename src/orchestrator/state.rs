@@ -93,7 +93,8 @@ impl OrchestratorState {
     pub fn update_heap(&self, internal: u32, spiram: u32, largest_block: u32) {
         self.heap_free_internal.store(internal, Ordering::Relaxed);
         self.heap_free_spiram.store(spiram, Ordering::Relaxed);
-        self.heap_largest_block.store(largest_block, Ordering::Relaxed);
+        self.heap_largest_block
+            .store(largest_block, Ordering::Relaxed);
     }
 }
 
@@ -137,15 +138,23 @@ pub struct ResourceSnapshot {
 
 impl ResourceSnapshot {
     pub fn from_state(state: &OrchestratorState) -> Self {
-        let pressure = super::pressure::PressureLevel::from_byte(
-            state.pressure_level.load(Ordering::Relaxed),
-        );
+        let pressure =
+            super::pressure::PressureLevel::from_byte(state.pressure_level.load(Ordering::Relaxed));
         let channels = ChannelsHealthSnapshot {
-            telegram: super::channel_health::snapshot_by_index(state, ChannelIndex::Telegram as usize),
+            telegram: super::channel_health::snapshot_by_index(
+                state,
+                ChannelIndex::Telegram as usize,
+            ),
             feishu: super::channel_health::snapshot_by_index(state, ChannelIndex::Feishu as usize),
-            dingtalk: super::channel_health::snapshot_by_index(state, ChannelIndex::DingTalk as usize),
+            dingtalk: super::channel_health::snapshot_by_index(
+                state,
+                ChannelIndex::DingTalk as usize,
+            ),
             wecom: super::channel_health::snapshot_by_index(state, ChannelIndex::WeCom as usize),
-            qq_channel: super::channel_health::snapshot_by_index(state, ChannelIndex::QqChannel as usize),
+            qq_channel: super::channel_health::snapshot_by_index(
+                state,
+                ChannelIndex::QqChannel as usize,
+            ),
         };
         Self {
             pressure,

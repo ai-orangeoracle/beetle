@@ -63,19 +63,17 @@ impl Tool for WebSearchTool {
                 ("Content-Type", "application/json"),
                 ("Authorization", &auth),
             ];
-            let (status, resp_body) = match ctx.post_with_headers(
-                TAVILY_SEARCH_URL,
-                &headers,
-                &body_bytes,
-            ) {
-                Ok(r) => r,
-                Err(e) => {
-                    log::warn!("[{}] Tavily request failed: {:?}", TAG, e);
-                    return self.fallback_brave_or_error(query, ctx);
-                }
-            };
+            let (status, resp_body) =
+                match ctx.post_with_headers(TAVILY_SEARCH_URL, &headers, &body_bytes) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        log::warn!("[{}] Tavily request failed: {:?}", TAG, e);
+                        return self.fallback_brave_or_error(query, ctx);
+                    }
+                };
             if (200..300).contains(&status) {
-                if let Ok(parsed) = serde_json::from_slice::<serde_json::Value>(resp_body.as_ref()) {
+                if let Ok(parsed) = serde_json::from_slice::<serde_json::Value>(resp_body.as_ref())
+                {
                     let summary = parsed
                         .get("results")
                         .and_then(|r| r.as_array())
@@ -87,11 +85,20 @@ impl Tool for WebSearchTool {
                                 .join(" ")
                         })
                         .unwrap_or_else(|| String::from("no results"));
-                    log::info!("[{}] Tavily query len={} result len={}", TAG, query.len(), summary.len());
+                    log::info!(
+                        "[{}] Tavily query len={} result len={}",
+                        TAG,
+                        query.len(),
+                        summary.len()
+                    );
                     return Ok(summary);
                 }
             }
-            log::warn!("[{}] Tavily status={} or parse failed, fallback", TAG, status);
+            log::warn!(
+                "[{}] Tavily status={} or parse failed, fallback",
+                TAG,
+                status
+            );
             return self.fallback_brave_or_error(query, ctx);
         }
 
@@ -105,11 +112,7 @@ impl Tool for WebSearchTool {
 }
 
 impl WebSearchTool {
-    fn fallback_brave_or_error(
-        &self,
-        query: &str,
-        ctx: &mut dyn ToolContext,
-    ) -> Result<String> {
+    fn fallback_brave_or_error(&self, query: &str, ctx: &mut dyn ToolContext) -> Result<String> {
         if self.api_key.is_empty() {
             return Ok("web_search: Tavily request failed and no Brave key configured".to_string());
         }
@@ -138,10 +141,11 @@ impl WebSearchTool {
                 stage: "tool_web_search",
             });
         }
-        let parsed: serde_json::Value = serde_json::from_slice(body.as_ref()).map_err(|e| Error::Other {
-            source: Box::new(e),
-            stage: "tool_web_search",
-        })?;
+        let parsed: serde_json::Value =
+            serde_json::from_slice(body.as_ref()).map_err(|e| Error::Other {
+                source: Box::new(e),
+                stage: "tool_web_search",
+            })?;
         let summary = parsed
             .get("web")
             .and_then(|w| w.get("results"))
@@ -154,7 +158,12 @@ impl WebSearchTool {
                     .join(" ")
             })
             .unwrap_or_else(|| String::from("no results"));
-        log::info!("[{}] Brave query len={} result len={}", TAG, query.len(), summary.len());
+        log::info!(
+            "[{}] Brave query len={} result len={}",
+            TAG,
+            query.len(),
+            summary.len()
+        );
         Ok(summary)
     }
 }

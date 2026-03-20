@@ -16,24 +16,22 @@ mod wss_gateway;
 
 pub use connectivity::{check_all, ChannelConnectivityItem};
 pub use dingtalk::{flush_dingtalk_sends, run_dingtalk_sender_loop};
-pub use dispatch::{run_dispatch, ChannelSinks, MessageSink, QueuedSink};
 pub use dispatch::{build_channel_sinks, spawn_sender_threads, ChannelRxSet};
-pub use feishu::{
-    acquire_tenant_token as feishu_acquire_token, event_body_to_pcmsg,
-    feishu_edit_message, feishu_send_and_get_id, flush_feishu_sends, handle_http_event,
-    run_feishu_sender_loop, FeishuEventResponse,
-};
+pub use dispatch::{run_dispatch, ChannelSinks, MessageSink, QueuedSink};
 #[cfg(feature = "feishu")]
 pub use feishu::run_feishu_ws_loop;
+pub use feishu::{
+    acquire_tenant_token as feishu_acquire_token, event_body_to_pcmsg, feishu_edit_message,
+    feishu_send_and_get_id, flush_feishu_sends, handle_http_event, run_feishu_sender_loop,
+    FeishuEventResponse,
+};
+pub use http_client::ChannelHttpClient;
+pub use qq::run_qq_ws_loop;
 pub use qq::{
     flush_qq_channel_sends, handle_webhook, run_qq_sender_loop, QqHandlerResult, QqMsgIdCache,
     QQ_WEBHOOK_BODY_MAX,
 };
-pub use qq::run_qq_ws_loop;
-pub use http_client::ChannelHttpClient;
 
-#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
-pub use wss_gateway::{connect_esp_wss, EspWssConnection};
 pub use telegram::{
     edit_message_text as tg_edit_message_text, flush_telegram_sends, get_bot_username,
     poll_telegram_once, run_telegram_poll_loop, run_telegram_sender_loop, send_chat_action,
@@ -41,6 +39,8 @@ pub use telegram::{
 };
 pub use websocket::{WebSocketSink, MAX_WS_CONNECTIONS, MAX_WS_MESSAGE_LEN};
 pub use wecom::{flush_wecom_sends, run_wecom_sender_loop};
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+pub use wss_gateway::{connect_esp_wss, EspWssConnection};
 
 /// 占位 sink：打日志并返回 Ok，供 8.1 验收。
 pub struct LogSink {

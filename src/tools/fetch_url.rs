@@ -41,7 +41,10 @@ impl Tool for FetchUrlTool {
             return Err(Error::config("tool_fetch_url", "invalid or missing url"));
         }
         if crate::util::is_private_url(url) {
-            return Err(Error::config("tool_fetch_url", "access to private/internal addresses is not allowed"));
+            return Err(Error::config(
+                "tool_fetch_url",
+                "access to private/internal addresses is not allowed",
+            ));
         }
         let (status, body) = ctx.get(url)?;
         if !(200..300).contains(&status) {

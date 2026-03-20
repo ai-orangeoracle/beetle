@@ -28,7 +28,9 @@ fn minify_content(content: &str, strip_line_comment: bool, strip_block_comment: 
             && bytes[i + 3] == b'-'
         {
             i += 4;
-            while i + 2 < bytes.len() && !(bytes[i] == b'-' && bytes[i + 1] == b'-' && bytes[i + 2] == b'>') {
+            while i + 2 < bytes.len()
+                && !(bytes[i] == b'-' && bytes[i + 1] == b'-' && bytes[i + 2] == b'>')
+            {
                 i += 1;
             }
             if i + 2 < bytes.len() {
@@ -95,11 +97,18 @@ fn main() {
     let is_esp = target.contains("esp") || target.contains("xtensa") || target.contains("riscv32");
     if is_esp {
         let idf_path = std::env::var("IDF_PATH").ok();
-        let version_path = idf_path.as_ref().map(|p| std::path::Path::new(p).join("version.txt"));
+        let version_path = idf_path
+            .as_ref()
+            .map(|p| std::path::Path::new(p).join("version.txt"));
         let version_txt = version_path.and_then(|p| std::fs::read_to_string(p).ok());
         let major = version_txt
             .as_ref()
-            .and_then(|s| s.trim().split('.').next().and_then(|m| m.parse::<u32>().ok()))
+            .and_then(|s| {
+                s.trim()
+                    .split('.')
+                    .next()
+                    .and_then(|m| m.parse::<u32>().ok())
+            })
             .unwrap_or(5);
         println!("cargo:rustc-cfg=esp_idf_version_major=\"{}\"", major);
         let idf_version = version_txt

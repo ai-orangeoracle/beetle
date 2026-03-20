@@ -56,7 +56,12 @@ pub fn verify_qq_signature(
         .try_into()
         .map_err(|_| Error::config("qq_verify", "signature length must be 64 bytes"))?;
     let signature = ed25519_dalek::Signature::from_bytes(&sig_bytes);
-    let message: Vec<u8> = timestamp.as_bytes().iter().chain(body.iter()).copied().collect();
+    let message: Vec<u8> = timestamp
+        .as_bytes()
+        .iter()
+        .chain(body.iter())
+        .copied()
+        .collect();
     verifying_key
         .verify_strict(&message, &signature)
         .map_err(|_| Error::config("qq_verify", "signature verification failed"))?;
@@ -113,7 +118,8 @@ pub fn check_connectivity<H: ChannelHttpClient + ?Sized>(
     http: &mut H,
 ) -> super::super::connectivity::ChannelConnectivityItem {
     use super::super::connectivity;
-    let configured = !config.qq_channel_app_id.trim().is_empty() && !config.qq_channel_secret.trim().is_empty();
+    let configured =
+        !config.qq_channel_app_id.trim().is_empty() && !config.qq_channel_secret.trim().is_empty();
     let (ok, message) = if !configured {
         (false, None)
     } else {
@@ -123,18 +129,29 @@ pub fn check_connectivity<H: ChannelHttpClient + ?Sized>(
         };
         let body_bytes = match serde_json::to_vec(&body) {
             Ok(b) => b,
-            Err(e) => return connectivity::item("qq_channel", configured, false, Some(e.to_string())),
+            Err(e) => {
+                return connectivity::item("qq_channel", configured, false, Some(e.to_string()))
+            }
         };
         let (status, resp_body) = match http.http_post(QQ_GET_APP_ACCESS_TOKEN_URL, &body_bytes) {
             Ok(r) => r,
-            Err(e) => return connectivity::item("qq_channel", configured, false, Some(e.to_string())),
+            Err(e) => {
+                return connectivity::item("qq_channel", configured, false, Some(e.to_string()))
+            }
         };
         if status >= 400 {
-            return connectivity::item("qq_channel", configured, false, Some(format!("getAppAccessToken status {}", status)));
+            return connectivity::item(
+                "qq_channel",
+                configured,
+                false,
+                Some(format!("getAppAccessToken status {}", status)),
+            );
         }
         let r: QqTokenResponse = match serde_json::from_slice(resp_body.as_ref()) {
             Ok(x) => x,
-            Err(e) => return connectivity::item("qq_channel", configured, false, Some(e.to_string())),
+            Err(e) => {
+                return connectivity::item("qq_channel", configured, false, Some(e.to_string()))
+            }
         };
         match r.access_token {
             Some(t) if !t.is_empty() => (true, None),
@@ -222,7 +239,7 @@ fn send_one_qq<H: ChannelHttpClient>(
         let mut body_obj = serde_json::json!({ "content": chunk });
         if v2 {
             body_obj["msg_type"] = serde_json::json!(0); // 0 = 文本
-            // v2 API（群聊/C2C）需要 msg_seq 去重；每个分片递增
+                                                         // v2 API（群聊/C2C）需要 msg_seq 去重；每个分片递增
             body_obj["msg_seq"] = serde_json::json!(i + 1);
         }
         if i == 0 {
@@ -245,13 +262,11 @@ fn send_one_qq<H: ChannelHttpClient>(
             ("content-type", "application/json"),
             ("content-length", content_length),
         ];
-        match crate::channels::send::send_post_with_headers(
-            TAG, http, &url, &headers, &body_bytes,
-        ) {
+        match crate::channels::send::send_post_with_headers(TAG, http, &url, &headers, &body_bytes)
+        {
             Ok((status, ref body)) if status >= 400 => {
-                let preview = String::from_utf8_lossy(
-                    &body.as_ref()[..body.as_ref().len().min(256)],
-                );
+                let preview =
+                    String::from_utf8_lossy(&body.as_ref()[..body.as_ref().len().min(256)]);
                 log::warn!("[{}] send status={} body={}", TAG, status, preview);
             }
             Err(ref e) => {
@@ -348,7 +363,12 @@ pub fn run_qq_sender_loop<H, F>(
             let mut http = match create_http() {
                 Ok(h) => h,
                 Err(e) => {
-                    log::warn!("[{}] create http failed (attempt {}): {}", TAG, retry + 1, e);
+                    log::warn!(
+                        "[{}] create http failed (attempt {}): {}",
+                        TAG,
+                        retry + 1,
+                        e
+                    );
                     continue;
                 }
             };
@@ -366,7 +386,11 @@ pub fn run_qq_sender_loop<H, F>(
             break;
         }
         if !sent {
-            log::error!("[{}] message dropped after 3 retries, chat_id={}", TAG, chat_id);
+            log::error!(
+                "[{}] message dropped after 3 retries, chat_id={}",
+                TAG,
+                chat_id
+            );
         }
     }
 }

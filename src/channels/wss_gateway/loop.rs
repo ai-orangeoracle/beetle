@@ -2,9 +2,9 @@
 //! WiFi 断连时先等 WiFi 恢复再尝试重连 WSS，避免无网络时反复做 TLS 握手。
 
 use crate::bus::InboundTx;
-use crate::channels::ChannelHttpClient;
 use crate::channels::wss_gateway::connection::{WssConnection, WssEvent};
 use crate::channels::wss_gateway::driver::{WssGatewayDriver, WssRecvAction, WssSessionState};
+use crate::channels::ChannelHttpClient;
 use crate::error::Result;
 use std::time::{Duration, Instant};
 
@@ -26,7 +26,11 @@ fn wait_for_wifi(tag: &str) -> bool {
     if crate::platform::is_wifi_sta_connected() {
         return true;
     }
-    log::info!("[{}] WiFi STA not ready, waiting up to {}s", tag, WIFI_WAIT_MAX_SECS);
+    log::info!(
+        "[{}] WiFi STA not ready, waiting up to {}s",
+        tag,
+        WIFI_WAIT_MAX_SECS
+    );
     let deadline = Instant::now() + Duration::from_secs(WIFI_WAIT_MAX_SECS);
     while Instant::now() < deadline {
         crate::platform::task_wdt::feed_current_task();
@@ -36,7 +40,11 @@ fn wait_for_wifi(tag: &str) -> bool {
             return true;
         }
     }
-    log::warn!("[{}] WiFi STA still not ready after {}s, proceeding anyway", tag, WIFI_WAIT_MAX_SECS);
+    log::warn!(
+        "[{}] WiFi STA still not ready after {}s, proceeding anyway",
+        tag,
+        WIFI_WAIT_MAX_SECS
+    );
     false
 }
 
@@ -166,8 +174,14 @@ pub fn run_wss_gateway_loop<D, H, C, CreateHttp, Conn>(
                     match driver.on_recv(&data) {
                         Ok(WssRecvAction::Dispatch(Some(msg))) => {
                             let chat_id = msg.chat_id.clone();
-                            if crate::orchestrator::current_pressure() == crate::orchestrator::PressureLevel::Critical {
-                                log::warn!("[{}] pressure critical, dropping msg chat_id={}", tag, chat_id);
+                            if crate::orchestrator::current_pressure()
+                                == crate::orchestrator::PressureLevel::Critical
+                            {
+                                log::warn!(
+                                    "[{}] pressure critical, dropping msg chat_id={}",
+                                    tag,
+                                    chat_id
+                                );
                             } else if inbound_tx.try_send(msg).is_err() {
                                 log::warn!(
                                     "[{}] inbound queue full, dropping msg chat_id={}",
@@ -184,8 +198,14 @@ pub fn run_wss_gateway_loop<D, H, C, CreateHttp, Conn>(
                         Ok(WssRecvAction::DispatchAndAck(msg, ack)) => {
                             let enqueued = if let Some(msg) = msg {
                                 let chat_id = msg.chat_id.clone();
-                                if crate::orchestrator::current_pressure() == crate::orchestrator::PressureLevel::Critical {
-                                    log::warn!("[{}] pressure critical, dropping msg chat_id={}", tag, chat_id);
+                                if crate::orchestrator::current_pressure()
+                                    == crate::orchestrator::PressureLevel::Critical
+                                {
+                                    log::warn!(
+                                        "[{}] pressure critical, dropping msg chat_id={}",
+                                        tag,
+                                        chat_id
+                                    );
                                     true
                                 } else {
                                     match inbound_tx.try_send(msg) {
@@ -262,10 +282,17 @@ pub fn run_wss_gateway_loop<D, H, C, CreateHttp, Conn>(
             }
         }
 
-        log::info!("[{}] disconnected, dropping connection before reconnect", tag);
+        log::info!(
+            "[{}] disconnected, dropping connection before reconnect",
+            tag
+        );
         drop(conn);
         backoff_secs = crate::orchestrator::current_budget().reconnect_backoff_secs;
-        log::info!("[{}] will reconnect after WiFi check + {}s backoff", tag, backoff_secs);
+        log::info!(
+            "[{}] will reconnect after WiFi check + {}s backoff",
+            tag,
+            backoff_secs
+        );
         sleep_with_wdt(backoff_secs);
     }
 }

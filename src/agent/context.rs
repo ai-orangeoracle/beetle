@@ -1,11 +1,13 @@
 //! Agent 上下文构建：从 MemoryStore + SessionStore + 工具说明聚合 system 与 messages。
 //! Pure logic; no platform dependency; for use by agent::loop.
 
-use crate::constants::{AGENT_MARKER_MARK_IMPORTANT, AGENT_MARKER_SIGNAL_COMFORT, AGENT_MARKER_STOP};
 use crate::bus::PcMsg;
+use crate::constants::{
+    AGENT_MARKER_MARK_IMPORTANT, AGENT_MARKER_SIGNAL_COMFORT, AGENT_MARKER_STOP,
+};
 use crate::error::Result;
-use crate::memory::{build_system_prompt, ImportantMessageStore, MemoryStore, SessionStore};
 use crate::llm::Message;
+use crate::memory::{build_system_prompt, ImportantMessageStore, MemoryStore, SessionStore};
 use crate::state;
 
 pub use crate::constants::{DEFAULT_MESSAGES_MAX_LEN, DEFAULT_SYSTEM_MAX_LEN};
@@ -57,7 +59,10 @@ pub fn build_context(p: &ContextParams<'_>) -> Result<(String, Vec<Message>)> {
         log::warn!("[context] get_memory failed: {}", e);
         String::new()
     });
-    let names = p.memory.list_daily_note_names(DAILY_RECENT_N).unwrap_or_else(|_| vec![]);
+    let names = p
+        .memory
+        .list_daily_note_names(DAILY_RECENT_N)
+        .unwrap_or_else(|_| vec![]);
     let mut daily_contents: Vec<String> = Vec::with_capacity(names.len());
     for name in &names {
         if let Ok(c) = p.memory.get_daily_note(name) {
@@ -65,7 +70,9 @@ pub fn build_context(p: &ContextParams<'_>) -> Result<(String, Vec<Message>)> {
         }
     }
     let tools_max = p.system_max_len / 4; // 预留约 1/4 给工具说明
-    let base_max = p.system_max_len.saturating_sub(p.tool_descriptions.len().min(tools_max));
+    let base_max = p
+        .system_max_len
+        .saturating_sub(p.tool_descriptions.len().min(tools_max));
     let system_base = build_system_prompt(&soul, &user, &mem, &daily_contents, base_max);
     let mut system = system_base;
     if !p.tool_descriptions.is_empty() {
@@ -96,7 +103,9 @@ pub fn build_context(p: &ContextParams<'_>) -> Result<(String, Vec<Message>)> {
         let remain = p.system_max_len.saturating_sub(system.len());
         if remain > 64 {
             if p.group_activation == "always" {
-                system.push_str("\n\nIf no response is needed, reply with exactly SILENT and nothing else.");
+                system.push_str(
+                    "\n\nIf no response is needed, reply with exactly SILENT and nothing else.",
+                );
             } else if p.group_activation == "mention" {
                 system.push_str("\n\nYou are in a group; only reply when explicitly mentioned.");
             }
@@ -120,7 +129,9 @@ pub fn build_context(p: &ContextParams<'_>) -> Result<(String, Vec<Message>)> {
         system.push_str(em);
     }
     let hint = crate::orchestrator::current_budget().llm_hint;
-    if !hint.is_empty() && system.len().saturating_add(hint.len()).saturating_add(2) <= p.system_max_len {
+    if !hint.is_empty()
+        && system.len().saturating_add(hint.len()).saturating_add(2) <= p.system_max_len
+    {
         system.push_str("\n\n");
         system.push_str(hint);
     }
@@ -133,7 +144,10 @@ pub fn build_context(p: &ContextParams<'_>) -> Result<(String, Vec<Message>)> {
     }
 
     let n = p.session_max_messages.max(1).min(128);
-    let recent = p.session.load_recent(&p.msg.chat_id, n).unwrap_or_else(|_| vec![]);
+    let recent = p
+        .session
+        .load_recent(&p.msg.chat_id, n)
+        .unwrap_or_else(|_| vec![]);
     let current_message_count = recent.len();
     let cap = recent.len() + if p.summary_text.is_some() { 2 } else { 1 };
     let mut messages: Vec<Message> = Vec::with_capacity(cap);
@@ -154,7 +168,8 @@ pub fn build_context(p: &ContextParams<'_>) -> Result<(String, Vec<Message>)> {
 
     // Session maintenance: inject summary trigger when messages accumulate.
     let needs_summary_update = current_message_count >= 20
-        && (p.summary_text.is_none() || current_message_count.saturating_sub(p.summary_last_count) >= 10);
+        && (p.summary_text.is_none()
+            || current_message_count.saturating_sub(p.summary_last_count) >= 10);
     if needs_summary_update {
         let maintenance_hint = format!(
             "\n\n[SESSION MAINTENANCE] 当前会话已有 {} 条消息。请在回复用户后，调用 update_session_summary 工具将关键上下文压缩为摘要，以防止旧消息被截断丢失。",
@@ -164,7 +179,11 @@ pub fn build_context(p: &ContextParams<'_>) -> Result<(String, Vec<Message>)> {
             system.push_str(&maintenance_hint);
         }
     }
-    let important_offset = p.important_message_store.get_important_offset(&p.msg.chat_id).ok().flatten();
+    let important_offset = p
+        .important_message_store
+        .get_important_offset(&p.msg.chat_id)
+        .ok()
+        .flatten();
     truncate_messages_to_len(&mut messages, p.messages_max_len, important_offset);
     if important_offset.is_some() {
         let _ = p.important_message_store.clear_important(&p.msg.chat_id);
@@ -180,7 +199,10 @@ fn truncate_messages_to_len(
 ) {
     let mut total = 0usize;
     for m in messages.iter() {
-        total = total.saturating_add(m.role.len()).saturating_add(m.content.len()).saturating_add(2);
+        total = total
+            .saturating_add(m.role.len())
+            .saturating_add(m.content.len())
+            .saturating_add(2);
     }
     let protected_idx = protected_offset_from_end.and_then(|off| {
         let len = messages.len();
@@ -202,7 +224,11 @@ fn truncate_messages_to_len(
         if messages.len() - indices_to_remove.len() <= 1 {
             break;
         }
-        let sz = m.role.len().saturating_add(m.content.len()).saturating_add(2);
+        let sz = m
+            .role
+            .len()
+            .saturating_add(m.content.len())
+            .saturating_add(2);
         total = total.saturating_sub(sz);
         indices_to_remove.push(i);
     }

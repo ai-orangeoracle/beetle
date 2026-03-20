@@ -12,7 +12,10 @@ const TAG: &str = "wecom_webhook";
 pub fn verify_signature(token: &str, timestamp: &str, nonce: &str, expected_sig: &str) -> bool {
     if token.is_empty() || expected_sig.is_empty() {
         // Token 未配置时跳过验签（向后兼容，但记录警告）。
-        log::warn!("[{}] signature verification skipped: token or signature empty", TAG);
+        log::warn!(
+            "[{}] signature verification skipped: token or signature empty",
+            TAG
+        );
         return true;
     }
     let mut parts = [token, timestamp, nonce];
@@ -28,11 +31,21 @@ pub fn verify_signature(token: &str, timestamp: &str, nonce: &str, expected_sig:
 /// ```xml
 /// <xml><ToUserName>...</ToUserName><FromUserName>...</FromUserName><Content>...</Content>...</xml>
 /// ```
-pub fn handle_message(body: &str, wecom_token: &str, timestamp: &str, nonce: &str, msg_signature: &str, inbound_tx: &InboundTx) -> Result<()> {
+pub fn handle_message(
+    body: &str,
+    wecom_token: &str,
+    timestamp: &str,
+    nonce: &str,
+    msg_signature: &str,
+    inbound_tx: &InboundTx,
+) -> Result<()> {
     // 验签
     if !verify_signature(wecom_token, timestamp, nonce, msg_signature) {
         log::warn!("[{}] invalid signature, rejecting message", TAG);
-        return Err(crate::error::Error::config("wecom_webhook", "invalid signature"));
+        return Err(crate::error::Error::config(
+            "wecom_webhook",
+            "invalid signature",
+        ));
     }
 
     // Parse simple XML fields without full XML parser.

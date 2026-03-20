@@ -162,10 +162,18 @@ pub fn parse_iso8601(s: &str) -> Option<u64> {
     let s = s.trim_end_matches('Z');
     let s = if let Some(pos) = s.rfind('+') {
         // Ensure it's a timezone offset (after the T), not part of the date
-        if pos > 10 { &s[..pos] } else { s }
+        if pos > 10 {
+            &s[..pos]
+        } else {
+            s
+        }
     } else if let Some(pos) = s.rfind('-') {
         // Only treat as tz offset if after time part (pos > 16 means after HH:MM:SS)
-        if pos > 16 { &s[..pos] } else { s }
+        if pos > 16 {
+            &s[..pos]
+        } else {
+            s
+        }
     } else {
         s
     };
@@ -210,7 +218,13 @@ pub fn current_unix_secs() -> u64 {
 /// 星期几名称。days = Unix 秒 / 86400，1970-01-01 (days=0) 为 Thursday。
 pub fn weekday_name(days_since_epoch: u64) -> &'static str {
     const WEEKDAY: [&str; 7] = [
-        "Thursday", "Friday", "Saturday", "Sunday", "Monday", "Tuesday", "Wednesday",
+        "Thursday",
+        "Friday",
+        "Saturday",
+        "Sunday",
+        "Monday",
+        "Tuesday",
+        "Wednesday",
     ];
     WEEKDAY[(days_since_epoch % 7) as usize]
 }

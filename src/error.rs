@@ -35,10 +35,7 @@ pub enum Error {
     },
 
     #[error("ESP-IDF: code={code} (stage: {stage})")]
-    Esp {
-        code: i32,
-        stage: &'static str,
-    },
+    Esp { code: i32, stage: &'static str },
 
     #[error("HTTP: status={status_code} (stage: {stage})")]
     Http {
@@ -62,7 +59,10 @@ impl Error {
         }
     }
 
-    pub fn nvs(stage: &'static str, source: impl std::error::Error + Send + Sync + 'static) -> Self {
+    pub fn nvs(
+        stage: &'static str,
+        source: impl std::error::Error + Send + Sync + 'static,
+    ) -> Self {
         Error::Nvs {
             source: Some(Box::new(source)),
             stage,
@@ -76,7 +76,10 @@ impl Error {
         }
     }
 
-    pub fn spiffs(stage: &'static str, source: impl std::error::Error + Send + Sync + 'static) -> Self {
+    pub fn spiffs(
+        stage: &'static str,
+        source: impl std::error::Error + Send + Sync + 'static,
+    ) -> Self {
         Error::Spiffs {
             source: Some(Box::new(source)),
             stage,
@@ -91,24 +94,15 @@ impl Error {
     }
 
     pub fn io(stage: &'static str, source: std::io::Error) -> Self {
-        Error::Io {
-            source,
-            stage,
-        }
+        Error::Io { source, stage }
     }
 
     pub fn esp(stage: &'static str, code: i32) -> Self {
-        Error::Esp {
-            code,
-            stage,
-        }
+        Error::Esp { code, stage }
     }
 
     pub fn http(stage: &'static str, status_code: u16) -> Self {
-        Error::Http {
-            status_code,
-            stage,
-        }
+        Error::Http { status_code, stage }
     }
 
     /// 返回错误的 stage 字符串，便于日志与监控。

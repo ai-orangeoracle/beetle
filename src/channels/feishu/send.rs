@@ -4,8 +4,10 @@ use crate::bus::PcMsg;
 use crate::channels::ChannelHttpClient;
 use crate::config::AppConfig;
 
-pub const FEISHU_TOKEN_URL: &str = "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal";
-const FEISHU_SEND_URL: &str = "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id";
+pub const FEISHU_TOKEN_URL: &str =
+    "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal";
+const FEISHU_SEND_URL: &str =
+    "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id";
 const FEISHU_MAX_MESSAGE_LEN: usize = 4096;
 /// Token 缓存提前刷新余量（秒），避免使用即将过期的 token。
 const TOKEN_REFRESH_MARGIN_SECS: u64 = 300;
@@ -97,7 +99,11 @@ fn send_feishu_message<H: ChannelHttpClient>(
             ("Content-Type", "application/json; charset=utf-8"),
         ];
         let _ = crate::channels::send::send_post_with_headers(
-            TAG, http, FEISHU_SEND_URL, &headers, &body_bytes,
+            TAG,
+            http,
+            FEISHU_SEND_URL,
+            &headers,
+            &body_bytes,
         );
     }
 }
@@ -164,7 +170,12 @@ pub fn run_feishu_sender_loop<H, F>(
             let mut http = match create_http() {
                 Ok(h) => h,
                 Err(e) => {
-                    log::warn!("[{}] create http failed (attempt {}): {}", TAG, retry + 1, e);
+                    log::warn!(
+                        "[{}] create http failed (attempt {}): {}",
+                        TAG,
+                        retry + 1,
+                        e
+                    );
                     continue;
                 }
             };
@@ -174,13 +185,19 @@ pub fn run_feishu_sender_loop<H, F>(
                 } else {
                     cached_token = None;
                     match acquire_tenant_token(&mut http, app_id, app_secret) {
-                        Some(t) => { cached_token = Some((t.clone(), std::time::Instant::now())); t }
+                        Some(t) => {
+                            cached_token = Some((t.clone(), std::time::Instant::now()));
+                            t
+                        }
                         None => continue,
                     }
                 }
             } else {
                 match acquire_tenant_token(&mut http, app_id, app_secret) {
-                    Some(t) => { cached_token = Some((t.clone(), std::time::Instant::now())); t }
+                    Some(t) => {
+                        cached_token = Some((t.clone(), std::time::Instant::now()));
+                        t
+                    }
                     None => continue,
                 }
             };
@@ -192,7 +209,11 @@ pub fn run_feishu_sender_loop<H, F>(
             break;
         }
         if !sent {
-            log::error!("[{}] message dropped after 3 retries, chat_id={}", TAG, chat_id);
+            log::error!(
+                "[{}] message dropped after 3 retries, chat_id={}",
+                TAG,
+                chat_id
+            );
             cached_token = None; // 连续失败后清除缓存，下次强制刷新
         }
     }
@@ -207,7 +228,8 @@ pub fn send_and_get_id<H: ChannelHttpClient>(
     content: &str,
 ) -> crate::error::Result<Option<String>> {
     let text_json = serde_json::json!({ "text": content });
-    let content_str = serde_json::to_string(&text_json).unwrap_or_else(|_| "{\"text\":\"\"}".to_string());
+    let content_str =
+        serde_json::to_string(&text_json).unwrap_or_else(|_| "{\"text\":\"\"}".to_string());
     let body = serde_json::json!({
         "receive_id": chat_id,
         "msg_type": "text",
@@ -222,18 +244,26 @@ pub fn send_and_get_id<H: ChannelHttpClient>(
         ("Authorization", auth_val.as_str()),
         ("Content-Type", "application/json; charset=utf-8"),
     ];
-    let (status, resp_body) = http.http_post_with_headers(FEISHU_SEND_URL, &headers, &body_bytes)
+    let (status, resp_body) = http
+        .http_post_with_headers(FEISHU_SEND_URL, &headers, &body_bytes)
         .map_err(|e| crate::error::Error::Other {
             source: Box::new(e),
             stage: "feishu_send",
         })?;
     if status >= 400 {
-        return Err(crate::error::Error::Http { status_code: status, stage: "feishu_send" });
+        return Err(crate::error::Error::Http {
+            status_code: status,
+            stage: "feishu_send",
+        });
     }
     #[derive(serde::Deserialize)]
-    struct R { data: Option<Inner> }
+    struct R {
+        data: Option<Inner>,
+    }
     #[derive(serde::Deserialize)]
-    struct Inner { message_id: Option<String> }
+    struct Inner {
+        message_id: Option<String>,
+    }
     let r: R = match serde_json::from_slice(resp_body.as_ref()) {
         Ok(parsed) => parsed,
         Err(e) => {
@@ -252,7 +282,8 @@ pub fn edit_message<H: ChannelHttpClient>(
     content: &str,
 ) -> crate::error::Result<()> {
     let text_json = serde_json::json!({ "text": content });
-    let content_str = serde_json::to_string(&text_json).unwrap_or_else(|_| "{\"text\":\"\"}".to_string());
+    let content_str =
+        serde_json::to_string(&text_json).unwrap_or_else(|_| "{\"text\":\"\"}".to_string());
     let body = serde_json::json!({
         "msg_type": "text",
         "content": content_str,
@@ -261,19 +292,26 @@ pub fn edit_message<H: ChannelHttpClient>(
         source: Box::new(e),
         stage: "feishu_edit",
     })?;
-    let url = format!("https://open.feishu.cn/open-apis/im/v1/messages/{}", message_id);
+    let url = format!(
+        "https://open.feishu.cn/open-apis/im/v1/messages/{}",
+        message_id
+    );
     let auth_val = format!("Bearer {}", token);
     let headers = [
         ("Authorization", auth_val.as_str()),
         ("Content-Type", "application/json; charset=utf-8"),
     ];
-    let (status, _) = http.http_patch_with_headers(&url, &headers, &body_bytes)
+    let (status, _) = http
+        .http_patch_with_headers(&url, &headers, &body_bytes)
         .map_err(|e| crate::error::Error::Other {
             source: Box::new(e),
             stage: "feishu_edit",
         })?;
     if status >= 400 {
-        return Err(crate::error::Error::Http { status_code: status, stage: "feishu_edit" });
+        return Err(crate::error::Error::Http {
+            status_code: status,
+            stage: "feishu_edit",
+        });
     }
     Ok(())
 }
@@ -284,7 +322,8 @@ pub fn check_connectivity<H: ChannelHttpClient + ?Sized>(
     http: &mut H,
 ) -> super::super::connectivity::ChannelConnectivityItem {
     use super::super::connectivity;
-    let configured = !config.feishu_app_id.trim().is_empty() && !config.feishu_app_secret.trim().is_empty();
+    let configured =
+        !config.feishu_app_id.trim().is_empty() && !config.feishu_app_secret.trim().is_empty();
     let (ok, message) = if !configured {
         (false, None)
     } else {
@@ -301,7 +340,12 @@ pub fn check_connectivity<H: ChannelHttpClient + ?Sized>(
             Err(e) => return connectivity::item("feishu", configured, false, Some(e.to_string())),
         };
         if status >= 400 {
-            return connectivity::item("feishu", configured, false, Some(format!("token api status {}", status)));
+            return connectivity::item(
+                "feishu",
+                configured,
+                false,
+                Some(format!("token api status {}", status)),
+            );
         }
         let r: FeishuTokenResponse = match serde_json::from_slice(resp_body.as_ref()) {
             Ok(x) => x,
@@ -361,18 +405,28 @@ pub fn event_body_to_pcmsg(event_body: &str, allowed_chat_ids: &[String]) -> Opt
         .unwrap_or("")
         .trim()
         .to_string();
-    let chat_type = message.get("chat_type").and_then(|c| c.as_str()).unwrap_or("");
+    let chat_type = message
+        .get("chat_type")
+        .and_then(|c| c.as_str())
+        .unwrap_or("");
     let message_type = message
         .get("message_type")
         .and_then(|m| m.as_str())
         .unwrap_or("");
-    let content_str = message.get("content").and_then(|c| c.as_str()).unwrap_or("");
+    let content_str = message
+        .get("content")
+        .and_then(|c| c.as_str())
+        .unwrap_or("");
     if message_type != "text" {
         log::debug!("[{}] skip message_type={}", TAG, message_type);
         return None;
     }
     let text = match serde_json::from_str::<serde_json::Value>(content_str) {
-        Ok(c) => c.get("text").and_then(|t| t.as_str()).unwrap_or("").to_string(),
+        Ok(c) => c
+            .get("text")
+            .and_then(|t| t.as_str())
+            .unwrap_or("")
+            .to_string(),
         Err(_) => String::new(),
     };
     let text = text.trim();
@@ -383,14 +437,16 @@ pub fn event_body_to_pcmsg(event_body: &str, allowed_chat_ids: &[String]) -> Opt
     if allowed_chat_ids.is_empty() {
         log::warn!(
             "[{}] event dropped: 未配置「允许的会话 ID」，请将 chat_id={} 填入通道配置并保存",
-            TAG, chat_id
+            TAG,
+            chat_id
         );
         return None;
     }
     if !allowed_chat_ids.iter().any(|id| id.trim() == chat_id) {
         log::warn!(
             "[{}] event dropped: chat_id={} 不在允许列表中，请将该 ID 加入「允许的会话 ID」并保存",
-            TAG, chat_id
+            TAG,
+            chat_id
         );
         return None;
     }

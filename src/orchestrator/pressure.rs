@@ -1,9 +1,7 @@
 //! 压力等级计算：吸收 resource.rs 的 PressureLevel + ResourceBudget 逻辑。
 //! Pressure level computation: absorbs resource.rs PressureLevel + ResourceBudget.
 
-use crate::constants::{
-    DEFAULT_MESSAGES_MAX_LEN, DEFAULT_SYSTEM_MAX_LEN, MAX_RESPONSE_BODY_LEN,
-};
+use crate::constants::{DEFAULT_MESSAGES_MAX_LEN, DEFAULT_SYSTEM_MAX_LEN, MAX_RESPONSE_BODY_LEN};
 use std::sync::atomic::Ordering;
 
 use super::state::OrchestratorState;
@@ -86,8 +84,8 @@ pub fn compute_pressure(state: &OrchestratorState) -> PressureLevel {
     let active_http = state.active_http_count.load(Ordering::Relaxed);
     let internal_kb = internal / 1024;
     let spiram_mb = spiram / (1024 * 1024);
-    let queue_total = state.inbound_depth.load(Ordering::Relaxed)
-        + state.outbound_depth.load(Ordering::Relaxed);
+    let queue_total =
+        state.inbound_depth.load(Ordering::Relaxed) + state.outbound_depth.load(Ordering::Relaxed);
 
     // Critical: internal 低于 Cautious 阈值且 PSRAM 也低
     if internal_kb < CAUTIOUS_INTERNAL_KB && (spiram == 0 || spiram_mb < CAUTIOUS_PSRAM_MB) {

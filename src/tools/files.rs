@@ -85,7 +85,11 @@ impl Tool for FilesTool {
                 let name = e.file_name();
                 if let Some(s) = name.to_str() {
                     let is_dir = e.file_type().map(|t| t.is_dir()).unwrap_or(false);
-                    let entry = if is_dir { format!("{}/", s) } else { s.to_string() };
+                    let entry = if is_dir {
+                        format!("{}/", s)
+                    } else {
+                        s.to_string()
+                    };
                     entries.push(entry);
                     if entries.len() >= MAX_LIST_ENTRIES {
                         break;
@@ -99,7 +103,8 @@ impl Tool for FilesTool {
                 "entries": entries,
                 "truncated": truncated
             });
-            return Ok(serde_json::to_string(&out).map_err(|e| Error::config("tool_files", e.to_string()))?);
+            return Ok(serde_json::to_string(&out)
+                .map_err(|e| Error::config("tool_files", e.to_string()))?);
         }
 
         if mode != "read" {
@@ -116,7 +121,10 @@ impl Tool for FilesTool {
         }
         let content = std::fs::read_to_string(&full).map_err(|e| Error::io("tool_files", e))?;
         let (content, truncated) = if content.len() > MAX_TOOL_RESULT_LEN {
-            let mut c = content.chars().take(MAX_TOOL_RESULT_LEN).collect::<String>();
+            let mut c = content
+                .chars()
+                .take(MAX_TOOL_RESULT_LEN)
+                .collect::<String>();
             c.push_str("…");
             (c, true)
         } else {

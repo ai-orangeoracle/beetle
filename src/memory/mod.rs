@@ -160,9 +160,13 @@ pub trait SessionStore {
     /// 列举所有会话的 chat_id（如 sessions 目录下 *.jsonl 文件名去掉后缀）。用于 GET /api/sessions。
     fn list_chat_ids(&self) -> Result<Vec<String>>;
     /// 清理超过 max_age_secs 未修改的会话文件，返回清理数量。默认 no-op。
-    fn gc_stale(&self, _max_age_secs: u64) -> Result<usize> { Ok(0) }
+    fn gc_stale(&self, _max_age_secs: u64) -> Result<usize> {
+        Ok(0)
+    }
     /// 删除指定 chat_id 的会话文件。默认调用 clear。
-    fn delete(&self, chat_id: &str) -> Result<()> { self.clear(chat_id) }
+    fn delete(&self, chat_id: &str) -> Result<()> {
+        self.clear(chat_id)
+    }
 }
 
 /// 系统提示聚合：SOUL + USER + MEMORY + 近期每日笔记，总长度不超过 max_len。
@@ -217,18 +221,16 @@ pub fn run_remind_loop(
     inbound_tx: crate::bus::InboundTx,
     poll_interval_secs: u64,
 ) {
-    std::thread::spawn(move || {
-        loop {
-            std::thread::sleep(std::time::Duration::from_secs(poll_interval_secs));
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or(0);
-            while let Ok(Some((channel, chat_id, context))) = remind_store.pop_due(now) {
-                let content = format!("提醒：{}", context);
-                if let Ok(msg) = PcMsg::new(channel, chat_id, content) {
-                    let _ = inbound_tx.send(msg);
-                }
+    std::thread::spawn(move || loop {
+        std::thread::sleep(std::time::Duration::from_secs(poll_interval_secs));
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        while let Ok(Some((channel, chat_id, context))) = remind_store.pop_due(now) {
+            let content = format!("提醒：{}", context);
+            if let Ok(msg) = PcMsg::new(channel, chat_id, content) {
+                let _ = inbound_tx.send(msg);
             }
         }
     });

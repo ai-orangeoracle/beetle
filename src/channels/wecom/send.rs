@@ -51,18 +51,35 @@ pub fn check_connectivity<H: ChannelHttpClient + ?Sized>(
             Err(e) => return connectivity::item("wecom", configured, false, Some(e.to_string())),
         };
         if status >= 400 {
-            return connectivity::item("wecom", configured, false, Some(format!("gettoken status {}", status)));
+            return connectivity::item(
+                "wecom",
+                configured,
+                false,
+                Some(format!("gettoken status {}", status)),
+            );
         }
         let r: WecomTokenResponse = match serde_json::from_slice(resp_body.as_ref()) {
             Ok(x) => x,
             Err(e) => return connectivity::item("wecom", configured, false, Some(e.to_string())),
         };
         if r.errcode != 0 {
-            return connectivity::item("wecom", configured, false, Some(format!("{} {}", r.errcode, r.errmsg)));
+            return connectivity::item(
+                "wecom",
+                configured,
+                false,
+                Some(format!("{} {}", r.errcode, r.errmsg)),
+            );
         }
         let token = match r.access_token {
             Some(t) if !t.is_empty() => t,
-            _ => return connectivity::item("wecom", configured, false, Some("no access_token".into())),
+            _ => {
+                return connectivity::item(
+                    "wecom",
+                    configured,
+                    false,
+                    Some("no access_token".into()),
+                )
+            }
         };
         let touser = config.wecom_default_touser.trim();
         if touser.is_empty() {
@@ -70,7 +87,14 @@ pub fn check_connectivity<H: ChannelHttpClient + ?Sized>(
         } else {
             let agent_id_u32: u32 = match config.wecom_agent_id.trim().parse() {
                 Ok(n) => n,
-                Err(_) => return connectivity::item("wecom", configured, false, Some("invalid agent_id".into())),
+                Err(_) => {
+                    return connectivity::item(
+                        "wecom",
+                        configured,
+                        false,
+                        Some("invalid agent_id".into()),
+                    )
+                }
             };
             let body = serde_json::json!({
                 "touser": touser,
@@ -80,22 +104,38 @@ pub fn check_connectivity<H: ChannelHttpClient + ?Sized>(
             });
             let body_bytes = match serde_json::to_vec(&body) {
                 Ok(b) => b,
-                Err(e) => return connectivity::item("wecom", configured, false, Some(e.to_string())),
+                Err(e) => {
+                    return connectivity::item("wecom", configured, false, Some(e.to_string()))
+                }
             };
             let send_url = format!("{}?access_token={}", WECOM_SEND_BASE, token);
             let (status, resp_body) = match http.http_post(&send_url, &body_bytes) {
                 Ok(r) => r,
-                Err(e) => return connectivity::item("wecom", configured, false, Some(e.to_string())),
+                Err(e) => {
+                    return connectivity::item("wecom", configured, false, Some(e.to_string()))
+                }
             };
             if status >= 400 {
-                return connectivity::item("wecom", configured, false, Some(format!("send status {}", status)));
+                return connectivity::item(
+                    "wecom",
+                    configured,
+                    false,
+                    Some(format!("send status {}", status)),
+                );
             }
             let send_r: WecomSendResponse = match serde_json::from_slice(resp_body.as_ref()) {
                 Ok(x) => x,
-                Err(e) => return connectivity::item("wecom", configured, false, Some(e.to_string())),
+                Err(e) => {
+                    return connectivity::item("wecom", configured, false, Some(e.to_string()))
+                }
             };
             if send_r.errcode != 0 {
-                return connectivity::item("wecom", configured, false, Some(format!("send {} {}", send_r.errcode, send_r.errmsg)));
+                return connectivity::item(
+                    "wecom",
+                    configured,
+                    false,
+                    Some(format!("send {} {}", send_r.errcode, send_r.errmsg)),
+                );
             }
             (true, None)
         }
@@ -186,9 +226,7 @@ fn send_one_wecom<H: ChannelHttpClient>(
             crate::channels::send::send_post(TAG, http, &send_url, &body_bytes)
         {
             if status < 400 {
-                if let Ok(resp) =
-                    serde_json::from_slice::<WecomSendResponse>(resp_body.as_ref())
-                {
+                if let Ok(resp) = serde_json::from_slice::<WecomSendResponse>(resp_body.as_ref()) {
                     if resp.errcode != 0 {
                         log::warn!(
                             "[{}] send errcode={} errmsg={}",
@@ -227,7 +265,14 @@ pub fn flush_wecom_sends<H: ChannelHttpClient>(
         None => return,
     };
     while let Ok((chat_id, content)) = rx.try_recv() {
-        send_one_wecom(http, &token, agent_id_u32, &chat_id, default_touser, &content);
+        send_one_wecom(
+            http,
+            &token,
+            agent_id_u32,
+            &chat_id,
+            default_touser,
+            &content,
+        );
     }
 }
 
@@ -281,7 +326,12 @@ pub fn run_wecom_sender_loop<H, F>(
             let mut http = match create_http() {
                 Ok(h) => h,
                 Err(e) => {
-                    log::warn!("[{}] create http failed (attempt {}): {}", TAG, retry + 1, e);
+                    log::warn!(
+                        "[{}] create http failed (attempt {}): {}",
+                        TAG,
+                        retry + 1,
+                        e
+                    );
                     continue;
                 }
             };
@@ -289,7 +339,14 @@ pub fn run_wecom_sender_loop<H, F>(
                 Some(t) => t,
                 None => continue,
             };
-            send_one_wecom(&mut http, &token, agent_id_u32, &chat_id, default_touser, &content);
+            send_one_wecom(
+                &mut http,
+                &token,
+                agent_id_u32,
+                &chat_id,
+                default_touser,
+                &content,
+            );
             while let Ok((cid, cnt)) = rx.try_recv() {
                 send_one_wecom(&mut http, &token, agent_id_u32, &cid, default_touser, &cnt);
             }
@@ -297,7 +354,11 @@ pub fn run_wecom_sender_loop<H, F>(
             break;
         }
         if !sent {
-            log::error!("[{}] message dropped after 3 retries, chat_id={}", TAG, chat_id);
+            log::error!(
+                "[{}] message dropped after 3 retries, chat_id={}",
+                TAG,
+                chat_id
+            );
         }
     }
 }

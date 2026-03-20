@@ -90,7 +90,10 @@ impl SseLineReader {
         let line_str = match core::str::from_utf8(line) {
             Ok(s) => s,
             Err(_) => {
-                log::debug!("[sse] skipping line with invalid UTF-8 ({} bytes)", line.len());
+                log::debug!(
+                    "[sse] skipping line with invalid UTF-8 ({} bytes)",
+                    line.len()
+                );
                 return;
             }
         };

@@ -91,13 +91,19 @@ pub fn diagnose(
         out.push(DiagResult {
             severity: "ok".into(),
             category: "channel".into(),
-            message: format!("inbound_depth={} outbound_depth={}", inbound_depth, outbound_depth),
+            message: format!(
+                "inbound_depth={} outbound_depth={}",
+                inbound_depth, outbound_depth
+            ),
         });
     } else {
         out.push(DiagResult {
             severity: "warn".into(),
             category: "channel".into(),
-            message: format!("inbound_depth={} outbound_depth={}", inbound_depth, outbound_depth),
+            message: format!(
+                "inbound_depth={} outbound_depth={}",
+                inbound_depth, outbound_depth
+            ),
         });
     }
 
@@ -105,7 +111,10 @@ pub fn diagnose(
         let msg: String = if e.len() <= LAST_ERROR_MAX_LEN {
             e.clone()
         } else {
-            e.chars().take(LAST_ERROR_MAX_LEN).chain("...".chars()).collect()
+            e.chars()
+                .take(LAST_ERROR_MAX_LEN)
+                .chain("...".chars())
+                .collect()
         };
         out.push(DiagResult {
             severity: "warn".into(),

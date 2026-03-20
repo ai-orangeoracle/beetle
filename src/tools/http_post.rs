@@ -64,10 +64,7 @@ impl Tool for HttpPostTool {
             ));
         }
 
-        let body = m
-            .get("body")
-            .and_then(|b| b.as_str())
-            .unwrap_or("");
+        let body = m.get("body").and_then(|b| b.as_str()).unwrap_or("");
 
         let content_type = m
             .get("content_type")

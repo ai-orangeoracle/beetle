@@ -17,7 +17,12 @@ pub struct ChannelConnectivityItem {
 }
 
 /// 供各通道 check_connectivity 构建结果用。
-pub(crate) fn item(id: &'static str, configured: bool, ok: bool, message: Option<String>) -> ChannelConnectivityItem {
+pub(crate) fn item(
+    id: &'static str,
+    configured: bool,
+    ok: bool,
+    message: Option<String>,
+) -> ChannelConnectivityItem {
     ChannelConnectivityItem {
         id: id.to_string(),
         configured,

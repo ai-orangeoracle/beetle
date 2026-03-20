@@ -80,7 +80,10 @@ pub fn is_channel_healthy_by_index(state: &OrchestratorState, idx: usize) -> boo
 
 /// 构建单通道健康快照（用于 ResourceSnapshot 序列化）。
 /// Build per-channel health snapshot for ResourceSnapshot serialization.
-pub fn snapshot_by_index(state: &OrchestratorState, idx: usize) -> super::state::ChannelHealthSnapshot {
+pub fn snapshot_by_index(
+    state: &OrchestratorState,
+    idx: usize,
+) -> super::state::ChannelHealthSnapshot {
     let slot = &state.channel_health[idx];
     let consecutive_failures = slot.consecutive_failures.load(Ordering::Relaxed);
     let healthy = if consecutive_failures < CHANNEL_FAIL_THRESHOLD {
