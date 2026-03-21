@@ -6,6 +6,12 @@ use crate::llm::{LlmClient, LlmHttpClient, LlmResponse, Message, StopReason, Too
 
 pub struct NoopLlmClient;
 
+impl Default for NoopLlmClient {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl NoopLlmClient {
     pub fn new() -> Self {
         Self

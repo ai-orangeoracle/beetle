@@ -64,7 +64,6 @@ pub fn read_body_utf8_impl<R: Read>(
     content_len: Option<u64>,
     max_len: usize,
 ) -> Result<String, BodyReadError> {
-    let max_len = max_len;
     match content_len {
         Some(l) => {
             let len = l.min(max_len as u64) as usize;
@@ -137,9 +136,9 @@ pub fn restart_requested_from_uri(uri: &str) -> bool {
         let mut it = pair.splitn(2, '=');
         if it
             .next()
-            .map_or(false, |k| k.eq_ignore_ascii_case("restart"))
+            .is_some_and(|k| k.eq_ignore_ascii_case("restart"))
         {
-            return it.next().map_or(false, |v| v.trim() == "1");
+            return it.next().is_some_and(|v| v.trim() == "1");
         }
     }
     false
@@ -154,7 +153,7 @@ pub fn name_from_uri(uri: &str) -> Option<String> {
             return it
                 .next()
                 .filter(|s| !s.is_empty())
-                .map(|s| crate::util::percent_decode_query(s));
+                .map(crate::util::percent_decode_query);
         }
     }
     None
@@ -190,7 +189,7 @@ pub struct WifiConfigPayload {
 
 /// 将任意错误转为 std::io::Error，供 handler 闭包统一返回 HandlerResult。
 pub fn to_io<E: Debug>(e: E) -> std::io::Error {
-    std::io::Error::new(std::io::ErrorKind::Other, format!("{:?}", e))
+    std::io::Error::other(format!("{:?}", e))
 }
 
 /// Handler 闭包返回类型。

@@ -12,7 +12,8 @@ use beetle::Platform;
 use beetle::PlatformHttpClient;
 use beetle::{
     parse_allowed_chat_ids, run_agent_loop, run_dispatch, send_chat_action, AppConfig,
-    Esp32Platform, MessageBus, DEFAULT_CAPACITY,
+    DisplayChannelStatus, DisplayCommand, DisplayPressureLevel, DisplaySystemState, Esp32Platform,
+    MessageBus, DEFAULT_CAPACITY,
 };
 
 use std::collections::HashMap;
@@ -20,6 +21,18 @@ use std::sync::{Arc, Mutex};
 
 const TAG: &str = "beetle";
 const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// 从 orchestrator snapshot 的 internal 堆空闲字节数估算已用百分比。
+/// ESP32-S3 internal DRAM 约 390KB；取 400KB 作为近似总量。非 ESP 返回 0。
+fn heap_used_percent(snapshot: &beetle::orchestrator::ResourceSnapshot) -> u8 {
+    const INTERNAL_TOTAL_APPROX: u32 = 400 * 1024;
+    let free = snapshot.heap_free_internal;
+    if free >= INTERNAL_TOTAL_APPROX {
+        return 0;
+    }
+    let used = INTERNAL_TOTAL_APPROX.saturating_sub(free);
+    ((used as u64 * 100) / INTERNAL_TOTAL_APPROX as u64).min(100) as u8
+}
 
 /// 启动自检：存储可读（memory 或 soul 至少其一成功）。失败返回 false，调用方应 log 并 return。
 fn startup_self_check(memory_store: &dyn MemoryStore) -> bool {
@@ -139,6 +152,36 @@ fn main() {
         }
     };
 
+    if let Some(display_cfg) = config.display.as_ref() {
+        if display_cfg.enabled {
+            if let Err(e) = platform.init_display(display_cfg) {
+                log::warn!("[{}] display init failed (degraded): {}", TAG, e);
+            } else {
+                log::info!("[{}] display initialized", TAG);
+                let _ = platform.display_command(DisplayCommand::RefreshDashboard {
+                    state: DisplaySystemState::Booting,
+                    wifi_connected: false,
+                    ip_address: None,
+                    channels: [
+                        DisplayChannelStatus { name: "telegram", enabled: config.enabled_channel == "telegram", healthy: false },
+                        DisplayChannelStatus { name: "feishu", enabled: config.enabled_channel == "feishu", healthy: false },
+                        DisplayChannelStatus { name: "dingtalk", enabled: config.enabled_channel == "dingtalk", healthy: false },
+                        DisplayChannelStatus { name: "wecom", enabled: config.enabled_channel == "wecom", healthy: false },
+                        DisplayChannelStatus { name: "qq_channel", enabled: config.enabled_channel == "qq_channel", healthy: false },
+                    ],
+                    pressure: DisplayPressureLevel::Normal,
+                    heap_percent: 0,
+                });
+            }
+        }
+    }
+    if wifi_connected && platform.display_available() {
+        let ip = platform
+            .wifi_sta_ip()
+            .unwrap_or_else(|| "192.168.4.1".to_string());
+        let _ = platform.display_command(DisplayCommand::UpdateIp { ip });
+    }
+
     run_app(platform, Arc::new(config), wifi_connected);
 }
 
@@ -255,6 +298,87 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
         Arc::clone(&outbound_depth),
         Arc::clone(&session_store),
     );
+
+    if platform.display_available() {
+        let display_platform = Arc::clone(&platform);
+        let display_config = Arc::clone(&config);
+        std::thread::Builder::new()
+            .name("display".into())
+            .stack_size(6144)
+            .spawn(move || {
+                let enabled = display_config.enabled_channel.as_str();
+                loop {
+                    std::thread::sleep(std::time::Duration::from_secs(5));
+                    let snapshot = beetle::orchestrator::snapshot();
+                    let pressure = match snapshot.pressure {
+                        beetle::orchestrator::PressureLevel::Normal => DisplayPressureLevel::Normal,
+                        beetle::orchestrator::PressureLevel::Cautious => {
+                            DisplayPressureLevel::Cautious
+                        }
+                        beetle::orchestrator::PressureLevel::Critical => {
+                            DisplayPressureLevel::Critical
+                        }
+                    };
+                    let wifi_connected = beetle::platform::is_wifi_sta_connected();
+                    let busy = snapshot.inbound_depth > 0
+                        || snapshot.outbound_depth > 0
+                        || snapshot.active_http_count > 0;
+                    let state =
+                        if snapshot.pressure == beetle::orchestrator::PressureLevel::Critical {
+                            DisplaySystemState::Fault
+                        } else if !wifi_connected {
+                            DisplaySystemState::NoWifi
+                        } else if busy {
+                            DisplaySystemState::Busy
+                        } else {
+                            DisplaySystemState::Idle
+                        };
+                    let ip = display_platform
+                        .wifi_sta_ip()
+                        .unwrap_or_else(|| "192.168.4.1".to_string());
+                    let channels = [
+                        DisplayChannelStatus {
+                            name: "telegram",
+                            enabled: enabled == "telegram",
+                            healthy: snapshot.channels.telegram.healthy,
+                        },
+                        DisplayChannelStatus {
+                            name: "feishu",
+                            enabled: enabled == "feishu",
+                            healthy: snapshot.channels.feishu.healthy,
+                        },
+                        DisplayChannelStatus {
+                            name: "dingtalk",
+                            enabled: enabled == "dingtalk",
+                            healthy: snapshot.channels.dingtalk.healthy,
+                        },
+                        DisplayChannelStatus {
+                            name: "wecom",
+                            enabled: enabled == "wecom",
+                            healthy: snapshot.channels.wecom.healthy,
+                        },
+                        DisplayChannelStatus {
+                            name: "qq_channel",
+                            enabled: enabled == "qq_channel",
+                            healthy: snapshot.channels.qq_channel.healthy,
+                        },
+                    ];
+                    let heap_percent = heap_used_percent(&snapshot);
+                    let cmd = DisplayCommand::RefreshDashboard {
+                        state,
+                        wifi_connected,
+                        ip_address: Some(ip),
+                        channels,
+                        pressure,
+                        heap_percent,
+                    };
+                    if let Err(e) = display_platform.display_command(cmd) {
+                        log::warn!("[{}] display refresh failed: {}", TAG, e);
+                    }
+                }
+            })
+            .ok();
+    }
 
     beetle::memory::run_remind_loop(Arc::clone(&remind_at_store), inbound_tx.clone(), 60);
 

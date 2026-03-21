@@ -2,6 +2,7 @@
 //! 核心域与 main 仅依赖这些 trait，便于后续支持多种硬件。
 
 use crate::config::AppConfig;
+use crate::display::{DisplayCommand, DisplayConfig};
 use crate::error::Result;
 use crate::memory::{
     ImportantMessageStore, MemoryStore, PendingRetryStore, RemindAtStore, SessionStore,
@@ -126,6 +127,10 @@ pub trait Platform: Send + Sync {
     fn wifi_scan(&self) -> Option<Arc<dyn crate::platform::WifiScan + Send + Sync>> {
         None
     }
+    /// 当前 STA IPv4 地址（例如 192.168.1.42）；不可用时返回 None。
+    fn wifi_sta_ip(&self) -> Option<String> {
+        None
+    }
     fn memory_store(&self) -> Arc<dyn MemoryStore + Send + Sync>;
     fn session_store(&self) -> Arc<dyn SessionStore + Send + Sync>;
     fn pending_retry_store(&self) -> Arc<dyn PendingRetryStore + Send + Sync>;
@@ -176,5 +181,20 @@ pub trait Platform: Send + Sync {
             "ota",
             "OTA not supported on this platform",
         ))
+    }
+
+    /// 初始化显示器硬件。默认 no-op（非显示平台）。
+    fn init_display(&self, _config: &DisplayConfig) -> Result<()> {
+        Ok(())
+    }
+
+    /// 显示器是否可用。默认 false。
+    fn display_available(&self) -> bool {
+        false
+    }
+
+    /// 执行显示指令。默认 no-op。
+    fn display_command(&self, _cmd: DisplayCommand) -> Result<()> {
+        Ok(())
     }
 }

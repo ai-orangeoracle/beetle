@@ -35,7 +35,7 @@ pub fn check_connectivity<H: ChannelHttpClient + ?Sized>(
                 return connectivity::item("dingtalk", configured, false, Some(e.to_string()))
             }
         };
-        if status >= 200 && status < 300 {
+        if (200..300).contains(&status) {
             (true, None)
         } else {
             (false, Some(format!("webhook status {}", status)))

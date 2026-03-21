@@ -18,14 +18,9 @@ pub fn chunk_str_by_char_count_iter<'a>(
                 return None;
             }
             let rest = &self.s[self.start..];
-            let mut taken = 0usize;
             let mut end_rel = 0usize;
-            for (i, ch) in rest.char_indices() {
-                if taken >= self.max_chars {
-                    break;
-                }
+            for (i, ch) in rest.char_indices().take(self.max_chars) {
                 end_rel = i + ch.len_utf8();
-                taken += 1;
             }
             if end_rel == 0 {
                 return None;

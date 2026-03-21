@@ -5,6 +5,7 @@
 use crate::platform::abstraction::Platform;
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 use crate::platform::{
+    display_driver::DisplayState,
     fetch_url::fetch_url_with_client,
     heartbeat_file::read_heartbeat_file,
     spiffs::{
@@ -18,6 +19,7 @@ use crate::platform::{
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 use crate::{
     config::AppConfig,
+    display::{DisplayCommand, DisplayConfig},
     memory::{
         ImportantMessageStore, MemoryStore, PendingRetryStore, RemindAtStore, SessionStore,
         SessionSummaryStore, TaskContinuationStore,
@@ -41,6 +43,7 @@ pub struct Esp32Platform {
     remind_at_store: Arc<SpiffsRemindAtStore>,
     session_summary_store: Arc<SpiffsSessionSummaryStore>,
     wifi_scan_handle: Mutex<Option<Arc<dyn crate::platform::WifiScan + Send + Sync>>>,
+    display_state: Mutex<Option<DisplayState>>,
 }
 
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
@@ -58,6 +61,7 @@ impl Esp32Platform {
             remind_at_store: Arc::new(SpiffsRemindAtStore::new()),
             session_summary_store: Arc::new(SpiffsSessionSummaryStore::new()),
             wifi_scan_handle: Mutex::new(None),
+            display_state: Mutex::new(None),
         }
     }
 }
@@ -118,6 +122,10 @@ impl Platform for Esp32Platform {
             .unwrap_or_else(|e| e.into_inner())
             .clone();
         opt
+    }
+
+    fn wifi_sta_ip(&self) -> Option<String> {
+        crate::platform::wifi::wifi_sta_ip()
     }
 
     fn memory_store(&self) -> Arc<dyn MemoryStore + Send + Sync> {
@@ -216,5 +224,38 @@ impl Platform for Esp32Platform {
     #[cfg(feature = "ota")]
     fn ota_from_url(&self, url: &str) -> crate::error::Result<()> {
         crate::ota::ota_update_from_url(url)
+    }
+
+    fn init_display(&self, config: &DisplayConfig) -> crate::error::Result<()> {
+        match DisplayState::init(config) {
+            Ok(state) => {
+                *self.display_state.lock().unwrap_or_else(|e| e.into_inner()) = Some(state);
+                Ok(())
+            }
+            Err(e) => {
+                *self.display_state.lock().unwrap_or_else(|e| e.into_inner()) = None;
+                Err(crate::error::Error::config(
+                    "display_init",
+                    format!("display init failed: {}", e),
+                ))
+            }
+        }
+    }
+
+    fn display_available(&self) -> bool {
+        self.display_state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+            .map(|s| s.available)
+            .unwrap_or(false)
+    }
+
+    fn display_command(&self, cmd: DisplayCommand) -> crate::error::Result<()> {
+        let mut guard = self.display_state.lock().unwrap_or_else(|e| e.into_inner());
+        match guard.as_mut() {
+            Some(state) => state.execute(cmd),
+            None => Ok(()),
+        }
     }
 }

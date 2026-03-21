@@ -151,7 +151,11 @@ pub struct MetricsSnapshot {
 impl MetricsSnapshot {
     /// 结构化单行日志，便于基线对比（key=value，无敏感信息）。
     pub fn to_baseline_log_line(&self) -> String {
-        format!(
+        use std::fmt::Write;
+        // Pre-allocate: typical line ~220 bytes.
+        let mut buf = String::with_capacity(256);
+        let _ = write!(
+            buf,
             "metrics msg_in={} msg_out={} llm_calls={} llm_err={} llm_last_ms={} tool_calls={} tool_err={} wdt_feeds={} dispatch_ok={} dispatch_fail={} err_router={} err_chat={} err_ctx={} err_tool={} err_llm_req={} err_llm_parse={} err_dispatch={} err_session={} err_other={}",
             self.messages_in,
             self.messages_out,
@@ -172,6 +176,7 @@ impl MetricsSnapshot {
             self.errors_channel_dispatch,
             self.errors_session_append,
             self.errors_other
-        )
+        );
+        buf
     }
 }

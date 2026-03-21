@@ -191,12 +191,14 @@ pub fn run(
     use embedded_svc::http::Method;
     use esp_idf_svc::http::server::{Configuration, EspHttpServer};
 
-    let mut server_config = Configuration::default();
-    server_config.max_open_sockets = MAX_OPEN_SOCKETS;
-    // 路由多（每 URI 常含 Get+Options，部分有 Post），需 ≥ 实际 register! 数量，否则 ESP_ERR_HTTPD_HANDLERS_FULL
-    server_config.max_uri_handlers = 96;
-    // 默认 6KB 栈在 Rust handler（闭包+JSON+深层调用）下易溢出；GET /api/channel_connectivity 在任务内串行执行多次外网 HTTP，栈压力大，故提高到 12KB
-    server_config.stack_size = 12 * 1024;
+    let server_config = Configuration {
+        max_open_sockets: MAX_OPEN_SOCKETS,
+        // 路由多（每 URI 常含 Get+Options，部分有 Post），需 ≥ 实际 register! 数量，否则 ESP_ERR_HTTPD_HANDLERS_FULL
+        max_uri_handlers: 96,
+        // 默认 6KB 栈在 Rust handler（闭包+JSON+深层调用）下易溢出；GET /api/channel_connectivity 在任务内串行执行多次外网 HTTP，栈压力大，故提高到 12KB
+        stack_size: 12 * 1024,
+        ..Default::default()
+    };
 
     let mut server = EspHttpServer::new(&server_config).map_err(|e| Error::Other {
         source: Box::new(e),
@@ -490,6 +492,51 @@ pub fn run(
         }
     );
 
+    // ── /api/config/display ──
+    let store_display_get = std::sync::Arc::clone(&config_store);
+    let ctx_display_get = Arc::clone(&ctx);
+    register!(
+        server,
+        "/api/config/display",
+        Method::Get,
+        move |req| -> HandlerResult {
+            activated_get_json!(
+                req,
+                store_display_get,
+                ctx_display_get,
+                handlers::config::get_display_body
+            )
+        }
+    );
+    register!(
+        server,
+        "/api/config/display",
+        Method::Options,
+        |req| -> HandlerResult { resp_options!(req) }
+    );
+    let store_display_post = std::sync::Arc::clone(&config_store);
+    let ctx_display_post = Arc::clone(&ctx);
+    register!(
+        server,
+        "/api/config/display",
+        Method::Post,
+        move |mut req| -> HandlerResult {
+            require_pairing_code!(req, store_display_post);
+            let body = read_body_utf8!(req, POST_BODY_MAX_LEN, store_display_post);
+            let r = handlers::config::post_display(ctx_display_post.as_ref(), &body).map_err(to_io)?;
+            let should_restart = r.status == 200 && common::restart_requested_from_uri(req.uri());
+            write_api_resp!(req, r)?;
+            if should_restart {
+                let platform = Arc::clone(&ctx_display_post.platform);
+                std::thread::spawn(move || {
+                    std::thread::sleep(Duration::from_millis(300));
+                    platform.request_restart();
+                });
+            }
+            Ok(())
+        }
+    );
+
     let ctx_wifi_scan = Arc::clone(&ctx);
     register!(
         server,
@@ -690,7 +737,7 @@ pub fn run(
                     let mut it = pair.splitn(2, '=');
                     if it
                         .next()
-                        .map_or(false, |k| k.eq_ignore_ascii_case("chat_id"))
+                        .is_some_and(|k| k.eq_ignore_ascii_case("chat_id"))
                     {
                         return it.next().filter(|s| !s.is_empty()).map(String::from);
                     }
@@ -733,7 +780,7 @@ pub fn run(
                     let mut it = pair.splitn(2, '=');
                     if it
                         .next()
-                        .map_or(false, |k| k.eq_ignore_ascii_case("chat_id"))
+                        .is_some_and(|k| k.eq_ignore_ascii_case("chat_id"))
                     {
                         found = it.next().filter(|s| !s.is_empty()).map(String::from);
                         break;

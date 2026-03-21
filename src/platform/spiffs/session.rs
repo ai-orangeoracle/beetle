@@ -91,6 +91,12 @@ const MAX_LIST_CHAT_IDS: usize = 128;
 /// SessionStore 的 SPIFFS 实现；单会话最多 MAX_SESSION_ENTRIES 条，超限淘汰最旧。
 pub struct SpiffsSessionStore;
 
+impl Default for SpiffsSessionStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SpiffsSessionStore {
     pub fn new() -> Self {
         SpiffsSessionStore
@@ -272,12 +278,11 @@ impl SessionStore for SpiffsSessionStore {
                 },
                 Err(_) => false,
             };
-            if stale {
-                if super::remove_file(&p).is_ok() {
+            if stale
+                && super::remove_file(&p).is_ok() {
                     removed += 1;
                     log::info!("[{}] gc: removed stale session file {:?}", TAG, name);
                 }
-            }
             p.pop();
         }
         if removed > 0 {

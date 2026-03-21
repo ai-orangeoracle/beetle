@@ -29,6 +29,10 @@ const PATH_TO_META: Record<string, { titleKey: string; descKey: string }> = {
     titleKey: "systemConfig.pageTitle",
     descKey: "systemConfig.pageDesc",
   },
+  "/display-config": {
+    titleKey: "displayConfig.pageTitle",
+    descKey: "displayConfig.pageDesc",
+  },
   "/system-logs": {
     titleKey: "systemLogs.pageTitle",
     descKey: "systemLogs.pageDesc",
