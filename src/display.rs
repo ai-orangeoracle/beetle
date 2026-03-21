@@ -119,6 +119,9 @@ pub enum DisplayCommand {
         channels: [DisplayChannelStatus; 5],
         pressure: DisplayPressureLevel,
         heap_percent: u8,
+        messages_in: u32,
+        messages_out: u32,
+        last_active_epoch_secs: u32,
     },
     UpdateIp {
         ip: String,
@@ -126,6 +129,9 @@ pub enum DisplayCommand {
     UpdatePressure {
         level: DisplayPressureLevel,
         heap_percent: u8,
+        messages_in: u32,
+        messages_out: u32,
+        last_active_epoch_secs: u32,
     },
     UpdateChannels {
         channels: [DisplayChannelStatus; 5],

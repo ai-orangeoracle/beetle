@@ -75,14 +75,12 @@ pub fn request_http_permit(
     let tls_guard = loop {
         match tls_permit.try_lock() {
             Ok(guard) => break guard,
-            Err(std::sync::TryLockError::Poisoned(_)) => {
-                log::error!("[orchestrator::permit] TLS permit mutex poisoned");
-                return Err(Error::Other {
-                    source: Box::new(std::io::Error::other(
-                        "TLS permit mutex poisoned, previous holder panicked",
-                    )),
-                    stage: "tls_admission",
-                });
+            Err(std::sync::TryLockError::Poisoned(e)) => {
+                log::warn!(
+                    "[orchestrator::permit] TLS permit mutex was poisoned, recovering"
+                );
+                tls_permit.clear_poison();
+                break e.into_inner();
             }
             Err(std::sync::TryLockError::WouldBlock) => {
                 if start.elapsed() >= timeout {

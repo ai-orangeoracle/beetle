@@ -471,6 +471,9 @@ impl DisplayState {
                     channels,
                     pressure,
                     heap_percent,
+                    messages_in,
+                    messages_out,
+                    last_active_epoch_secs,
                 } => {
                     render_dashboard(
                         backend,
@@ -482,6 +485,9 @@ impl DisplayState {
                             heap_percent: *heap_percent,
                             width: self.config.width,
                             height: self.config.height,
+                            messages_in: *messages_in,
+                            messages_out: *messages_out,
+                            last_active_epoch_secs: *last_active_epoch_secs,
                         },
                     );
                     backend.flush(self.config.offset_x, self.config.offset_y)?;
@@ -500,15 +506,23 @@ impl DisplayState {
                 DisplayCommand::UpdatePressure {
                     level,
                     heap_percent,
+                    messages_in,
+                    messages_out,
+                    last_active_epoch_secs,
                 } => {
                     let bg = DISPLAY_BG;
                     render_pressure_partial(
                         backend,
                         level,
-                        *heap_percent,
                         bg,
-                        self.config.width,
-                        self.config.height,
+                        &FooterPartialParams {
+                            heap_percent: *heap_percent,
+                            width: self.config.width,
+                            height: self.config.height,
+                            messages_in: *messages_in,
+                            messages_out: *messages_out,
+                            last_active_epoch_secs: *last_active_epoch_secs,
+                        },
                     );
                     let layout = LAYOUT;
                     let footer_h = self.config.height.saturating_sub(layout.footer_top);
@@ -637,7 +651,7 @@ fn draw_beetle<D: DrawTarget<Color = Rgb565>>(
     let dir: i32 = if opts.flipped { -1 } else { 1 };
 
     let body_r = size * 28 / 100;
-    let head_r = size * 10 / 100;
+    let head_r = size * 14 / 100;
     let head_cy = if opts.flipped {
         y + size * 72 / 100
     } else {
@@ -770,27 +784,20 @@ fn draw_beetle<D: DrawTarget<Color = Rgb565>>(
     .into_styled(seam_style)
     .draw(target);
 
-    // --- Elytra spots (2 pairs of small dots, like a ladybug pattern) ---
-    let spot_color = darken(color, 40);
-    let spot_fill = PrimitiveStyle::with_fill(spot_color);
-    let spot_r = (body_r * 15 / 100).max(2);
-    // Upper pair
+    // --- Elytra ridges (longitudinal lines, typical beetle texture) ---
+    let ridge_color = darken(color, 30);
+    let ridge_style = PrimitiveStyle::with_stroke(ridge_color, 1);
+    // 2 ridges per side, running along the body length
     for &sx in &[-1i32, 1] {
-        let _ = Circle::new(
-            Point::new(cx + sx * body_r * 45 / 100 - spot_r, body_cy - body_r * 30 / 100 - spot_r),
-            (spot_r * 2) as u32,
-        )
-        .into_styled(spot_fill)
-        .draw(target);
-    }
-    // Lower pair
-    for &sx in &[-1i32, 1] {
-        let _ = Circle::new(
-            Point::new(cx + sx * body_r * 40 / 100 - spot_r, body_cy + body_r * 20 / 100 - spot_r),
-            (spot_r * 2) as u32,
-        )
-        .into_styled(spot_fill)
-        .draw(target);
+        for &frac in &[30i32, 60] {
+            let rx = cx + sx * body_r * frac / 100;
+            // Ridge runs from upper body to lower body, following the curvature
+            let ry_top = body_cy - body_r * 70 / 100;
+            let ry_bot = body_cy + body_r * 70 / 100;
+            let _ = Line::new(Point::new(rx, ry_top), Point::new(rx, ry_bot))
+                .into_styled(ridge_style)
+                .draw(target);
+        }
     }
 
     // --- Head (smaller filled circle, slightly darker) ---
@@ -803,9 +810,10 @@ fn draw_beetle<D: DrawTarget<Color = Rgb565>>(
     .into_styled(head_fill)
     .draw(target);
 
-    // --- Eyes ---
-    let eye_spread = head_r * 6 / 10;
-    let eye_y = head_cy - dir;
+    // --- Eyes (compound eyes on sides of head) ---
+    let eye_r = (head_r * 4 / 10).max(2);
+    let eye_spread = head_r * 8 / 10;
+    let eye_y = head_cy;
 
     if opts.x_eyes {
         // X eyes (fault state)
@@ -826,16 +834,41 @@ fn draw_beetle<D: DrawTarget<Color = Rgb565>>(
             .draw(target);
         }
     } else {
-        // Normal eyes (white dots)
-        let eye_fill = PrimitiveStyle::with_fill(Rgb565::WHITE);
+        // Compound eyes (small circles on head sides)
+        let eye_color = darken(color, 60);
+        let eye_fill = PrimitiveStyle::with_fill(eye_color);
+        let eye_highlight = PrimitiveStyle::with_fill(Rgb565::WHITE);
         for &sx in &[-1i32, 1] {
+            let ex = cx + sx * eye_spread;
             let _ = Circle::new(
-                Point::new(cx + sx * eye_spread - 2, eye_y - 2),
-                5,
+                Point::new(ex - eye_r, eye_y - eye_r),
+                (eye_r * 2) as u32,
             )
             .into_styled(eye_fill)
             .draw(target);
+            // Highlight dot
+            let _ = Circle::new(
+                Point::new(ex - 1, eye_y - eye_r + 1),
+                2,
+            )
+            .into_styled(eye_highlight)
+            .draw(target);
         }
+    }
+
+    // --- Mandibles (V-shaped jaws extending from front of head) ---
+    let mandible_style = PrimitiveStyle::with_stroke(darken(color, 40), 2);
+    let jaw_base_y = head_cy - dir * head_r * 8 / 10;
+    let jaw_tip_y = head_cy - dir * (head_r + size * 8 / 100);
+    let jaw_spread = head_r * 5 / 10;
+    let jaw_tip_spread = head_r * 9 / 10;
+    for &sx in &[-1i32, 1] {
+        let _ = Line::new(
+            Point::new(cx + sx * jaw_spread, jaw_base_y),
+            Point::new(cx + sx * jaw_tip_spread, jaw_tip_y),
+        )
+        .into_styled(mandible_style)
+        .draw(target);
     }
 
     (cx, body_cy, body_r, head_cy, head_r)
@@ -922,6 +955,9 @@ struct DashboardParams<'a> {
     heap_percent: u8,
     width: u16,
     height: u16,
+    messages_in: u32,
+    messages_out: u32,
+    last_active_epoch_secs: u32,
 }
 
 /// Render the full dashboard UI.
@@ -1122,7 +1158,7 @@ fn render_dashboard<D: DrawTarget<Color = Rgb565>>(target: &mut D, p: &Dashboard
     }
 
     // --- Footer: pressure level + heap progress bar ---
-    render_footer(target, p.pressure, p.heap_percent, p.width);
+    render_footer(target, p.pressure, p.heap_percent, p.width, p.messages_in, p.messages_out, p.last_active_epoch_secs);
 }
 
 /// Dashboard background color (white).
@@ -1207,36 +1243,48 @@ fn render_channels_partial<D: DrawTarget<Color = Rgb565>>(
     }
 }
 
+/// Footer partial-update parameters (avoids clippy::too_many_arguments).
+struct FooterPartialParams {
+    heap_percent: u8,
+    width: u16,
+    height: u16,
+    messages_in: u32,
+    messages_out: u32,
+    last_active_epoch_secs: u32,
+}
+
 /// Partial update: repaint only the footer pressure + progress bar region.
+#[allow(clippy::too_many_arguments)]
 fn render_pressure_partial<D: DrawTarget<Color = Rgb565>>(
     target: &mut D,
     level: &DisplayPressureLevel,
-    heap_percent: u8,
     bg: Rgb565,
-    width: u16,
-    height: u16,
+    fp: &FooterPartialParams,
 ) {
     let layout = LAYOUT;
     let footer_y = layout.footer_top as i32;
 
     // Clear entire footer region
-    let footer_h = (height as i32 - footer_y).max(1) as u32;
+    let footer_h = (fp.height as i32 - footer_y).max(1) as u32;
     let _ = Rectangle::new(
         Point::new(0, footer_y),
-        Size::new(width as u32, footer_h),
+        Size::new(fp.width as u32, footer_h),
     )
     .into_styled(PrimitiveStyle::with_fill(bg))
     .draw(target);
 
-    render_footer(target, level, heap_percent, width);
+    render_footer(target, level, fp.heap_percent, fp.width, fp.messages_in, fp.messages_out, fp.last_active_epoch_secs);
 }
 
-/// Shared footer rendering: pressure label + progress bar + percentage text.
+/// Shared footer rendering: pressure label + progress bar + percentage text + message stats.
 fn render_footer<D: DrawTarget<Color = Rgb565>>(
     target: &mut D,
     level: &DisplayPressureLevel,
     heap_percent: u8,
     width: u16,
+    messages_in: u32,
+    messages_out: u32,
+    last_active_epoch_secs: u32,
 ) {
     let footer_y = LAYOUT.footer_top as i32;
     let pressure_text = match level {
@@ -1281,6 +1329,98 @@ fn render_footer<D: DrawTarget<Color = Rgb565>>(
         text_style,
     )
     .draw(target);
+
+    // --- Message stats line: "In:NNN Out:NNN  HH:MM" ---
+    let stats_y = bar_y + bar_h as i32 + 14; // 2px gap + 12px bar + baseline offset
+    let dim_style = MonoTextStyle::new(&FONT_6X13, rgb565(0x88, 0x88, 0x88));
+    let mut stats_buf = [0u8; 32];
+    let stats_str = format_msg_stats(messages_in, messages_out, last_active_epoch_secs, &mut stats_buf);
+    let _ = Text::new(stats_str, Point::new(8, stats_y), dim_style).draw(target);
+}
+
+/// Format message stats line: "In:NNN Out:NNN  HH:MM" (no heap alloc).
+fn format_msg_stats(msg_in: u32, msg_out: u32, epoch_secs: u32, buf: &mut [u8; 32]) -> &str {
+    let mut pos = 0;
+
+    // "In:"
+    buf[pos] = b'I'; pos += 1;
+    buf[pos] = b'n'; pos += 1;
+    buf[pos] = b':'; pos += 1;
+    pos = write_u32_to_buf(msg_in, buf, pos);
+
+    buf[pos] = b' '; pos += 1;
+
+    // "Out:"
+    buf[pos] = b'O'; pos += 1;
+    buf[pos] = b'u'; pos += 1;
+    buf[pos] = b't'; pos += 1;
+    buf[pos] = b':'; pos += 1;
+    pos = write_u32_to_buf(msg_out, buf, pos);
+
+    // "  HH:MM"
+    buf[pos] = b' '; pos += 1;
+    buf[pos] = b' '; pos += 1;
+
+    if epoch_secs == 0 {
+        buf[pos] = b'-'; pos += 1;
+        buf[pos] = b'-'; pos += 1;
+        buf[pos] = b':'; pos += 1;
+        buf[pos] = b'-'; pos += 1;
+        buf[pos] = b'-'; pos += 1;
+    } else {
+        // ESP32: use esp_idf_svc::sys::localtime_r for timezone-aware conversion (SNTP).
+        #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+        {
+            use esp_idf_svc::sys::{localtime_r, time_t};
+            let time_val: time_t = epoch_secs as time_t;
+            let mut tm = unsafe { core::mem::zeroed::<esp_idf_svc::sys::tm>() };
+            unsafe { localtime_r(&time_val, &mut tm) };
+            let h = (tm.tm_hour as u8).min(23);
+            let m = (tm.tm_min as u8).min(59);
+            buf[pos] = b'0' + h / 10; pos += 1;
+            buf[pos] = b'0' + h % 10; pos += 1;
+            buf[pos] = b':'; pos += 1;
+            buf[pos] = b'0' + m / 10; pos += 1;
+            buf[pos] = b'0' + m % 10; pos += 1;
+        }
+        #[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+        {
+            // Non-ESP fallback: simple UTC calculation.
+            let secs_of_day = epoch_secs % 86400;
+            let h = ((secs_of_day / 3600) % 24) as u8;
+            let m = ((secs_of_day % 3600) / 60) as u8;
+            buf[pos] = b'0' + h / 10; pos += 1;
+            buf[pos] = b'0' + h % 10; pos += 1;
+            buf[pos] = b':'; pos += 1;
+            buf[pos] = b'0' + m / 10; pos += 1;
+            buf[pos] = b'0' + m % 10; pos += 1;
+        }
+    }
+
+    core::str::from_utf8(&buf[..pos]).unwrap_or("--")
+}
+
+/// Write a u32 value into a byte buffer at `pos`, return new pos.
+fn write_u32_to_buf(val: u32, buf: &mut [u8; 32], mut pos: usize) -> usize {
+    if val == 0 {
+        buf[pos] = b'0';
+        return pos + 1;
+    }
+    // Max u32 is 10 digits; write into temp then copy.
+    let mut tmp = [0u8; 10];
+    let mut n = val;
+    let mut i = 0;
+    while n > 0 {
+        tmp[i] = b'0' + (n % 10) as u8;
+        n /= 10;
+        i += 1;
+    }
+    // Reverse copy
+    for j in (0..i).rev() {
+        buf[pos] = tmp[j];
+        pos += 1;
+    }
+    pos
 }
 
 /// Format a percentage value into a static buffer (no heap alloc).
