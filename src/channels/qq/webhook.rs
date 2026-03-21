@@ -118,10 +118,7 @@ pub fn handle_webhook(
                         .as_secs();
                     {
                         let mut cache = msg_id_cache.lock().map_err(|e| Error::Other {
-                            source: Box::new(std::io::Error::new(
-                                std::io::ErrorKind::Other,
-                                e.to_string(),
-                            )),
+                            source: Box::new(std::io::Error::other(e.to_string())),
                             stage: "qq_msg_id_cache_lock",
                         })?;
                         cache.insert(ch.clone(), (id, now));

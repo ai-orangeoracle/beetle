@@ -262,10 +262,7 @@ fn do_request(
             stage: "llm_request",
         },
         _ => Error::Other {
-            source: Box::new(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("{:?}", e),
-            )),
+            source: Box::new(std::io::Error::other(format!("{:?}", e))),
             stage: "llm_request",
         },
     })?;
@@ -326,7 +323,7 @@ fn do_request(
     Ok(LlmResponse {
         content,
         stop_reason,
-        tool_calls: if tool_calls.as_ref().map_or(true, |v| v.is_empty()) {
+        tool_calls: if tool_calls.as_ref().is_none_or(|v| v.is_empty()) {
             None
         } else {
             tool_calls
@@ -363,10 +360,7 @@ impl OpenAiStreamAccumulator {
     fn handle_value(&mut self, val: &serde_json::Value) -> Option<String> {
         let mut delta_text: Option<String> = None;
 
-        let choices = match val.get("choices").and_then(|v| v.as_array()) {
-            Some(c) => c,
-            None => return None,
-        };
+        let choices = val.get("choices").and_then(|v| v.as_array())?;
 
         for choice in choices {
             // finish_reason
@@ -499,10 +493,7 @@ fn do_request_streaming(
                 stage: "llm_request",
             },
             _ => Error::Other {
-                source: Box::new(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("{:?}", e),
-                )),
+                source: Box::new(std::io::Error::other(format!("{:?}", e))),
                 stage: "llm_request",
             },
         })?;

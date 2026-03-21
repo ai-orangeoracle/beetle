@@ -57,10 +57,7 @@ fn message_for_key(key: &str) -> Option<(&'static str, &'static str)> {
 
 /// 根据 API 错误 key 返回当前 locale 的人话文案。locale 非 "en" 视为 "zh"。
 pub fn from_api_key(key: &str, locale: &str) -> String {
-    let (zh, en) = match message_for_key(key) {
-        Some(p) => p,
-        None => ("操作失败，请重试", "Operation failed, please try again"),
-    };
+    let (zh, en) = message_for_key(key).unwrap_or(("操作失败，请重试", "Operation failed, please try again"));
     if locale == "en" {
         en.to_string()
     } else {
@@ -85,7 +82,7 @@ pub fn from_error(e: &Error, _locale: &str) -> String {
     let base = e.to_string();
     let hint = esp_nvs_hint(e);
     let s = format!("{}{}", base, hint);
-    let s = s.replace('\n', " ").replace('\r', " ");
+    let s = s.replace(['\n', '\r'], " ");
     if s.len() <= MAX_ERROR_DETAIL_LEN {
         s
     } else {

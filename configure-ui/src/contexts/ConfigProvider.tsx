@@ -6,6 +6,7 @@ import type {
   ChannelsConfigSegment,
   SystemConfigSegment,
 } from '../types/appConfig'
+import type { DisplayConfig } from '../types/displayConfig'
 import { ConfigContext } from './ConfigContext'
 import { useDeviceApi } from '../hooks/useDeviceApi'
 import { markDeviceReachable } from '../store/deviceStatusStore'
@@ -33,10 +34,15 @@ export function ConfigProvider({ children }: { children: React.ReactNode }) {
   const [config, setConfig] = useState<AppConfig | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [displayConfig, setDisplayConfig] = useState<DisplayConfig | null>(null)
+  const [displayLoading, setDisplayLoading] = useState(false)
+  const [displayError, setDisplayError] = useState<string | null>(null)
 
   const clearCachedConfig = useCallback(() => {
     setConfig(null)
     setError(null)
+    setDisplayConfig(null)
+    setDisplayError(null)
   }, [])
 
   const loadConfig = useCallback(async () => {
@@ -119,6 +125,46 @@ export function ConfigProvider({ children }: { children: React.ReactNode }) {
     [api.config],
   )
 
+  const loadDisplayConfig = useCallback(async () => {
+    if (!ready) {
+      setDisplayError(ERROR_KEY_NO_BASE)
+      return
+    }
+    setDisplayLoading(true)
+    setDisplayError(null)
+    const res = await api.display.get()
+    setDisplayLoading(false)
+    if (res.ok && res.data != null && typeof res.data === 'object') {
+      setDisplayConfig(res.data as DisplayConfig)
+    } else {
+      setDisplayError(
+        res.error === API_ERROR.NO_BASE_URL
+          ? ERROR_KEY_NO_BASE
+          : isDeviceOrPairingHint(res.error ?? '')
+            ? null
+            : ERROR_KEY_LOAD_FAILED,
+      )
+      setDisplayConfig(null)
+    }
+  }, [api.display, ready])
+
+  const saveDisplayConfig = useCallback(
+    async (
+      body: DisplayConfig,
+    ): Promise<{ ok: boolean; error?: string; restartRequired?: boolean }> => {
+      const res = await api.display.save(body)
+      if (res.ok) setDisplayConfig(body)
+      const err =
+        res.error === API_ERROR.PAIRING_REQUIRED ? 'device.pairingCodeRequired' : res.error
+      return {
+        ok: res.ok ?? false,
+        error: err,
+        restartRequired: Boolean(res.ok && res.data?.restart_required),
+      }
+    },
+    [api.display],
+  )
+
   const value = useMemo(
     () => ({
       config,
@@ -130,6 +176,11 @@ export function ConfigProvider({ children }: { children: React.ReactNode }) {
       saveLlm,
       saveChannels,
       saveSystem,
+      displayConfig,
+      displayLoading,
+      displayError,
+      loadDisplayConfig,
+      saveDisplayConfig,
     }),
     [
       config,
@@ -141,6 +192,11 @@ export function ConfigProvider({ children }: { children: React.ReactNode }) {
       saveLlm,
       saveChannels,
       saveSystem,
+      displayConfig,
+      displayLoading,
+      displayError,
+      loadDisplayConfig,
+      saveDisplayConfig,
     ],
   )
 

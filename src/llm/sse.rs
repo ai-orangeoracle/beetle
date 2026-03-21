@@ -25,6 +25,12 @@ pub struct SseLineReader {
     pending: Vec<SseEvent>,
 }
 
+impl Default for SseLineReader {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SseLineReader {
     pub fn new() -> Self {
         Self {
@@ -47,11 +53,9 @@ impl SseLineReader {
                 // 后续 \n 会触发一个空行（即事件分隔符）。
                 self.process_line();
                 self.pos = 0;
-            } else {
-                if self.pos < SSE_LINE_BUF_SIZE {
-                    self.buf[self.pos] = b;
-                    self.pos += 1;
-                }
+            } else if self.pos < SSE_LINE_BUF_SIZE {
+                self.buf[self.pos] = b;
+                self.pos += 1;
                 // 超出缓冲区的字节被丢弃；对正常 SSE 行（< 4KB）不会发生。
             }
         }

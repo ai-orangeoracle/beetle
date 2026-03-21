@@ -78,6 +78,10 @@ pub fn alloc_spiram_buffer(size: usize) -> Option<*mut u8> {
     }
 }
 
+/// # Safety
+///
+/// `ptr` must be a pointer previously returned by `alloc_spiram_buffer`, or null.
+/// Calling this with any other pointer is undefined behavior.
 #[cfg(target_arch = "xtensa")]
 pub unsafe fn free_spiram_buffer(ptr: *mut u8) {
     if !ptr.is_null() {

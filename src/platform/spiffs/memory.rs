@@ -19,6 +19,12 @@ fn full_path(rel: &str) -> PathBuf {
 /// MemoryStore 的 SPIFFS 实现。
 pub struct SpiffsMemoryStore;
 
+impl Default for SpiffsMemoryStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SpiffsMemoryStore {
     pub fn new() -> Self {
         SpiffsMemoryStore

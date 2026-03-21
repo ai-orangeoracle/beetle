@@ -118,8 +118,8 @@ impl Tool for FilesTool {
                 "entries": entries,
                 "truncated": truncated
             });
-            return Ok(serde_json::to_string(&out)
-                .map_err(|e| Error::config("tool_files", e.to_string()))?);
+            return serde_json::to_string(&out)
+                .map_err(|e| Error::config("tool_files", e.to_string()));
         }
 
         if mode != "read" {
@@ -143,7 +143,7 @@ impl Tool for FilesTool {
                 .chars()
                 .take(MAX_TOOL_RESULT_LEN)
                 .collect::<String>();
-            c.push_str("…");
+            c.push('…');
             (c, true)
         } else {
             (content, false)
@@ -154,6 +154,6 @@ impl Tool for FilesTool {
             "content": content,
             "truncated": truncated
         });
-        Ok(serde_json::to_string(&out).map_err(|e| Error::config("tool_files", e.to_string()))?)
+        serde_json::to_string(&out).map_err(|e| Error::config("tool_files", e.to_string()))
     }
 }

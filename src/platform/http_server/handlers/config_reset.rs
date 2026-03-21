@@ -8,11 +8,12 @@ use super::HandlerContext;
 
 pub fn post(ctx: &HandlerContext) -> Result<ApiResponse, std::io::Error> {
     config::reset_to_defaults(ctx.config_store.as_ref())
-        .map_err(|_| std::io::Error::new(std::io::ErrorKind::Other, "reset_to_defaults failed"))?;
+        .map_err(|_| std::io::Error::other("reset_to_defaults failed"))?;
     let _ = pairing::clear_code(ctx.config_store.as_ref());
     let _ = ctx.platform.remove_config_file("config/skills_meta.json");
     let _ = ctx.platform.remove_config_file("config/llm.json");
     let _ = ctx.platform.remove_config_file("config/channels.json");
     let _ = ctx.platform.remove_config_file("config/hardware.json");
+    let _ = ctx.platform.remove_config_file("config/display.json");
     Ok(ApiResponse::ok_200_json("{\"ok\":true}"))
 }

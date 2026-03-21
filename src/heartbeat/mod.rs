@@ -74,7 +74,7 @@ pub fn run_heartbeat_loop_with_tasks(
             round = round.wrapping_add(1);
 
             // Session GC: run every SESSION_GC_INTERVAL_ROUNDS rounds.
-            if round % crate::constants::SESSION_GC_INTERVAL_ROUNDS == 0 {
+            if round.is_multiple_of(crate::constants::SESSION_GC_INTERVAL_ROUNDS) {
                 match session_store.gc_stale(crate::constants::SESSION_GC_MAX_AGE_SECS) {
                     Ok(n) if n > 0 => log::info!("[{}] session GC removed {} stale files", TAG, n),
                     Err(e) => log::warn!("[{}] session GC error: {}", TAG, e),
@@ -83,7 +83,7 @@ pub fn run_heartbeat_loop_with_tasks(
             }
 
             // Session/storage metrics: collect every SESSION_METRICS_INTERVAL_ROUNDS rounds.
-            if round % crate::constants::SESSION_METRICS_INTERVAL_ROUNDS == 0 {
+            if round.is_multiple_of(crate::constants::SESSION_METRICS_INTERVAL_ROUNDS) {
                 let sess_count = session_store
                     .list_chat_ids()
                     .map(|v| v.len() as u32)
@@ -109,9 +109,6 @@ pub fn run_heartbeat_loop_with_tasks(
             log::info!("[{}] {}", TAG, baseline);
 
             let content = read_heartbeat();
-            if !has_pending_tasks(&content) {
-                continue;
-            }
             let Some(task_content) = first_pending_task(&content) else {
                 continue;
             };

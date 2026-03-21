@@ -14,7 +14,7 @@ pub fn post(_ctx: &HandlerContext) -> Result<(ApiResponse, bool), std::io::Error
     let should_restart = {
         let mut g = LAST_RESTART
             .lock()
-            .map_err(|_| std::io::Error::new(std::io::ErrorKind::Other, "lock"))?;
+            .map_err(|_| std::io::Error::other("lock"))?;
         let now = Instant::now();
         let allow = g
             .map(|t| now.duration_since(t).as_secs() >= RESTART_COOLDOWN_SECS)

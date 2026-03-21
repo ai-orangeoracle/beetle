@@ -3,6 +3,7 @@
 
 pub mod abstraction;
 pub mod board_info;
+pub mod display_driver;
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 pub mod esp32;
 pub mod fetch_url;

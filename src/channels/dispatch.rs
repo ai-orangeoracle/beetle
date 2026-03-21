@@ -120,7 +120,7 @@ pub fn run_dispatch(outbound_rx: OutboundRx, sinks: Arc<ChannelSinks>) {
                     .expect("i < cooldown_buffer.len() checked by while condition");
                 let bc = truncate_content_to_max(&buffered.content, MAX_CONTENT_LEN);
                 if let Some(sink) = sinks.get(&buffered.channel) {
-                    if sink.send(&buffered.chat_id, &*bc).is_ok() {
+                    if sink.send(&buffered.chat_id, &bc).is_ok() {
                         record_channel_ok(&buffered.channel);
                         metrics::record_dispatch_send(true);
                     } else {
@@ -166,7 +166,7 @@ pub fn run_dispatch(outbound_rx: OutboundRx, sinks: Arc<ChannelSinks>) {
                 if attempt > 0 {
                     std::thread::sleep(Duration::from_millis(SEND_RETRY_DELAY_MS));
                 }
-                match sink.send(&msg.chat_id, &*content) {
+                match sink.send(&msg.chat_id, &content) {
                     Ok(()) => {
                         last_err = None;
                         record_channel_ok(&msg.channel);

@@ -128,8 +128,7 @@ impl WebSearchTool {
                 stage: "tool_web_search",
             },
             _ => Error::Other {
-                source: Box::new(std::io::Error::new(
-                    std::io::ErrorKind::Other,
+                source: Box::new(std::io::Error::other(
                     format!("{:?}", e),
                 )),
                 stage: "tool_web_search",
