@@ -354,7 +354,11 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
         );
     }
 
-    beetle::cron::run_cron_loop(inbound_tx.clone(), beetle::cron::DEFAULT_CRON_INTERVAL_SECS);
+    beetle::cron::run_cron_loop(
+        inbound_tx.clone(),
+        beetle::cron::DEFAULT_CRON_INTERVAL_SECS,
+        Some(Arc::clone(&memory_store)),
+    );
     beetle::heartbeat::run_heartbeat_loop_with_tasks(
         VERSION,
         30,
@@ -773,6 +777,8 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
             Arc::clone(&remind_at_store),
             Arc::clone(&session_summary_store),
             Arc::clone(&session_store),
+            Arc::clone(&memory_store),
+            platform.config_store(),
         );
         let tool_specs = registry.tool_specs_for_api(4096);
         let skill_meta_store_fn = Arc::clone(&skill_meta_store);

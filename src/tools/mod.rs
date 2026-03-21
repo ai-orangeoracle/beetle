@@ -6,27 +6,45 @@ mod registry;
 pub mod analyze_image;
 pub mod board_info;
 pub mod cron;
+pub mod cron_manage;
+pub mod daily_note;
 pub mod fetch_url;
+pub mod file_write;
 pub mod files;
 pub mod get_time;
 pub mod hardware;
 pub mod http_post;
+pub mod http_request;
 pub mod kv_store;
+pub mod memory_manage;
+pub mod model_config;
+pub mod proxy_config;
 pub mod remind_at;
+pub mod session_manage;
+pub mod system_control;
 pub mod update_session_summary;
 pub mod web_search;
 
 pub use analyze_image::AnalyzeImageTool;
 pub use board_info::BoardInfoTool;
 pub use cron::CronTool;
+pub use cron_manage::CronManageTool;
+pub use daily_note::DailyNoteTool;
 pub use fetch_url::FetchUrlTool;
+pub use file_write::FileWriteTool;
 pub use files::FilesTool;
 pub use get_time::GetTimeTool;
 pub use hardware::DeviceControlTool;
 pub use http_post::HttpPostTool;
+pub use http_request::HttpRequestTool;
 pub use kv_store::KvStoreTool;
+pub use memory_manage::MemoryManageTool;
+pub use model_config::ModelConfigTool;
+pub use proxy_config::ProxyConfigTool;
 pub use registry::{build_default_registry, ToolRegistry};
 pub use remind_at::{RemindAtTool, RemindListTool};
+pub use session_manage::SessionManageTool;
+pub use system_control::SystemControlTool;
 pub use update_session_summary::UpdateSessionSummaryTool;
 pub use web_search::WebSearchTool;
 
@@ -67,6 +85,23 @@ pub trait ToolContext {
         headers: &[(&str, &str)],
         body: &[u8],
     ) -> Result<(u16, crate::platform::ResponseBody)>;
+    /// HTTP PUT 请求；默认回退到 post_with_headers。
+    fn put_with_headers(
+        &mut self,
+        url: &str,
+        headers: &[(&str, &str)],
+        body: &[u8],
+    ) -> Result<(u16, crate::platform::ResponseBody)> {
+        self.post_with_headers(url, headers, body)
+    }
+    /// HTTP DELETE 请求；默认回退到 get_with_headers。
+    fn delete_with_headers(
+        &mut self,
+        url: &str,
+        headers: &[(&str, &str)],
+    ) -> Result<(u16, crate::platform::ResponseBody)> {
+        self.get_with_headers(url, headers)
+    }
     /// 当前入站消息的 chat_id；remind_at 等工具写存储时使用。默认 None。
     fn current_chat_id(&self) -> Option<&str> {
         None

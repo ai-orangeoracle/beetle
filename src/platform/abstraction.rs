@@ -63,6 +63,23 @@ pub trait PlatformHttpClient {
     ) -> Result<(u16, ResponseBody)> {
         self.post(url, headers, body)
     }
+    /// HTTP PUT; default implementation falls back to POST.
+    fn put(
+        &mut self,
+        url: &str,
+        headers: &[(&str, &str)],
+        body: &[u8],
+    ) -> Result<(u16, ResponseBody)> {
+        self.post(url, headers, body)
+    }
+    /// HTTP DELETE; default implementation falls back to GET.
+    fn delete(
+        &mut self,
+        url: &str,
+        headers: &[(&str, &str)],
+    ) -> Result<(u16, ResponseBody)> {
+        self.get(url, headers)
+    }
     /// SSE 流式 POST：发送请求后逐块回调 on_chunk，不将响应体读入内存。
     /// 默认实现回退到 post()，将完整响应体一次性传给 on_chunk。
     fn post_streaming(
@@ -110,6 +127,21 @@ impl PlatformHttpClient for Box<dyn PlatformHttpClient + '_> {
         body: &[u8],
     ) -> Result<(u16, ResponseBody)> {
         (**self).patch(url, headers, body)
+    }
+    fn put(
+        &mut self,
+        url: &str,
+        headers: &[(&str, &str)],
+        body: &[u8],
+    ) -> Result<(u16, ResponseBody)> {
+        (**self).put(url, headers, body)
+    }
+    fn delete(
+        &mut self,
+        url: &str,
+        headers: &[(&str, &str)],
+    ) -> Result<(u16, ResponseBody)> {
+        (**self).delete(url, headers)
     }
 }
 

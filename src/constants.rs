@@ -123,3 +123,12 @@ pub const DISPLAY_REFRESH_IDLE_LONG_SECS: u64 = 10;
 pub const DISPLAY_REFRESH_SLEEP_SECS: u64 = 30;
 /// 进入长时间 Idle 刷新的阈值（秒）。
 pub const DISPLAY_IDLE_LONG_THRESHOLD_SECS: u64 = 30;
+
+/// cron_manage 工具：持久化定时任务最大条目数。
+pub const CRON_TASKS_MAX_ENTRIES: usize = 16;
+/// cron_manage 工具：单条任务 action 最大字节数。
+pub const CRON_TASK_MAX_ACTION_LEN: usize = 512;
+/// file_write 工具：写入内容最大字节数。
+pub const FILE_WRITE_MAX_CONTENT_LEN: usize = 16 * 1024;
+/// daily_note 工具：list 操作最大返回条数。
+pub const DAILY_NOTE_MAX_LIST: usize = 30;
