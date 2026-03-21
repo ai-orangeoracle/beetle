@@ -36,12 +36,12 @@ pub fn truncate_to_byte_len(s: &str, max_bytes: usize) -> String {
 /// URL 查询参数 percent-encode：保留字母数字与 -_.~，其余按 UTF-8 字节编码为 %XX。供 web_search 等使用。
 pub fn percent_encode_query(s: &str) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
-    fn need_encode(b: u8) -> bool {
+    fn is_unreserved(b: u8) -> bool {
         matches!(b, b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~')
     }
     let mut out = String::with_capacity(s.len());
     for &b in s.as_bytes() {
-        if need_encode(b) {
+        if is_unreserved(b) {
             out.push(b as char);
         } else if b == b' ' {
             out.push_str("%20");
@@ -106,8 +106,8 @@ pub fn days_from_epoch(year: i32, month: u32, day: u32) -> i64 {
     if is_leap_year(year) {
         month_days[1] = 29;
     }
-    for i in 0..(month as usize).saturating_sub(1) {
-        d += month_days[i] as i64;
+    for md in month_days.iter().take((month as usize).saturating_sub(1)) {
+        d += *md as i64;
     }
     d + (day as i64) - 1
 }
@@ -177,9 +177,7 @@ pub fn parse_iso8601(s: &str) -> Option<u64> {
     } else {
         s
     };
-    let mut parts = s.splitn(2, 'T');
-    let date = parts.next()?;
-    let time = parts.next()?;
+    let (date, time) = s.split_once('T')?;
     let mut d = date.split('-');
     let y: i32 = d.next()?.parse().ok()?;
     let m: u32 = d.next()?.parse().ok()?;
@@ -191,7 +189,7 @@ pub fn parse_iso8601(s: &str) -> Option<u64> {
     let sec_str = t.next()?;
     let sec_str = sec_str.split('.').next()?;
     let sec: u32 = sec_str.parse().ok()?;
-    if m < 1 || m > 12 || day < 1 || day > 31 || h > 23 || min > 59 || sec > 59 {
+    if !(1..=12).contains(&m) || !(1..=31).contains(&day) || h > 23 || min > 59 || sec > 59 {
         return None;
     }
     Some(ymdhms_to_epoch(y, m, day, h, min, sec))

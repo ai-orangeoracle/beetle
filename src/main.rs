@@ -12,8 +12,8 @@ use beetle::Platform;
 use beetle::PlatformHttpClient;
 use beetle::{
     parse_allowed_chat_ids, run_agent_loop, run_dispatch, send_chat_action, AppConfig,
-    DisplayChannelStatus, DisplayCommand, DisplayPressureLevel, Esp32Platform, MessageBus,
-    DEFAULT_CAPACITY,
+    DisplayChannelStatus, DisplayCommand, DisplayPressureLevel, DisplaySystemState, Esp32Platform,
+    MessageBus, DEFAULT_CAPACITY,
 };
 
 use std::collections::HashMap;
@@ -21,6 +21,18 @@ use std::sync::{Arc, Mutex};
 
 const TAG: &str = "beetle";
 const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// 从 orchestrator snapshot 的 internal 堆空闲字节数估算已用百分比。
+/// ESP32-S3 internal DRAM 约 390KB；取 400KB 作为近似总量。非 ESP 返回 0。
+fn heap_used_percent(snapshot: &beetle::orchestrator::ResourceSnapshot) -> u8 {
+    const INTERNAL_TOTAL_APPROX: u32 = 400 * 1024;
+    let free = snapshot.heap_free_internal;
+    if free >= INTERNAL_TOTAL_APPROX {
+        return 0;
+    }
+    let used = INTERNAL_TOTAL_APPROX.saturating_sub(free);
+    ((used as u64 * 100) / INTERNAL_TOTAL_APPROX as u64).min(100) as u8
+}
 
 /// 启动自检：存储可读（memory 或 soul 至少其一成功）。失败返回 false，调用方应 log 并 return。
 fn startup_self_check(memory_store: &dyn MemoryStore) -> bool {
@@ -146,13 +158,28 @@ fn main() {
                 log::warn!("[{}] display init failed (degraded): {}", TAG, e);
             } else {
                 log::info!("[{}] display initialized", TAG);
+                let _ = platform.display_command(DisplayCommand::RefreshDashboard {
+                    state: DisplaySystemState::Booting,
+                    wifi_connected: false,
+                    ip_address: None,
+                    channels: [
+                        DisplayChannelStatus { name: "telegram", healthy: false },
+                        DisplayChannelStatus { name: "feishu", healthy: false },
+                        DisplayChannelStatus { name: "dingtalk", healthy: false },
+                        DisplayChannelStatus { name: "wecom", healthy: false },
+                        DisplayChannelStatus { name: "qq_channel", healthy: false },
+                    ],
+                    pressure: DisplayPressureLevel::Normal,
+                    heap_percent: 0,
+                });
             }
         }
     }
     if wifi_connected && platform.display_available() {
-        let _ = platform.display_command(DisplayCommand::UpdateIp {
-            ip: "192.168.4.1".to_string(),
-        });
+        let ip = platform
+            .wifi_sta_ip()
+            .unwrap_or_else(|| "192.168.4.1".to_string());
+        let _ = platform.display_command(DisplayCommand::UpdateIp { ip });
     }
 
     run_app(platform, Arc::new(config), wifi_connected);
@@ -274,29 +301,62 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
 
     if platform.display_available() {
         let display_platform = Arc::clone(&platform);
-        std::thread::spawn(move || loop {
-            std::thread::sleep(std::time::Duration::from_secs(30));
+        std::thread::spawn(move || {
+            loop {
+                std::thread::sleep(std::time::Duration::from_secs(5));
             let snapshot = beetle::orchestrator::snapshot();
             let pressure = match snapshot.pressure {
                 beetle::orchestrator::PressureLevel::Normal => DisplayPressureLevel::Normal,
                 beetle::orchestrator::PressureLevel::Cautious => DisplayPressureLevel::Cautious,
                 beetle::orchestrator::PressureLevel::Critical => DisplayPressureLevel::Critical,
             };
+            let wifi_connected = beetle::platform::is_wifi_sta_connected();
+            let busy = snapshot.inbound_depth > 0
+                || snapshot.outbound_depth > 0
+                || snapshot.active_http_count > 0;
+            let state = if !wifi_connected {
+                DisplaySystemState::NoWifi
+            } else if busy {
+                DisplaySystemState::Busy
+            } else {
+                DisplaySystemState::Idle
+            };
+            let ip = display_platform
+                .wifi_sta_ip()
+                .unwrap_or_else(|| "192.168.4.1".to_string());
+            let channels = [
+                DisplayChannelStatus {
+                    name: "telegram",
+                    healthy: snapshot.channels.telegram.healthy,
+                },
+                DisplayChannelStatus {
+                    name: "feishu",
+                    healthy: snapshot.channels.feishu.healthy,
+                },
+                DisplayChannelStatus {
+                    name: "dingtalk",
+                    healthy: snapshot.channels.dingtalk.healthy,
+                },
+                DisplayChannelStatus {
+                    name: "wecom",
+                    healthy: snapshot.channels.wecom.healthy,
+                },
+                DisplayChannelStatus {
+                    name: "qq_channel",
+                    healthy: snapshot.channels.qq_channel.healthy,
+                },
+            ];
+            let heap_percent = heap_used_percent(&snapshot);
             let cmd = DisplayCommand::RefreshDashboard {
-                wifi_connected: beetle::platform::is_wifi_sta_connected(),
-                ip_address: Some("192.168.4.1".to_string()),
-                channels: vec![DisplayChannelStatus {
-                    name: "primary".to_string(),
-                    healthy: snapshot.channels.telegram.healthy
-                        || snapshot.channels.feishu.healthy
-                        || snapshot.channels.dingtalk.healthy
-                        || snapshot.channels.wecom.healthy
-                        || snapshot.channels.qq_channel.healthy,
-                }],
+                state,
+                wifi_connected,
+                ip_address: Some(ip),
+                channels,
                 pressure,
-                heap_percent: 0,
+                heap_percent,
             };
             let _ = display_platform.display_command(cmd);
+            }
         });
     }
 

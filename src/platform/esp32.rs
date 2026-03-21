@@ -124,6 +124,10 @@ impl Platform for Esp32Platform {
         opt
     }
 
+    fn wifi_sta_ip(&self) -> Option<String> {
+        crate::platform::wifi::wifi_sta_ip()
+    }
+
     fn memory_store(&self) -> Arc<dyn MemoryStore + Send + Sync> {
         Arc::clone(&self.memory_store) as Arc<dyn MemoryStore + Send + Sync>
     }

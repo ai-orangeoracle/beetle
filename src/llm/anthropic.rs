@@ -200,10 +200,7 @@ fn do_request(
             stage: "llm_request",
         },
         _ => Error::Other {
-            source: Box::new(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("{:?}", e),
-            )),
+            source: Box::new(std::io::Error::other(format!("{:?}", e))),
             stage: "llm_request",
         },
     })?;
@@ -403,10 +400,7 @@ fn do_request_streaming(
                 stage: "llm_request",
             },
             _ => Error::Other {
-                source: Box::new(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("{:?}", e),
-                )),
+                source: Box::new(std::io::Error::other(format!("{:?}", e))),
                 stage: "llm_request",
             },
         })?;

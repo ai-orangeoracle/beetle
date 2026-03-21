@@ -69,7 +69,7 @@ impl EspHttpClient {
 
     /// 新建客户端；若 config.proxy_url 非空则解析为 host:port 并标记使用 proxy（CONNECT 隧道未实现时请求会失败）。
     pub fn new_with_config(config: &AppConfig) -> Result<Self> {
-        let proxy = parse_proxy_url_to_host_port(config.proxy_url.trim()).map(|(h, p)| (h, p));
+        let proxy = parse_proxy_url_to_host_port(config.proxy_url.trim());
         Self::new_optional_proxy(proxy, Priority::Normal)
     }
 
@@ -191,17 +191,11 @@ impl EspHttpClient {
                     stage: "http_post_request",
                 })?;
             request.write_all(body).map_err(|e| Error::Other {
-                source: Box::new(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("{:?}", e),
-                )),
+                source: Box::new(std::io::Error::other(format!("{:?}", e))),
                 stage: "http_post_write",
             })?;
             request.flush().map_err(|e| Error::Other {
-                source: Box::new(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("{:?}", e),
-                )),
+                source: Box::new(std::io::Error::other(format!("{:?}", e))),
                 stage: "http_post_flush",
             })?;
             let mut response = request.submit().map_err(|e| Error::Other {
@@ -286,17 +280,11 @@ impl EspHttpClient {
                 stage: "http_post_request",
             })?;
             request.write_all(body).map_err(|e| Error::Other {
-                source: Box::new(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("{:?}", e),
-                )),
+                source: Box::new(std::io::Error::other(format!("{:?}", e))),
                 stage: "http_post_write",
             })?;
             request.flush().map_err(|e| Error::Other {
-                source: Box::new(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("{:?}", e),
-                )),
+                source: Box::new(std::io::Error::other(format!("{:?}", e))),
                 stage: "http_post_flush",
             })?;
             let mut response = request.submit().map_err(|e| Error::Other {
@@ -311,10 +299,7 @@ impl EspHttpClient {
             loop {
                 feed_task_watchdog();
                 let n = response.read(&mut buf).map_err(|e| Error::Other {
-                    source: Box::new(std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        format!("{:?}", e),
-                    )),
+                    source: Box::new(std::io::Error::other(format!("{:?}", e))),
                     stage: "http_read",
                 })?;
                 if n == 0 {
@@ -375,10 +360,7 @@ fn read_response_body<R: Read>(r: &mut R) -> Result<ResponseBody> {
     let mut buf = [0u8; RESPONSE_READ_CHUNK];
     loop {
         let n = r.read(&mut buf).map_err(|e| Error::Other {
-            source: Box::new(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("{:?}", e),
-            )),
+            source: Box::new(std::io::Error::other(format!("{:?}", e))),
             stage: "http_read",
         })?;
         if n == 0 {

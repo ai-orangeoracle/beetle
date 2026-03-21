@@ -81,11 +81,17 @@ export function Sidebar({ drawer }: SidebarProps) {
   const location = useLocation();
   const navBlocker = useContext(NavBlockerContext);
   const { baseUrl } = useDevice();
-  const { deviceConnected, connectionChecking, needDeviceHint, deviceHintReason } = useDeviceApi();
+  const {
+    deviceConnected,
+    connectionChecking,
+    needDeviceHint,
+    deviceHintReason,
+  } = useDeviceApi();
   const { showToast } = useToast();
   const pathname = location.pathname;
   /** 仅在设备已连接且无需提示时允许跳转；设备页始终可点。checking/unreachable/未激活/无配对码均禁用 */
-  const canNavigate = (path: string) => path === "/device" || (deviceConnected && !needDeviceHint);
+  const canNavigate = (path: string) =>
+    path === "/device" || (deviceConnected && !needDeviceHint);
   const width = drawer ? "100%" : SIDEBAR_WIDTH_EXPANDED;
 
   return (
@@ -127,23 +133,23 @@ export function Sidebar({ drawer }: SidebarProps) {
           }}
         />
         <Typography
-            component="span"
-            variant="h6"
-            sx={{
-              fontFamily: "var(--font-display)",
-              fontSize: "var(--font-size-body)",
-              fontWeight: 600,
-              letterSpacing: "-0.02em",
-              color: "var(--foreground)",
-              lineHeight: "var(--line-height-tight)",
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-              textTransform: "uppercase",
-            }}
-          >
-            {t("app.name")}
-          </Typography>
+          component="span"
+          variant="h6"
+          sx={{
+            fontFamily: "var(--font-display)",
+            fontSize: "var(--font-size-body)",
+            fontWeight: 600,
+            letterSpacing: "-0.02em",
+            color: "var(--foreground)",
+            lineHeight: "var(--line-height-tight)",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+            textTransform: "uppercase",
+          }}
+        >
+          {t("app.name")}
+        </Typography>
       </Stack>
 
       <Box
@@ -157,7 +163,9 @@ export function Sidebar({ drawer }: SidebarProps) {
             ? "var(--surface)"
             : "color-mix(in srgb, var(--semantic-danger) 5%, var(--card))",
           borderLeftWidth: "var(--accent-line-width, 3px)",
-          borderLeftColor: baseUrl ? "var(--semantic-success)" : "var(--semantic-danger)",
+          borderLeftColor: baseUrl
+            ? "var(--semantic-success)"
+            : "var(--semantic-danger)",
           display: "flex",
           alignItems: "center",
           gap: 0.75,
@@ -207,11 +215,19 @@ export function Sidebar({ drawer }: SidebarProps) {
               sx={{
                 fontSize: "var(--font-size-caption)",
                 fontWeight: 600,
-                color: deviceConnected ? "var(--semantic-success)" : connectionChecking ? "var(--muted)" : "var(--semantic-danger)",
+                color: deviceConnected
+                  ? "var(--semantic-success)"
+                  : connectionChecking
+                    ? "var(--muted)"
+                    : "var(--semantic-danger)",
                 lineHeight: 1.2,
               }}
             >
-              {deviceConnected ? t("device.connected") : connectionChecking ? t("device.connecting") : t("device.notConnected")}
+              {deviceConnected
+                ? t("device.connected")
+                : connectionChecking
+                  ? t("device.connecting")
+                  : t("device.notConnected")}
             </Typography>
             {deviceConnected && baseUrl && (
               <Typography
@@ -241,11 +257,12 @@ export function Sidebar({ drawer }: SidebarProps) {
             borderRadius: "var(--radius-control)",
             mx: drawer ? 0.5 : 1,
             mb: 0.5,
-            ...(active && allowNav && {
-              backgroundColor: "var(--primary-soft)",
-              color: "var(--primary)",
-              "& .MuiListItemIcon-root": { color: "var(--primary)" },
-            }),
+            ...(active &&
+              allowNav && {
+                backgroundColor: "var(--primary-soft)",
+                color: "var(--primary)",
+                "& .MuiListItemIcon-root": { color: "var(--primary)" },
+              }),
             ...(!allowNav && {
               opacity: 0.75,
               cursor: "default",
@@ -253,7 +270,11 @@ export function Sidebar({ drawer }: SidebarProps) {
             transition:
               "background-color var(--transition-duration) ease, color var(--transition-duration) ease",
             "&:hover": allowNav
-              ? { backgroundColor: active ? "var(--primary-soft)" : "var(--card)" }
+              ? {
+                  backgroundColor: active
+                    ? "var(--primary-soft)"
+                    : "var(--card)",
+                }
               : { backgroundColor: "transparent" },
           };
           const handleNavClick = (e: MouseEvent<HTMLElement>) => {
@@ -273,7 +294,9 @@ export function Sidebar({ drawer }: SidebarProps) {
           return (
             <ListItemButton
               key={path}
-              component={allowNav && !navBlocker?.attemptNavigate ? Link : "div"}
+              component={
+                allowNav && !navBlocker?.attemptNavigate ? Link : "div"
+              }
               to={allowNav && !navBlocker?.attemptNavigate ? path : undefined}
               selected={active && allowNav}
               role={allowNav ? "link" : "button"}
@@ -305,7 +328,6 @@ export function Sidebar({ drawer }: SidebarProps) {
           );
         })}
       </List>
-
     </Box>
   );
 }

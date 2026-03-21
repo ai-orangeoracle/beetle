@@ -26,6 +26,11 @@ impl FallbackLlmClient {
         self.clients.len()
     }
 
+    /// 是否没有配置任何源。
+    pub fn is_empty(&self) -> bool {
+        self.clients.is_empty()
+    }
+
     /// 最近一次失败错误。
     pub fn last_error(&self) -> Option<String> {
         self.last_error

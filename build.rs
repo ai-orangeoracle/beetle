@@ -67,9 +67,10 @@ fn main() {
     embuild::espidf::sysenv::output();
 
     let out_dir = std::path::PathBuf::from(std::env::var("OUT_DIR").unwrap());
+    let manifest = std::path::PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
+
     let min_dir = out_dir.join("config_page_min");
     let _ = std::fs::create_dir_all(&min_dir);
-    let manifest = std::path::PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
     let src_dir = manifest.join("src/platform/config_page");
     // common.js 内翻译字符串含 "http://" 等，若剥离行注释会误删导致语法错误，故不剥离行注释；
     // 块注释同理，字符串内可能含 /* 序列，也不剥离，保证功能正确优先。
