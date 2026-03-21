@@ -18,8 +18,7 @@ pub fn run_cron_loop(inbound_tx: InboundTx, interval_secs: u64) {
         let mut backoff = 0u64;
         loop {
             std::thread::sleep(interval + Duration::from_secs(backoff));
-            let content = "tick".to_string(); // 简短内容，满足 MAX_CONTENT_LEN
-            let msg = match PcMsg::new("cron", "cron", content) {
+            let msg = match PcMsg::new("cron", "cron", "tick") {
                 Ok(m) => m,
                 Err(e) => {
                     log::warn!("[{}] PcMsg::new failed: {}", TAG, e);
