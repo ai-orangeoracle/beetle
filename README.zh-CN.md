@@ -92,13 +92,14 @@
     │ BEETLE RUNTIME · 单设备单 Agent    │
     │ ReAct │ Tools │ Memory │ Orchestrator │
     └────────────────────────────────────┘
-                    │
-                    ▼
-    ┌────────────────────────────────────┐
-    │ 平台层                              │
-    │ ESP32-S3（当前）                    │
-    │ Linux 系与更高性能硬件（下一步）     │
-    └────────────────────────────────────┘
+            │                   │
+            ▼                   ▼
+    ┌──────────────┐   ┌────────────────┐
+    │ 平台层        │   │ 显示 (SPI)     │
+    │ ESP32-S3     │   │ ST7789/ILI9341 │
+    │ （当前）      │   │ 仪表板 UI      │
+    │ Linux+（下一步）│  └────────────────┘
+    └──────────────┘
 ```
 
 ---
@@ -215,6 +216,7 @@ cargo build --release
 | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 板子即 Agent | ReAct、工具、记忆均在 ESP32 内完成                                                                                                                                                                                                                                                                        |
 | 多通道统一   | 飞书 / 钉钉 / 企微 / QQ 频道 / Telegram / WebSocket 同队列、同一 Agent                                                                                                                                                                                                                                    |
+| **显示仪表板** | 通过 SPI 连接的 TFT 屏（ST7789 / ILI9341）实时显示运行状态。甲壳虫图标动态反映系统状态（启动中/无 WiFi/空闲/繁忙/异常）；通道健康状态点、IP 地址、堆压力进度条一目了然。纯 `embedded-graphics` 原语绘制，无图片资源依赖，PSRAM 帧缓冲，局部行刷新最小化 SPI 流量。详见 [显示仪表板](docs/zh-cn/display.md)。 |
 | 浏览器配网   | 热点 Beetle → http://192.168.4.1；已连 WiFi → 路由器分配 IP，配对码保护写操作                                                                                                                                                                                                                             |
 | Rust 全栈    | 类型安全、统一错误与资源上界；新通道/工具/LLM 实现 trait 即注册                                                                                                                                                                                                                                           |
 | 记忆与工具   | 长期记忆、会话摘要、到点提醒；GetTime、Cron、Files、WebSearch、AnalyzeImage、FetchUrl、HttpPost、RemindAt、KvStore、UpdateSessionSummary；**board_info** 查设备状态（芯片、堆、运行时间、压力、WiFi、SPIFFS）；**device_control** 按 config/hardware.json 控制 GPIO/PWM/ADC/蜂鸣器等；Skills 注入系统提示 |
@@ -239,6 +241,7 @@ cargo build --release
 | [Agent 工具说明](docs/zh-cn/tools.md)                               | 面向用户：Agent 可用工具说明（get_time、web_search、board_info 等） |
 | [硬件与资源](docs/zh-cn/hardware.md)                                | 板型、内存、PSRAM、看门狗、编译选项、排错                           |
 | [硬件设备配置与 LLM 驱动设计](docs/zh-cn/hardware-device-config.md) | 里程碑设计：JSON 配置即用、device_control 工具、GPIO/PWM/ADC/蜂鸣器 |
+| [显示仪表板](docs/zh-cn/display.md)                                 | SPI 显示屏配置、接线、仪表板状态说明与注意事项                      |
 | [架构概要](docs/zh-cn/architecture.md)                              | 模块划分、数据流、扩展方式                                          |
 
 ---

@@ -92,13 +92,13 @@ Feishu, DingTalk, WeCom, QQ Channel, Telegram, and WebSocket converge on one boa
     │  BEETLE RUNTIME · ONE DEVICE AGENT │
     │  ReAct │ Tools │ Memory │ Orchestrator │
     └────────────────────────────────────┘
-                    │
-                    ▼
-    ┌────────────────────────────────────┐
-    │ Platform Layer                     │
-    │ ESP32-S3 (now)                     │
-    │ Linux-class / stronger boards (next) │
-    └────────────────────────────────────┘
+            │                   │
+            ▼                   ▼
+    ┌──────────────┐   ┌────────────────┐
+    │Platform Layer│   │ Display (SPI)  │
+    │ESP32-S3 (now)│   │ ST7789/ILI9341 │
+    │Linux+ (next) │   │ Dashboard UI   │
+    └──────────────┘   └────────────────┘
 ```
 
 ---
@@ -215,6 +215,7 @@ Full key names and validation: `src/config.rs`. Runtime config segments (LLM, ch
 | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Board as Agent       | ReAct, tools, memory on ESP32                                                                                                                                                                                                                                                                                                         |
 | Unified channels     | Feishu / DingTalk / WeCom / QQ Channel / Telegram / WebSocket, same queue, same Agent                                                                                                                                                                                                                                                 |
+| **Display dashboard** | Real-time status display via SPI-connected TFT (ST7789 / ILI9341). Animated beetle icon reflects system state (Booting / NoWifi / Idle / Busy / Fault); live channel health dots, IP address, heap pressure bar. Pure `embedded-graphics` rendering—no image assets, PSRAM framebuffer, partial row flush for minimal SPI traffic. See [Display](docs/en-us/display.md). |
 | Browser provisioning | Hotspot Beetle → http://192.168.4.1; after WiFi → router-assigned IP, pairing code for writes                                                                                                                                                                                                                                         |
 | Rust stack           | Type-safe, unified errors and resource limits; new channel/tool/LLM via trait                                                                                                                                                                                                                                                         |
 | Memory & tools       | Long-term memory, session summary, reminders; GetTime, Cron, Files, WebSearch, AnalyzeImage, FetchUrl, HttpPost, RemindAt, KvStore, UpdateSessionSummary; **board_info** for device status (chip, heap, uptime, pressure, WiFi, SPIFFS); **device_control** for GPIO/PWM/ADC/buzzer per config/hardware.json; Skills in system prompt |
@@ -239,6 +240,7 @@ Full key names and validation: `src/config.rs`. Runtime config segments (LLM, ch
 | [Agent tools](docs/en-us/tools.md)                                                  | User-facing guide: what tools the Agent can use (get_time, web_search, board_info, etc.) |
 | [Hardware & resources](docs/en-us/hardware.md)                                      | Boards, memory, PSRAM, watchdog, build options, troubleshooting                          |
 | [Hardware device config & LLM-driven control](docs/en-us/hardware-device-config.md) | Milestone design: JSON config–driven device_control tool for GPIO/PWM/ADC/buzzer         |
+| [Display dashboard](docs/en-us/display.md)                                          | SPI display setup, wiring, configuration, dashboard states, and caveats                  |
 | [Architecture](docs/en-us/architecture.md)                                          | Modules, data flow, extension                                                            |
 
 ---

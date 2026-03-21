@@ -20,6 +20,7 @@ This doc is for **readers who want to understand module layout, data flow, or ho
 | **tools** | Tool registry; GetTime, Cron, FetchUrl, WebSearch, RemindAt, Files, etc.; new tools implement `Tool` trait and register. |
 | **agent** | Context build, ReAct loop; depends on LlmClient, ToolRegistry, Memory, Session. |
 | **channels** | Channel abstraction and dispatch; Telegram, Feishu, DingTalk, WeCom, QQ Channel, WebSocket; inbound pushes to bus, outbound dispatched by channel; channel health tracking delegated to orchestrator. |
+| **display** | Display configuration types (`DisplayConfig`, `DisplayCommand`, `DisplaySystemState`) and rendering. SPI backend on ESP32 (`display_driver.rs`): PSRAM framebuffer, ST7789/ILI9341 init, `DrawTarget` impl, beetle icon + dashboard rendering via `embedded-graphics`. Host stub returns `available: false`. |
 | **metrics** | Runtime metrics and error profile: messages in/out, LLM/tool calls and errors, WDT feed, dispatch success/fail, per-stage error aggregation (incl. session write failures); exposed via health API and heartbeat baseline logs. |
 | **cli** (optional) | Serial commands: wifi_status, heap_info, session_list, restart, ota, etc. |
 | **ota** (optional) | Fetch firmware from URL, write to OTA partition; failure does not corrupt current partition. |
