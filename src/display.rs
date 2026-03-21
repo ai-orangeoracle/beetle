@@ -81,6 +81,7 @@ pub struct DisplayConfig {
 #[derive(Clone, Debug, Serialize)]
 pub struct DisplayChannelStatus {
     pub name: &'static str,
+    pub enabled: bool,
     pub healthy: bool,
 }
 

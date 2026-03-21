@@ -97,7 +97,14 @@ mod esp_backend {
                         pull_down_en: gpio_pulldown_t_GPIO_PULLDOWN_DISABLE,
                         intr_type: gpio_int_type_t_GPIO_INTR_DISABLE,
                     };
-                    gpio_config(&rst_conf);
+                    let ret = gpio_config(&rst_conf);
+                    if ret != ESP_OK {
+                        heap::free_spiram_buffer(framebuf);
+                        return Err(crate::error::Error::Esp {
+                            code: ret,
+                            stage: "display_rst_gpio",
+                        });
+                    }
                     gpio_set_level(rst, 0);
                     std::thread::sleep(std::time::Duration::from_millis(20));
                     gpio_set_level(rst, 1);
@@ -115,7 +122,14 @@ mod esp_backend {
                         pull_down_en: gpio_pulldown_t_GPIO_PULLDOWN_DISABLE,
                         intr_type: gpio_int_type_t_GPIO_INTR_DISABLE,
                     };
-                    gpio_config(&bl_conf);
+                    let ret = gpio_config(&bl_conf);
+                    if ret != ESP_OK {
+                        heap::free_spiram_buffer(framebuf);
+                        return Err(crate::error::Error::Esp {
+                            code: ret,
+                            stage: "display_bl_gpio",
+                        });
+                    }
                     gpio_set_level(bl, 1);
                 }
             }
@@ -281,19 +295,27 @@ mod esp_backend {
 
         /// Set column/row address window then push full framebuf via SPI.
         pub fn flush(&self, offset_x: i16, offset_y: i16) -> Result<()> {
-            self.flush_region(offset_x, offset_y, 0, 0, self.width, self.height)
+            self.flush_rows(offset_x, offset_y, 0, self.height)
         }
 
         /// Push only the rows `[ry..ry+rh)` from the framebuffer, reducing SPI transfer.
-        pub fn flush_region(
+        pub fn flush_rows(
             &self,
             offset_x: i16,
             offset_y: i16,
             ry: u16,
-            _rx: u16,
-            _rw: u16,
             rh: u16,
         ) -> Result<()> {
+            if rh == 0 || self.width == 0 {
+                return Ok(());
+            }
+            // Clamp to framebuffer bounds
+            let ry = ry.min(self.height);
+            let rh = rh.min(self.height.saturating_sub(ry));
+            if rh == 0 {
+                return Ok(());
+            }
+
             // ST7789/ILI9341 require full-width rows for RAMWR; we send only the dirty row band.
             let x0 = offset_x.max(0) as u16;
             let y0 = offset_y.max(0) as u16 + ry;
@@ -385,8 +407,6 @@ pub struct DisplayState {
     pub config: DisplayConfig,
     pub available: bool,
     pub last_command_at: Option<Instant>,
-    /// Cached state from last full RefreshDashboard, used for partial update bg color.
-    last_state: DisplaySystemState,
     #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
     backend: Option<esp_backend::SpiDisplayBackend>,
 }
@@ -398,7 +418,6 @@ impl DisplayState {
                 config: config.clone(),
                 available: false,
                 last_command_at: None,
-                last_state: DisplaySystemState::Booting,
                 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
                 backend: None,
             });
@@ -411,7 +430,6 @@ impl DisplayState {
                 config: config.clone(),
                 available: true,
                 last_command_at: None,
-                last_state: DisplaySystemState::Booting,
                 backend: Some(backend),
             })
         }
@@ -423,7 +441,6 @@ impl DisplayState {
                 config: config.clone(),
                 available: false,
                 last_command_at: None,
-                last_state: DisplaySystemState::Booting,
             })
         }
     }
@@ -448,7 +465,6 @@ impl DisplayState {
                     pressure,
                     heap_percent,
                 } => {
-                    self.last_state = *state;
                     render_dashboard(
                         backend,
                         &DashboardParams {
@@ -464,15 +480,13 @@ impl DisplayState {
                     backend.flush(self.config.offset_x, self.config.offset_y)?;
                 }
                 DisplayCommand::UpdateIp { ip } => {
-                    let bg = bg_color_for_state(self.last_state);
+                    let bg = DISPLAY_BG;
                     render_ip_partial(backend, ip, bg, self.config.width);
                     let layout = LAYOUT;
-                    backend.flush_region(
+                    backend.flush_rows(
                         self.config.offset_x,
                         self.config.offset_y,
                         layout.subtitle_top,
-                        0,
-                        self.config.width,
                         16,
                     )?;
                 }
@@ -480,7 +494,7 @@ impl DisplayState {
                     level,
                     heap_percent,
                 } => {
-                    let bg = bg_color_for_state(self.last_state);
+                    let bg = DISPLAY_BG;
                     render_pressure_partial(
                         backend,
                         level,
@@ -491,12 +505,10 @@ impl DisplayState {
                     );
                     let layout = LAYOUT;
                     let footer_h = self.config.height.saturating_sub(layout.footer_top);
-                    backend.flush_region(
+                    backend.flush_rows(
                         self.config.offset_x,
                         self.config.offset_y,
                         layout.footer_top,
-                        0,
-                        self.config.width,
                         footer_h,
                     )?;
                 }
@@ -594,7 +606,6 @@ fn draw_beetle<D: DrawTarget<Color = Rgb565>>(
     };
 
     let line_style = PrimitiveStyle::with_stroke(color, 2);
-    let leg_style = PrimitiveStyle::with_stroke(color, 2);
 
     // --- Antennae (simplified as 2 straight lines) ---
     let ant_tip_dy = dir * size * 20 / 100;
@@ -634,38 +645,66 @@ fn draw_beetle<D: DrawTarget<Color = Rgb565>>(
             let fy = ky + leg_len2 * 90 / 100 * dir;
 
             let _ = Line::new(Point::new(ax, leg_y), Point::new(kx, ky))
-                .into_styled(leg_style)
+                .into_styled(line_style)
                 .draw(target);
             let _ = Line::new(Point::new(kx, ky), Point::new(fx, fy))
-                .into_styled(leg_style)
+                .into_styled(line_style)
                 .draw(target);
         }
     }
 
-    // --- Wings (busy state: 2 ellipse outlines approximated as circles) ---
+    // --- Wings (busy state: membrane wings peeking out from under elytra) ---
     if opts.wings {
-        let wing_style = PrimitiveStyle::with_stroke(color, 1);
-        let wing_r = size * 14 / 100;
-        // Left wing
-        let _ = Circle::new(
-            Point::new(
-                cx - body_r - wing_r - size * 4 / 100,
-                body_cy - wing_r,
-            ),
-            (wing_r * 2) as u32,
-        )
-        .into_styled(wing_style)
-        .draw(target);
-        // Right wing
-        let _ = Circle::new(
-            Point::new(
-                cx + body_r + size * 4 / 100,
-                body_cy - wing_r,
-            ),
-            (wing_r * 2) as u32,
-        )
-        .into_styled(wing_style)
-        .draw(target);
+        let wing_color = darken(color, 30);
+        let wing_style = PrimitiveStyle::with_stroke(wing_color, 1);
+
+        // Wing shape: elongated oval approximated by a filled region + outline arcs.
+        // Each wing extends from the body edge outward and slightly upward.
+        let wing_span = size * 18 / 100; // horizontal extent from body edge
+        let wing_h = size * 22 / 100; // vertical height of wing
+        let wing_top = body_cy - wing_h * 6 / 10; // wings start above body center
+
+        for &side in &[-1i32, 1] {
+            let base_x = cx + side * body_r; // wing root at body edge
+            let tip_x = base_x + side * wing_span; // wing tip
+            let mid_x = base_x + side * wing_span * 7 / 10; // control point x
+
+            // Wing outline: 5-segment curve (top arc + bottom arc)
+            // Top edge: gentle upward curve from root to tip
+            let t0 = Point::new(base_x, wing_top + wing_h * 2 / 10);
+            let t1 = Point::new(mid_x, wing_top);
+            let t2 = Point::new(tip_x, wing_top + wing_h * 3 / 10);
+            // Bottom edge: curves back to root
+            let b1 = Point::new(mid_x, wing_top + wing_h);
+            let b0 = Point::new(base_x, wing_top + wing_h * 7 / 10);
+
+            // Fill: draw horizontal lines between top and bottom edges (simple scanline fill)
+            // For minimal overhead, just draw the outline — looks like translucent membrane wings
+            let _ = Line::new(t0, t1).into_styled(wing_style).draw(target);
+            let _ = Line::new(t1, t2).into_styled(wing_style).draw(target);
+            let _ = Line::new(t2, b1).into_styled(wing_style).draw(target);
+            let _ = Line::new(b1, b0).into_styled(wing_style).draw(target);
+            let _ = Line::new(b0, t0).into_styled(wing_style).draw(target);
+
+            // Wing vein (central line for realism)
+            let vein_style = PrimitiveStyle::with_stroke(wing_color, 1);
+            let vein_mid = Point::new(
+                mid_x - side * wing_span / 10,
+                wing_top + wing_h / 2,
+            );
+            let _ = Line::new(
+                Point::new(base_x, wing_top + wing_h * 4 / 10),
+                vein_mid,
+            )
+            .into_styled(vein_style)
+            .draw(target);
+            let _ = Line::new(
+                vein_mid,
+                Point::new(tip_x - side * 2, wing_top + wing_h * 4 / 10),
+            )
+            .into_styled(vein_style)
+            .draw(target);
+        }
     }
 
     // --- Body (large filled circle) ---
@@ -686,6 +725,29 @@ fn draw_beetle<D: DrawTarget<Color = Rgb565>>(
     )
     .into_styled(seam_style)
     .draw(target);
+
+    // --- Elytra spots (2 pairs of small dots, like a ladybug pattern) ---
+    let spot_color = darken(color, 40);
+    let spot_fill = PrimitiveStyle::with_fill(spot_color);
+    let spot_r = (body_r * 15 / 100).max(2);
+    // Upper pair
+    for &sx in &[-1i32, 1] {
+        let _ = Circle::new(
+            Point::new(cx + sx * body_r * 45 / 100 - spot_r, body_cy - body_r * 30 / 100 - spot_r),
+            (spot_r * 2) as u32,
+        )
+        .into_styled(spot_fill)
+        .draw(target);
+    }
+    // Lower pair
+    for &sx in &[-1i32, 1] {
+        let _ = Circle::new(
+            Point::new(cx + sx * body_r * 40 / 100 - spot_r, body_cy + body_r * 20 / 100 - spot_r),
+            (spot_r * 2) as u32,
+        )
+        .into_styled(spot_fill)
+        .draw(target);
+    }
 
     // --- Head (smaller filled circle, slightly darker) ---
     let head_color = darken(color, 20);
@@ -779,6 +841,34 @@ fn draw_top_arc<D: DrawTarget<Color = Rgb565>>(
     }
 }
 
+/// Draw a dashed top-half arc using dots along the arc path.
+fn draw_dashed_top_arc<D: DrawTarget<Color = Rgb565>>(
+    target: &mut D,
+    cx: i32,
+    cy: i32,
+    r: i32,
+    color: Rgb565,
+) {
+    // Same angle sample points as draw_top_arc, but render as individual dots.
+    const POINTS: [(i32, i32); 7] = [
+        (-866, -500),
+        (-643, -766),
+        (-342, -940),
+        (0, -1000),
+        (342, -940),
+        (643, -766),
+        (866, -500),
+    ];
+    let dot_style = PrimitiveStyle::with_fill(color);
+    for &(c, s) in &POINTS {
+        let px = cx + r * c / 1000;
+        let py = cy + r * s / 1000;
+        let _ = Circle::new(Point::new(px - 1, py - 1), 3)
+            .into_styled(dot_style)
+            .draw(target);
+    }
+}
+
 /// Dashboard render parameters (avoids clippy::too_many_arguments).
 struct DashboardParams<'a> {
     state: DisplaySystemState,
@@ -795,7 +885,7 @@ fn render_dashboard<D: DrawTarget<Color = Rgb565>>(target: &mut D, p: &Dashboard
     let layout = LAYOUT;
 
     // --- Background fill ---
-    let bg_color = bg_color_for_state(p.state);
+    let bg_color = DISPLAY_BG;
     let _ = Rectangle::new(
         Point::new(0, 0),
         Size::new(p.width as u32, p.height as u32),
@@ -805,9 +895,10 @@ fn render_dashboard<D: DrawTarget<Color = Rgb565>>(target: &mut D, p: &Dashboard
 
     // --- Beetle icon ---
     let beetle_color = match p.state {
-        DisplaySystemState::Booting | DisplaySystemState::NoWifi => rgb565(0xd4, 0xa0, 0x17),
+        DisplaySystemState::Booting => rgb565(0xdd, 0x99, 0x22),
+        DisplaySystemState::NoWifi => rgb565(0xaa, 0xaa, 0xaa),
         DisplaySystemState::Idle => rgb565(0x22, 0xcc, 0x22),
-        DisplaySystemState::Busy => rgb565(0xdd, 0xdd, 0xdd),
+        DisplaySystemState::Busy => rgb565(0x44, 0x88, 0xee),
         DisplaySystemState::Fault => rgb565(0xee, 0x33, 0x33),
     };
     let icon_size = layout.icon_size as i32;
@@ -834,13 +925,48 @@ fn render_dashboard<D: DrawTarget<Color = Rgb565>>(target: &mut D, p: &Dashboard
 
     // --- State-specific overlays ---
     match p.state {
-        DisplaySystemState::Booting | DisplaySystemState::NoWifi => {
-            // WiFi signal arcs above head (top-half arcs via line segments)
+        DisplaySystemState::Booting => {
+            // Loading dots on body: 3 circles of increasing size
+            let dot_color = Rgb565::WHITE;
+            let dot_style = PrimitiveStyle::with_fill(dot_color);
+            let dot_y = body_cy;
+            let spacing = body_r * 35 / 100;
+            for (i, &r) in [2u32, 3, 4].iter().enumerate() {
+                let dx = (i as i32 - 1) * spacing;
+                let _ = Circle::new(
+                    Point::new(cx + dx - r as i32, dot_y - r as i32),
+                    r * 2,
+                )
+                .into_styled(dot_style)
+                .draw(target);
+            }
+            // Dashed WiFi arcs above head (dots instead of solid lines)
+            let sig_y = head_cy - head_r - 4;
+            draw_dashed_top_arc(target, cx, sig_y, 7, beetle_color);
+            draw_dashed_top_arc(target, cx, sig_y, 13, beetle_color);
+        }
+        DisplaySystemState::NoWifi => {
+            // Solid WiFi signal arcs above head
             let sig_y = head_cy - head_r - 4;
             let arc_style = PrimitiveStyle::with_stroke(beetle_color, 2);
             for &r in &[7i32, 13] {
                 draw_top_arc(target, cx, sig_y, r, &arc_style);
             }
+            // X mark over WiFi (signal crossed out)
+            let x_style = PrimitiveStyle::with_stroke(rgb565(0xcc, 0x22, 0x22), 2);
+            let x_sz = 6i32;
+            let _ = Line::new(
+                Point::new(cx - x_sz, sig_y - 13 - x_sz),
+                Point::new(cx + x_sz, sig_y - 13 + x_sz),
+            )
+            .into_styled(x_style)
+            .draw(target);
+            let _ = Line::new(
+                Point::new(cx + x_sz, sig_y - 13 - x_sz),
+                Point::new(cx - x_sz, sig_y - 13 + x_sz),
+            )
+            .into_styled(x_style)
+            .draw(target);
         }
         DisplaySystemState::Idle => {
             // Checkmark on body
@@ -880,7 +1006,7 @@ fn render_dashboard<D: DrawTarget<Color = Rgb565>>(target: &mut D, p: &Dashboard
     }
 
     // --- Title text: state name ---
-    let title_style = MonoTextStyle::new(&FONT_9X18_BOLD, Rgb565::WHITE);
+    let title_style = MonoTextStyle::new(&FONT_9X18_BOLD, rgb565(0x22, 0x22, 0x22));
     let state_name = match p.state {
         DisplaySystemState::Booting => "BOOTING",
         DisplaySystemState::NoWifi => "NO WIFI",
@@ -895,9 +1021,13 @@ fn render_dashboard<D: DrawTarget<Color = Rgb565>>(target: &mut D, p: &Dashboard
     )
     .draw(target);
 
-    // --- Subtitle: IP address ---
-    let subtitle_style = MonoTextStyle::new(&FONT_6X13, rgb565(0xaa, 0xaa, 0xaa));
-    let ip_text = p.ip_address.unwrap_or("---.---.---.---");
+    // --- Subtitle: IP address or version ---
+    let subtitle_style = MonoTextStyle::new(&FONT_6X13, rgb565(0x66, 0x66, 0x66));
+    let ip_text = if p.state == DisplaySystemState::Booting {
+        p.ip_address.unwrap_or(concat!("beetle v", env!("CARGO_PKG_VERSION")))
+    } else {
+        p.ip_address.unwrap_or("---.---.---.---")
+    };
     let _ = Text::new(
         ip_text,
         Point::new(layout.title_left as i32, layout.subtitle_top as i32 + 11),
@@ -908,7 +1038,9 @@ fn render_dashboard<D: DrawTarget<Color = Rgb565>>(target: &mut D, p: &Dashboard
     // --- Channel status (middle section) ---
     let healthy_color = rgb565(0x22, 0xcc, 0x22);
     let unhealthy_color = rgb565(0xcc, 0x22, 0x22);
-    let text_style = MonoTextStyle::new(&FONT_6X13, rgb565(0xcc, 0xcc, 0xcc));
+    let disabled_color = rgb565(0xbb, 0xbb, 0xbb);
+    let text_style = MonoTextStyle::new(&FONT_6X13, rgb565(0x33, 0x33, 0x33));
+    let disabled_text_style = MonoTextStyle::new(&FONT_6X13, rgb565(0x99, 0x99, 0x99));
 
     let col_width = p.width as i32 / 2;
     let mut col = 0i32;
@@ -917,18 +1049,26 @@ fn render_dashboard<D: DrawTarget<Color = Rgb565>>(target: &mut D, p: &Dashboard
         let px = 8 + col * col_width;
         let py = layout.middle_top as i32 + row * 18;
 
-        // Health dot
-        let dot_color = if ch.healthy {
-            healthy_color
+        if ch.enabled {
+            // Enabled channel: filled dot (green=healthy, red=unhealthy)
+            let dot_color = if ch.healthy {
+                healthy_color
+            } else {
+                unhealthy_color
+            };
+            let _ = Circle::new(Point::new(px, py + 2), 8)
+                .into_styled(PrimitiveStyle::with_fill(dot_color))
+                .draw(target);
         } else {
-            unhealthy_color
-        };
-        let _ = Circle::new(Point::new(px, py + 2), 8)
-            .into_styled(PrimitiveStyle::with_fill(dot_color))
-            .draw(target);
+            // Disabled channel: hollow circle (gray stroke)
+            let _ = Circle::new(Point::new(px, py + 2), 8)
+                .into_styled(PrimitiveStyle::with_stroke(disabled_color, 1))
+                .draw(target);
+        }
 
         // Channel name
-        let _ = Text::new(ch.name, Point::new(px + 14, py + 11), text_style).draw(target);
+        let name_style = if ch.enabled { text_style } else { disabled_text_style };
+        let _ = Text::new(ch.name, Point::new(px + 14, py + 11), name_style).draw(target);
 
         col += 1;
         if col >= 2 {
@@ -938,69 +1078,11 @@ fn render_dashboard<D: DrawTarget<Color = Rgb565>>(target: &mut D, p: &Dashboard
     }
 
     // --- Footer: pressure level + heap progress bar ---
-    let footer_y = layout.footer_top as i32;
-    let pressure_text = match p.pressure {
-        DisplayPressureLevel::Normal => "NORMAL",
-        DisplayPressureLevel::Cautious => "CAUTIOUS",
-        DisplayPressureLevel::Critical => "CRITICAL",
-    };
-    let pressure_color = match p.pressure {
-        DisplayPressureLevel::Normal => rgb565(0x22, 0xcc, 0x22),
-        DisplayPressureLevel::Cautious => rgb565(0xdd, 0xaa, 0x00),
-        DisplayPressureLevel::Critical => rgb565(0xee, 0x33, 0x33),
-    };
-    let pressure_style = MonoTextStyle::new(&FONT_6X13, pressure_color);
-    let _ = Text::new(
-        pressure_text,
-        Point::new(8, footer_y + 11),
-        pressure_style,
-    )
-    .draw(target);
-
-    // Progress bar
-    let bar_x = 8i32;
-    let bar_y = footer_y + 20;
-    let bar_w = (p.width as i32 - 56).max(40) as u32;
-    let bar_h = 12u32;
-
-    // Border
-    let bar_border = PrimitiveStyle::with_stroke(rgb565(0x88, 0x88, 0x88), 1);
-    let _ = Rectangle::new(Point::new(bar_x, bar_y), Size::new(bar_w, bar_h))
-        .into_styled(bar_border)
-        .draw(target);
-
-    // Fill
-    let fill_w = ((p.heap_percent as u32).min(100) * (bar_w - 2)) / 100;
-    if fill_w > 0 {
-        let _ = Rectangle::new(
-            Point::new(bar_x + 1, bar_y + 1),
-            Size::new(fill_w, bar_h - 2),
-        )
-        .into_styled(PrimitiveStyle::with_fill(pressure_color))
-        .draw(target);
-    }
-
-    // Percentage text
-    // Use a stack buffer to format the percentage without heap allocation
-    let mut pct_buf = [0u8; 5]; // "100%" + null
-    let pct_str = format_pct(p.heap_percent, &mut pct_buf);
-    let _ = Text::new(
-        pct_str,
-        Point::new(bar_x + bar_w as i32 + 4, bar_y + 10),
-        text_style,
-    )
-    .draw(target);
+    render_footer(target, p.pressure, p.heap_percent, p.width);
 }
 
-/// Background color for a given system state (shared by full + partial renders).
-fn bg_color_for_state(state: DisplaySystemState) -> Rgb565 {
-    match state {
-        DisplaySystemState::Booting | DisplaySystemState::NoWifi => rgb565(0x3a, 0x3a, 0x50),
-        DisplaySystemState::Idle => rgb565(0x1a, 0x3a, 0x1a),
-        DisplaySystemState::Busy => rgb565(0x4a, 0x2a, 0x3a),
-        DisplaySystemState::Fault => rgb565(0x4a, 0x1a, 0x1a),
-    }
-}
+/// Dashboard background color (white).
+const DISPLAY_BG: Rgb565 = Rgb565::WHITE;
 
 /// Partial update: repaint only the IP subtitle region.
 fn render_ip_partial<D: DrawTarget<Color = Rgb565>>(
@@ -1018,7 +1100,7 @@ fn render_ip_partial<D: DrawTarget<Color = Rgb565>>(
         .into_styled(PrimitiveStyle::with_fill(bg))
         .draw(target);
 
-    let subtitle_style = MonoTextStyle::new(&FONT_6X13, rgb565(0xaa, 0xaa, 0xaa));
+    let subtitle_style = MonoTextStyle::new(&FONT_6X13, rgb565(0x66, 0x66, 0x66));
     let _ = Text::new(ip, Point::new(x, y + 11), subtitle_style).draw(target);
 }
 
@@ -1034,7 +1116,7 @@ fn render_pressure_partial<D: DrawTarget<Color = Rgb565>>(
     let layout = LAYOUT;
     let footer_y = layout.footer_top as i32;
 
-    // Clear entire footer region (pressure text + progress bar + percentage)
+    // Clear entire footer region
     let footer_h = (height as i32 - footer_y).max(1) as u32;
     let _ = Rectangle::new(
         Point::new(0, footer_y),
@@ -1043,6 +1125,17 @@ fn render_pressure_partial<D: DrawTarget<Color = Rgb565>>(
     .into_styled(PrimitiveStyle::with_fill(bg))
     .draw(target);
 
+    render_footer(target, level, heap_percent, width);
+}
+
+/// Shared footer rendering: pressure label + progress bar + percentage text.
+fn render_footer<D: DrawTarget<Color = Rgb565>>(
+    target: &mut D,
+    level: &DisplayPressureLevel,
+    heap_percent: u8,
+    width: u16,
+) {
+    let footer_y = LAYOUT.footer_top as i32;
     let pressure_text = match level {
         DisplayPressureLevel::Normal => "NORMAL",
         DisplayPressureLevel::Cautious => "CAUTIOUS",
@@ -1056,13 +1149,12 @@ fn render_pressure_partial<D: DrawTarget<Color = Rgb565>>(
     let pressure_style = MonoTextStyle::new(&FONT_6X13, pressure_color);
     let _ = Text::new(pressure_text, Point::new(8, footer_y + 11), pressure_style).draw(target);
 
-    // Progress bar
     let bar_x = 8i32;
     let bar_y = footer_y + 20;
     let bar_w = (width as i32 - 56).max(40) as u32;
     let bar_h = 12u32;
 
-    let bar_border = PrimitiveStyle::with_stroke(rgb565(0x88, 0x88, 0x88), 1);
+    let bar_border = PrimitiveStyle::with_stroke(rgb565(0xaa, 0xaa, 0xaa), 1);
     let _ = Rectangle::new(Point::new(bar_x, bar_y), Size::new(bar_w, bar_h))
         .into_styled(bar_border)
         .draw(target);
@@ -1077,7 +1169,7 @@ fn render_pressure_partial<D: DrawTarget<Color = Rgb565>>(
         .draw(target);
     }
 
-    let text_style = MonoTextStyle::new(&FONT_6X13, rgb565(0xcc, 0xcc, 0xcc));
+    let text_style = MonoTextStyle::new(&FONT_6X13, rgb565(0x33, 0x33, 0x33));
     let mut pct_buf = [0u8; 5];
     let pct_str = format_pct(heap_percent, &mut pct_buf);
     let _ = Text::new(

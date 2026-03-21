@@ -14,6 +14,12 @@ pub struct ToolRegistry {
     tools: IndexMap<String, Box<dyn Tool>>,
 }
 
+impl Default for ToolRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ToolRegistry {
     pub fn new() -> Self {
         Self {

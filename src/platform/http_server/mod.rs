@@ -737,7 +737,7 @@ pub fn run(
                     let mut it = pair.splitn(2, '=');
                     if it
                         .next()
-                        .map_or(false, |k| k.eq_ignore_ascii_case("chat_id"))
+                        .is_some_and(|k| k.eq_ignore_ascii_case("chat_id"))
                     {
                         return it.next().filter(|s| !s.is_empty()).map(String::from);
                     }
@@ -780,7 +780,7 @@ pub fn run(
                     let mut it = pair.splitn(2, '=');
                     if it
                         .next()
-                        .map_or(false, |k| k.eq_ignore_ascii_case("chat_id"))
+                        .is_some_and(|k| k.eq_ignore_ascii_case("chat_id"))
                     {
                         found = it.next().filter(|s| !s.is_empty()).map(String::from);
                         break;

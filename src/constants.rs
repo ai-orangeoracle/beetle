@@ -21,8 +21,8 @@ pub const DEFAULT_MESSAGES_MAX_LEN: usize = 24 * 1024;
 
 /// TLS 准入：有 PSRAM 时允许发起单次 TLS（HTTP/WSS）要求的最小 internal 空闲（字节）。
 /// 有 PSRAM 时 mbedTLS 大部分分配走 SPIRAM，internal 仅需 ~15KB 给硬件加密/DMA。
-/// 实测 WSS 常驻后稳态 internal ~50KB，45KB 阈值留 30KB 安全余量且不频繁误拒。
-pub const TLS_ADMISSION_MIN_INTERNAL_BYTES: usize = 45 * 1024;
+/// 实测显示初始化后稳态 internal ~47KB，43KB 阈值留 ~28KB 安全余量且不频繁误拒。
+pub const TLS_ADMISSION_MIN_INTERNAL_BYTES: usize = 43 * 1024;
 /// TLS 准入：要求 internal 最大连续块不低于此值，避免碎片化导致 mbedTLS 分配失败。
 pub const TLS_ADMISSION_MIN_LARGEST_BLOCK_BYTES: usize = 24 * 1024;
 /// TLS 准入：无 PSRAM 时 internal 堆空闲下限（字节），mbedTLS 全部走 internal 需更多空间。

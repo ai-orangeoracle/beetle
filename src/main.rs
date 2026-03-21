@@ -163,11 +163,11 @@ fn main() {
                     wifi_connected: false,
                     ip_address: None,
                     channels: [
-                        DisplayChannelStatus { name: "telegram", healthy: false },
-                        DisplayChannelStatus { name: "feishu", healthy: false },
-                        DisplayChannelStatus { name: "dingtalk", healthy: false },
-                        DisplayChannelStatus { name: "wecom", healthy: false },
-                        DisplayChannelStatus { name: "qq_channel", healthy: false },
+                        DisplayChannelStatus { name: "telegram", enabled: config.enabled_channel == "telegram", healthy: false },
+                        DisplayChannelStatus { name: "feishu", enabled: config.enabled_channel == "feishu", healthy: false },
+                        DisplayChannelStatus { name: "dingtalk", enabled: config.enabled_channel == "dingtalk", healthy: false },
+                        DisplayChannelStatus { name: "wecom", enabled: config.enabled_channel == "wecom", healthy: false },
+                        DisplayChannelStatus { name: "qq_channel", enabled: config.enabled_channel == "qq_channel", healthy: false },
                     ],
                     pressure: DisplayPressureLevel::Normal,
                     heap_percent: 0,
@@ -301,69 +301,83 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
 
     if platform.display_available() {
         let display_platform = Arc::clone(&platform);
+        let display_config = Arc::clone(&config);
         std::thread::Builder::new()
             .name("display".into())
-            .stack_size(4096)
+            .stack_size(6144)
             .spawn(move || {
-            loop {
-                std::thread::sleep(std::time::Duration::from_secs(5));
-            let snapshot = beetle::orchestrator::snapshot();
-            let pressure = match snapshot.pressure {
-                beetle::orchestrator::PressureLevel::Normal => DisplayPressureLevel::Normal,
-                beetle::orchestrator::PressureLevel::Cautious => DisplayPressureLevel::Cautious,
-                beetle::orchestrator::PressureLevel::Critical => DisplayPressureLevel::Critical,
-            };
-            let wifi_connected = beetle::platform::is_wifi_sta_connected();
-            let busy = snapshot.inbound_depth > 0
-                || snapshot.outbound_depth > 0
-                || snapshot.active_http_count > 0;
-            let state = if snapshot.pressure == beetle::orchestrator::PressureLevel::Critical {
-                DisplaySystemState::Fault
-            } else if !wifi_connected {
-                DisplaySystemState::NoWifi
-            } else if busy {
-                DisplaySystemState::Busy
-            } else {
-                DisplaySystemState::Idle
-            };
-            let ip = display_platform
-                .wifi_sta_ip()
-                .unwrap_or_else(|| "192.168.4.1".to_string());
-            let channels = [
-                DisplayChannelStatus {
-                    name: "telegram",
-                    healthy: snapshot.channels.telegram.healthy,
-                },
-                DisplayChannelStatus {
-                    name: "feishu",
-                    healthy: snapshot.channels.feishu.healthy,
-                },
-                DisplayChannelStatus {
-                    name: "dingtalk",
-                    healthy: snapshot.channels.dingtalk.healthy,
-                },
-                DisplayChannelStatus {
-                    name: "wecom",
-                    healthy: snapshot.channels.wecom.healthy,
-                },
-                DisplayChannelStatus {
-                    name: "qq_channel",
-                    healthy: snapshot.channels.qq_channel.healthy,
-                },
-            ];
-            let heap_percent = heap_used_percent(&snapshot);
-            let cmd = DisplayCommand::RefreshDashboard {
-                state,
-                wifi_connected,
-                ip_address: Some(ip),
-                channels,
-                pressure,
-                heap_percent,
-            };
-            let _ = display_platform.display_command(cmd);
-            }
-        })
-        .ok();
+                let enabled = display_config.enabled_channel.as_str();
+                loop {
+                    std::thread::sleep(std::time::Duration::from_secs(5));
+                    let snapshot = beetle::orchestrator::snapshot();
+                    let pressure = match snapshot.pressure {
+                        beetle::orchestrator::PressureLevel::Normal => DisplayPressureLevel::Normal,
+                        beetle::orchestrator::PressureLevel::Cautious => {
+                            DisplayPressureLevel::Cautious
+                        }
+                        beetle::orchestrator::PressureLevel::Critical => {
+                            DisplayPressureLevel::Critical
+                        }
+                    };
+                    let wifi_connected = beetle::platform::is_wifi_sta_connected();
+                    let busy = snapshot.inbound_depth > 0
+                        || snapshot.outbound_depth > 0
+                        || snapshot.active_http_count > 0;
+                    let state =
+                        if snapshot.pressure == beetle::orchestrator::PressureLevel::Critical {
+                            DisplaySystemState::Fault
+                        } else if !wifi_connected {
+                            DisplaySystemState::NoWifi
+                        } else if busy {
+                            DisplaySystemState::Busy
+                        } else {
+                            DisplaySystemState::Idle
+                        };
+                    let ip = display_platform
+                        .wifi_sta_ip()
+                        .unwrap_or_else(|| "192.168.4.1".to_string());
+                    let channels = [
+                        DisplayChannelStatus {
+                            name: "telegram",
+                            enabled: enabled == "telegram",
+                            healthy: snapshot.channels.telegram.healthy,
+                        },
+                        DisplayChannelStatus {
+                            name: "feishu",
+                            enabled: enabled == "feishu",
+                            healthy: snapshot.channels.feishu.healthy,
+                        },
+                        DisplayChannelStatus {
+                            name: "dingtalk",
+                            enabled: enabled == "dingtalk",
+                            healthy: snapshot.channels.dingtalk.healthy,
+                        },
+                        DisplayChannelStatus {
+                            name: "wecom",
+                            enabled: enabled == "wecom",
+                            healthy: snapshot.channels.wecom.healthy,
+                        },
+                        DisplayChannelStatus {
+                            name: "qq_channel",
+                            enabled: enabled == "qq_channel",
+                            healthy: snapshot.channels.qq_channel.healthy,
+                        },
+                    ];
+                    let heap_percent = heap_used_percent(&snapshot);
+                    let cmd = DisplayCommand::RefreshDashboard {
+                        state,
+                        wifi_connected,
+                        ip_address: Some(ip),
+                        channels,
+                        pressure,
+                        heap_percent,
+                    };
+                    if let Err(e) = display_platform.display_command(cmd) {
+                        log::warn!("[{}] display refresh failed: {}", TAG, e);
+                    }
+                }
+            })
+            .ok();
     }
 
     beetle::memory::run_remind_loop(Arc::clone(&remind_at_store), inbound_tx.clone(), 60);
