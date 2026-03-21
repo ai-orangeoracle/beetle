@@ -71,9 +71,10 @@ pub use platform::{
 };
 pub use platform::{ConfigStore, Platform, SkillStorage};
 pub use tools::{
-    build_default_registry, CronTool, DeviceControlTool, FetchUrlTool, FilesTool, GetTimeTool,
-    HttpPostTool, KvStoreTool, RemindAtTool, Tool, ToolContext, ToolRegistry,
-    UpdateSessionSummaryTool, WebSearchTool,
+    build_default_registry, CronManageTool, CronTool, DailyNoteTool, DeviceControlTool,
+    FetchUrlTool, FileWriteTool, FilesTool, GetTimeTool, HttpPostTool, HttpRequestTool, KvStoreTool,
+    MemoryManageTool, ModelConfigTool, ProxyConfigTool, RemindAtTool, SessionManageTool,
+    SystemControlTool, Tool, ToolContext, ToolRegistry, UpdateSessionSummaryTool, WebSearchTool,
 };
 
 /// 任何 PlatformHttpClient 均可作为 LlmHttpClient、ToolContext、ChannelHttpClient 使用。
@@ -115,6 +116,21 @@ impl<T: platform::PlatformHttpClient> tools::ToolContext for T {
         body: &[u8],
     ) -> Result<(u16, platform::ResponseBody)> {
         platform::PlatformHttpClient::post(self, url, headers, body)
+    }
+    fn put_with_headers(
+        &mut self,
+        url: &str,
+        headers: &[(&str, &str)],
+        body: &[u8],
+    ) -> Result<(u16, platform::ResponseBody)> {
+        platform::PlatformHttpClient::put(self, url, headers, body)
+    }
+    fn delete_with_headers(
+        &mut self,
+        url: &str,
+        headers: &[(&str, &str)],
+    ) -> Result<(u16, platform::ResponseBody)> {
+        platform::PlatformHttpClient::delete(self, url, headers)
     }
 }
 

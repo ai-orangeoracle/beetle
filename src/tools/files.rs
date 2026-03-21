@@ -22,7 +22,7 @@ fn base_path() -> &'static str {
 }
 
 /// 解析 path 与 mode，返回 (full_path, mode)。path 不得含 `..` 或绝对路径逃逸。
-fn resolve_path(path_arg: &str) -> Result<std::path::PathBuf> {
+pub(crate) fn resolve_path(path_arg: &str) -> Result<std::path::PathBuf> {
     let path_arg = path_arg.trim().trim_start_matches('/');
     if path_arg.is_empty() {
         return Ok(Path::new(base_path()).to_path_buf());

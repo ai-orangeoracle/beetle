@@ -109,6 +109,8 @@ pub fn build_default_registry(
     remind_at_store: Arc<dyn crate::memory::RemindAtStore + Send + Sync>,
     session_summary_store: Arc<dyn crate::memory::SessionSummaryStore + Send + Sync>,
     session_store: Arc<dyn crate::memory::SessionStore + Send + Sync>,
+    memory_store: Arc<dyn crate::memory::MemoryStore + Send + Sync>,
+    config_store: Arc<dyn crate::platform::ConfigStore + Send + Sync>,
 ) -> ToolRegistry {
     let mut registry = ToolRegistry::new();
     registry.register(Box::new(super::GetTimeTool));
@@ -122,7 +124,7 @@ pub fn build_default_registry(
     registry.register(Box::new(super::RemindListTool::new(remind_at_store_for_list)));
     registry.register(Box::new(super::UpdateSessionSummaryTool::new(
         session_summary_store,
-        session_store,
+        Arc::clone(&session_store),
     )));
     registry.register(Box::new(super::BoardInfoTool::new(Arc::clone(&platform))));
     registry.register(Box::new(super::HttpPostTool));
@@ -132,5 +134,21 @@ pub fn build_default_registry(
             config.hardware_devices.clone(),
         )));
     }
+    // --- New tools ---
+    registry.register(Box::new(super::MemoryManageTool::new(Arc::clone(
+        &memory_store,
+    ))));
+    registry.register(Box::new(super::DailyNoteTool::new(Arc::clone(
+        &memory_store,
+    ))));
+    registry.register(Box::new(super::HttpRequestTool));
+    registry.register(Box::new(super::SessionManageTool::new(session_store)));
+    registry.register(Box::new(super::FileWriteTool));
+    registry.register(Box::new(super::SystemControlTool::new(Arc::clone(
+        &platform,
+    ))));
+    registry.register(Box::new(super::CronManageTool::new(memory_store)));
+    registry.register(Box::new(super::ProxyConfigTool::new(config_store)));
+    registry.register(Box::new(super::ModelConfigTool::new(platform)));
     registry
 }

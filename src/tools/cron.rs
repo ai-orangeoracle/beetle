@@ -9,7 +9,7 @@ use serde_json::json;
 pub struct CronTool;
 
 /// 解析单个 cron 字段为允许的值集合。支持 *、N、N-M、*/S、N-M/S、N,M,P。max 为允许的最大值（含）。
-fn parse_cron_field(s: &str, min_val: u32, max_val: u32) -> Result<Vec<u32>> {
+pub(crate) fn parse_cron_field(s: &str, min_val: u32, max_val: u32) -> Result<Vec<u32>> {
     let s = s.trim();
     if s.is_empty() {
         return Err(Error::config("tool_cron", "empty cron field"));
