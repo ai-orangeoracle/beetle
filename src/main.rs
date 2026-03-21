@@ -163,14 +163,37 @@ fn main() {
                     wifi_connected: false,
                     ip_address: None,
                     channels: [
-                        DisplayChannelStatus { name: "telegram", enabled: config.enabled_channel == "telegram", healthy: false },
-                        DisplayChannelStatus { name: "feishu", enabled: config.enabled_channel == "feishu", healthy: false },
-                        DisplayChannelStatus { name: "dingtalk", enabled: config.enabled_channel == "dingtalk", healthy: false },
-                        DisplayChannelStatus { name: "wecom", enabled: config.enabled_channel == "wecom", healthy: false },
-                        DisplayChannelStatus { name: "qq_channel", enabled: config.enabled_channel == "qq_channel", healthy: false },
+                        DisplayChannelStatus {
+                            name: "telegram",
+                            enabled: config.enabled_channel == "telegram",
+                            healthy: false,
+                        },
+                        DisplayChannelStatus {
+                            name: "feishu",
+                            enabled: config.enabled_channel == "feishu",
+                            healthy: false,
+                        },
+                        DisplayChannelStatus {
+                            name: "dingtalk",
+                            enabled: config.enabled_channel == "dingtalk",
+                            healthy: false,
+                        },
+                        DisplayChannelStatus {
+                            name: "wecom",
+                            enabled: config.enabled_channel == "wecom",
+                            healthy: false,
+                        },
+                        DisplayChannelStatus {
+                            name: "qq_channel",
+                            enabled: config.enabled_channel == "qq_channel",
+                            healthy: false,
+                        },
                     ],
                     pressure: DisplayPressureLevel::Normal,
                     heap_percent: 0,
+                    messages_in: 0,
+                    messages_out: 0,
+                    last_active_epoch_secs: 0,
                 });
             }
         }
@@ -313,6 +336,8 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
                 let mut last_channels: [(bool, bool); 5] = [(false, false); 5];
                 let mut last_pressure: Option<DisplayPressureLevel> = None;
                 let mut last_heap: u8 = 255; // 255 forces first-round refresh
+                let mut last_msg_in: u32 = u32::MAX; // force first-round refresh
+                let mut last_msg_out: u32 = u32::MAX;
 
                 // Auto-sleep: backlight off after N seconds of no activity.
                 let sleep_timeout = display_config
@@ -384,19 +409,28 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
                     ];
                     let heap_percent = heap_used_percent(&snapshot);
 
+                    // Read metrics for footer display.
+                    let m_snap = beetle::metrics::snapshot();
+                    let msg_in = m_snap.messages_in as u32;
+                    let msg_out = m_snap.messages_out as u32;
+                    let last_active = m_snap.last_active_epoch_secs as u32;
+
                     // Detect any dirty region change as "activity".
                     let state_changed = last_state != Some(state);
                     let ip_changed = last_ip.as_str() != ip.as_str();
-                    let channels_changed = channels.iter().enumerate().any(|(i, ch)| {
-                        last_channels[i] != (ch.enabled, ch.healthy)
-                    });
+                    let channels_changed = channels
+                        .iter()
+                        .enumerate()
+                        .any(|(i, ch)| last_channels[i] != (ch.enabled, ch.healthy));
                     let pressure_changed = last_pressure.as_ref() != Some(&pressure);
                     let heap_changed = last_heap.abs_diff(heap_percent) >= 2;
+                    let msg_changed = msg_in != last_msg_in || msg_out != last_msg_out;
                     let any_change = state_changed
                         || ip_changed
                         || channels_changed
                         || pressure_changed
-                        || heap_changed;
+                        || heap_changed
+                        || msg_changed;
 
                     if any_change {
                         last_activity_at = std::time::Instant::now();
@@ -413,7 +447,10 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
                             log::info!("[{}] display backlight woke up", TAG);
                             continue;
                         }
-                        if !backlight_off && !any_change && last_activity_at.elapsed() >= sleep_duration {
+                        if !backlight_off
+                            && !any_change
+                            && last_activity_at.elapsed() >= sleep_duration
+                        {
                             // Go to sleep: turn backlight off, skip rendering.
                             let _ = display_platform.set_display_backlight(false);
                             backlight_off = true;
@@ -435,6 +472,9 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
                             channels: channels.clone(),
                             pressure: pressure.clone(),
                             heap_percent,
+                            messages_in: msg_in,
+                            messages_out: msg_out,
+                            last_active_epoch_secs: last_active,
                         };
                         if let Err(e) = display_platform.display_command(cmd) {
                             log::warn!("[{}] display refresh failed: {}", TAG, e);
@@ -447,6 +487,8 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
                         }
                         last_pressure = Some(pressure);
                         last_heap = heap_percent;
+                        last_msg_in = msg_in;
+                        last_msg_out = msg_out;
                         continue;
                     }
 
@@ -458,25 +500,26 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
                         last_ip.push_str(&ip);
                     }
                     if channels_changed {
-                        let _ = display_platform.display_command(
-                            DisplayCommand::UpdateChannels {
-                                channels: channels.clone(),
-                            },
-                        );
+                        let _ = display_platform.display_command(DisplayCommand::UpdateChannels {
+                            channels: channels.clone(),
+                        });
                         for (i, ch) in channels.iter().enumerate() {
                             last_channels[i] = (ch.enabled, ch.healthy);
                         }
                     }
                     // 2% hysteresis on heap to avoid progress bar flicker
-                    if pressure_changed || heap_changed {
-                        let _ = display_platform.display_command(
-                            DisplayCommand::UpdatePressure {
-                                level: pressure.clone(),
-                                heap_percent,
-                            },
-                        );
+                    if pressure_changed || heap_changed || msg_changed {
+                        let _ = display_platform.display_command(DisplayCommand::UpdatePressure {
+                            level: pressure.clone(),
+                            heap_percent,
+                            messages_in: msg_in,
+                            messages_out: msg_out,
+                            last_active_epoch_secs: last_active,
+                        });
                         last_pressure = Some(pressure);
                         last_heap = heap_percent;
+                        last_msg_in = msg_in;
+                        last_msg_out = msg_out;
                     }
                 }
             })
@@ -566,7 +609,9 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
         beetle::orchestrator::init();
         let outbound_rx_for_dispatch = outbound_rx;
         let sinks_clone = Arc::clone(&sinks);
-        beetle::util::spawn_guarded("dispatch", move || run_dispatch(outbound_rx_for_dispatch, sinks_clone));
+        beetle::util::spawn_guarded("dispatch", move || {
+            run_dispatch(outbound_rx_for_dispatch, sinks_clone)
+        });
 
         if enabled_channel == "telegram" && !config.tg_token.trim().is_empty() {
             let tg_token = config.tg_token.clone();

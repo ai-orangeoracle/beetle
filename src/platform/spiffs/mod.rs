@@ -92,7 +92,7 @@ pub fn read_file(path: impl AsRef<Path>) -> Result<Vec<u8>> {
 }
 
 /// 写字节到文件。超过 MAX_WRITE_SIZE 返回错误。
-/// Atomic write: data → tmp file → rename, so a crash mid-write won't corrupt the original.
+/// Direct overwrite: SPIFFS 不支持可靠的 rename，直接覆盖写入。
 pub fn write_file(path: impl AsRef<Path>, data: &[u8]) -> Result<()> {
     #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
     let _guard = lock_spiffs();
@@ -107,16 +107,8 @@ pub fn write_file(path: impl AsRef<Path>, data: &[u8]) -> Result<()> {
         .to_str()
         .ok_or_else(|| Error::config("spiffs_write", "invalid path"))?;
 
-    // Write to temporary file first, then atomic rename.
-    let tmp_path = format!("{}.tmp", path_str);
-    let mut f = std::fs::File::create(&tmp_path).map_err(|e| Error::io("spiffs_write", e))?;
-    if let Err(e) = f.write_all(data) {
-        drop(f);
-        let _ = std::fs::remove_file(&tmp_path);
-        return Err(Error::io("spiffs_write", e));
-    }
-    drop(f);
-    std::fs::rename(&tmp_path, path_str).map_err(|e| Error::io("spiffs_write_rename", e))?;
+    let mut f = std::fs::File::create(path_str).map_err(|e| Error::io("spiffs_write", e))?;
+    f.write_all(data).map_err(|e| Error::io("spiffs_write", e))?;
     Ok(())
 }
 

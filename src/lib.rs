@@ -3,7 +3,7 @@
 
 mod build_info;
 mod constants;
-mod metrics;
+pub mod metrics;
 pub mod util;
 
 pub use build_info::{build_board_id, ota_manifest_url};

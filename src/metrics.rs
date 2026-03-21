@@ -24,6 +24,7 @@ static TOOL_ERRORS: AtomicU32 = AtomicU32::new(0);
 static WDT_FEEDS: AtomicU32 = AtomicU32::new(0);
 static DISPATCH_SEND_OK: AtomicU32 = AtomicU32::new(0);
 static DISPATCH_SEND_FAIL: AtomicU32 = AtomicU32::new(0);
+static LAST_ACTIVE_EPOCH_SECS: AtomicU32 = AtomicU32::new(0);
 
 static ERRORS_AGENT_ROUTER: AtomicU32 = AtomicU32::new(0);
 static ERRORS_AGENT_CHAT: AtomicU32 = AtomicU32::new(0);
@@ -43,6 +44,13 @@ pub fn record_message_in() {
 #[inline]
 pub fn record_message_out() {
     MESSAGES_OUT.fetch_add(1, Ordering::Relaxed);
+    // Update last-active timestamp (epoch seconds).
+    let epoch_secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+        .min(u32::MAX as u64) as u32;
+    LAST_ACTIVE_EPOCH_SECS.store(epoch_secs, Ordering::Relaxed);
 }
 
 #[inline]
@@ -122,6 +130,7 @@ pub fn snapshot() -> MetricsSnapshot {
         errors_channel_dispatch: ERRORS_CHANNEL_DISPATCH.load(Ordering::Relaxed) as u64,
         errors_session_append: ERRORS_SESSION_APPEND.load(Ordering::Relaxed) as u64,
         errors_other: ERRORS_OTHER.load(Ordering::Relaxed) as u64,
+        last_active_epoch_secs: LAST_ACTIVE_EPOCH_SECS.load(Ordering::Relaxed) as u64,
     }
 }
 
@@ -146,6 +155,7 @@ pub struct MetricsSnapshot {
     pub errors_channel_dispatch: u64,
     pub errors_session_append: u64,
     pub errors_other: u64,
+    pub last_active_epoch_secs: u64,
 }
 
 impl MetricsSnapshot {
@@ -156,7 +166,7 @@ impl MetricsSnapshot {
         let mut buf = String::with_capacity(256);
         let _ = write!(
             buf,
-            "metrics msg_in={} msg_out={} llm_calls={} llm_err={} llm_last_ms={} tool_calls={} tool_err={} wdt_feeds={} dispatch_ok={} dispatch_fail={} err_router={} err_chat={} err_ctx={} err_tool={} err_llm_req={} err_llm_parse={} err_dispatch={} err_session={} err_other={}",
+            "metrics msg_in={} msg_out={} llm_calls={} llm_err={} llm_last_ms={} tool_calls={} tool_err={} wdt_feeds={} dispatch_ok={} dispatch_fail={} err_router={} err_chat={} err_ctx={} err_tool={} err_llm_req={} err_llm_parse={} err_dispatch={} err_session={} err_other={} last_active_epoch={}",
             self.messages_in,
             self.messages_out,
             self.llm_calls,
@@ -175,7 +185,8 @@ impl MetricsSnapshot {
             self.errors_llm_parse,
             self.errors_channel_dispatch,
             self.errors_session_append,
-            self.errors_other
+            self.errors_other,
+            self.last_active_epoch_secs
         );
         buf
     }

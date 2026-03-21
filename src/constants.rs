@@ -21,8 +21,8 @@ pub const DEFAULT_MESSAGES_MAX_LEN: usize = 24 * 1024;
 
 /// TLS 准入：有 PSRAM 时允许发起单次 TLS（HTTP/WSS）要求的最小 internal 空闲（字节）。
 /// 有 PSRAM 时 mbedTLS 大部分分配走 SPIRAM，internal 仅需 ~15KB 给硬件加密/DMA。
-/// 实测显示初始化后稳态 internal ~47KB，43KB 阈值留 ~28KB 安全余量且不频繁误拒。
-pub const TLS_ADMISSION_MIN_INTERNAL_BYTES: usize = 43 * 1024;
+/// 实测稳态 internal ~47KB，38KB 阈值留 ~23KB 给硬件加密+DMA，避免边缘误拒。
+pub const TLS_ADMISSION_MIN_INTERNAL_BYTES: usize = 38 * 1024;
 /// TLS 准入：要求 internal 最大连续块不低于此值，避免碎片化导致 mbedTLS 分配失败。
 pub const TLS_ADMISSION_MIN_LARGEST_BLOCK_BYTES: usize = 24 * 1024;
 /// TLS 准入：无 PSRAM 时 internal 堆空闲下限（字节），mbedTLS 全部走 internal 需更多空间。
@@ -30,6 +30,10 @@ pub const TLS_ADMISSION_NO_PSRAM_MIN_BYTES: usize = 72 * 1024;
 
 /// 低内存且非 cron 时，重入队后休眠毫秒数，避免忙等、给 internal 恢复时间。
 pub const LOW_MEM_DEFER_SLEEP_MS: u64 = 4000;
+
+/// 入站 defer 最大重试次数；超过后降级回复"设备忙碌"，不再重入队。
+/// Max defer retries for the same inbound message before degraded reply.
+pub const MAX_DEFER_RETRIES: u8 = 3;
 
 /// 工具结果拼成一条 user 消息时，user_content 部分的字节数上限（4 KiB）。
 pub const MAX_TOOL_RESULTS_USER_MESSAGE_LEN: usize = 4 * 1024;
