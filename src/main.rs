@@ -307,6 +307,12 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
             .stack_size(6144)
             .spawn(move || {
                 let enabled = display_config.enabled_channel.as_str();
+                // Dirty-region cache: skip SPI when nothing changed.
+                let mut last_state: Option<DisplaySystemState> = None;
+                let mut last_ip = String::new();
+                let mut last_channels: [(bool, bool); 5] = [(false, false); 5];
+                let mut last_pressure: Option<DisplayPressureLevel> = None;
+                let mut last_heap: u8 = 255; // 255 forces first-round refresh
                 loop {
                     std::thread::sleep(std::time::Duration::from_secs(5));
                     let snapshot = beetle::orchestrator::snapshot();
@@ -364,16 +370,63 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
                         },
                     ];
                     let heap_percent = heap_used_percent(&snapshot);
-                    let cmd = DisplayCommand::RefreshDashboard {
-                        state,
-                        wifi_connected,
-                        ip_address: Some(ip),
-                        channels,
-                        pressure,
-                        heap_percent,
-                    };
-                    if let Err(e) = display_platform.display_command(cmd) {
-                        log::warn!("[{}] display refresh failed: {}", TAG, e);
+
+                    // State changed (icon + title area) → full refresh + update all cache
+                    if last_state != Some(state) {
+                        let cmd = DisplayCommand::RefreshDashboard {
+                            state,
+                            wifi_connected,
+                            ip_address: Some(ip.clone()),
+                            channels: channels.clone(),
+                            pressure: pressure.clone(),
+                            heap_percent,
+                        };
+                        if let Err(e) = display_platform.display_command(cmd) {
+                            log::warn!("[{}] display refresh failed: {}", TAG, e);
+                        }
+                        last_state = Some(state);
+                        last_ip.clear();
+                        last_ip.push_str(&ip);
+                        for (i, ch) in channels.iter().enumerate() {
+                            last_channels[i] = (ch.enabled, ch.healthy);
+                        }
+                        last_pressure = Some(pressure);
+                        last_heap = heap_percent;
+                        continue;
+                    }
+
+                    // State unchanged → partial updates per dirty region
+                    if last_ip.as_str() != ip.as_str() {
+                        let _ = display_platform
+                            .display_command(DisplayCommand::UpdateIp { ip: ip.clone() });
+                        last_ip.clear();
+                        last_ip.push_str(&ip);
+                    }
+                    let channels_changed = channels.iter().enumerate().any(|(i, ch)| {
+                        last_channels[i] != (ch.enabled, ch.healthy)
+                    });
+                    if channels_changed {
+                        let _ = display_platform.display_command(
+                            DisplayCommand::UpdateChannels {
+                                channels: channels.clone(),
+                            },
+                        );
+                        for (i, ch) in channels.iter().enumerate() {
+                            last_channels[i] = (ch.enabled, ch.healthy);
+                        }
+                    }
+                    // 2% hysteresis on heap to avoid progress bar flicker
+                    let pressure_changed = last_pressure.as_ref() != Some(&pressure);
+                    let heap_changed = last_heap.abs_diff(heap_percent) >= 2;
+                    if pressure_changed || heap_changed {
+                        let _ = display_platform.display_command(
+                            DisplayCommand::UpdatePressure {
+                                level: pressure.clone(),
+                                heap_percent,
+                            },
+                        );
+                        last_pressure = Some(pressure);
+                        last_heap = heap_percent;
                     }
                 }
             })

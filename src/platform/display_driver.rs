@@ -512,6 +512,18 @@ impl DisplayState {
                         footer_h,
                     )?;
                 }
+                DisplayCommand::UpdateChannels { channels } => {
+                    let bg = DISPLAY_BG;
+                    render_channels_partial(backend, channels, bg, self.config.width);
+                    let layout = LAYOUT;
+                    let ch_h = layout.footer_top.saturating_sub(layout.middle_top);
+                    backend.flush_rows(
+                        self.config.offset_x,
+                        self.config.offset_y,
+                        layout.middle_top,
+                        ch_h,
+                    )?;
+                }
                 DisplayCommand::Clear => {
                     use embedded_graphics::prelude::*;
                     use embedded_graphics_core::pixelcolor::Rgb565;
@@ -1102,6 +1114,65 @@ fn render_ip_partial<D: DrawTarget<Color = Rgb565>>(
 
     let subtitle_style = MonoTextStyle::new(&FONT_6X13, rgb565(0x66, 0x66, 0x66));
     let _ = Text::new(ip, Point::new(x, y + 11), subtitle_style).draw(target);
+}
+
+/// Partial update: repaint only the channel status (middle) region.
+fn render_channels_partial<D: DrawTarget<Color = Rgb565>>(
+    target: &mut D,
+    channels: &[DisplayChannelStatus; 5],
+    bg: Rgb565,
+    width: u16,
+) {
+    let layout = LAYOUT;
+    let middle_y = layout.middle_top as i32;
+    let ch_h = (layout.footer_top - layout.middle_top) as u32;
+
+    // Clear middle region
+    let _ = Rectangle::new(
+        Point::new(0, middle_y),
+        Size::new(width as u32, ch_h),
+    )
+    .into_styled(PrimitiveStyle::with_fill(bg))
+    .draw(target);
+
+    // Redraw channel dots and names
+    let healthy_color = rgb565(0x22, 0xcc, 0x22);
+    let unhealthy_color = rgb565(0xcc, 0x22, 0x22);
+    let disabled_color = rgb565(0xbb, 0xbb, 0xbb);
+    let text_style = MonoTextStyle::new(&FONT_6X13, rgb565(0x33, 0x33, 0x33));
+    let disabled_text_style = MonoTextStyle::new(&FONT_6X13, rgb565(0x99, 0x99, 0x99));
+
+    let col_width = width as i32 / 2;
+    let mut col = 0i32;
+    let mut row = 0i32;
+    for ch in channels.iter() {
+        let px = 8 + col * col_width;
+        let py = middle_y + row * 18;
+
+        if ch.enabled {
+            let dot_color = if ch.healthy {
+                healthy_color
+            } else {
+                unhealthy_color
+            };
+            let _ = Circle::new(Point::new(px, py + 2), 8)
+                .into_styled(PrimitiveStyle::with_fill(dot_color))
+                .draw(target);
+        } else {
+            let _ = Circle::new(Point::new(px, py + 2), 8)
+                .into_styled(PrimitiveStyle::with_stroke(disabled_color, 1))
+                .draw(target);
+        }
+
+        let name_style = if ch.enabled { text_style } else { disabled_text_style };
+        let _ = Text::new(ch.name, Point::new(px + 14, py + 11), name_style).draw(target);
+
+        col += 1;
+        if col >= 2 {
+            col = 0;
+            row += 1;
+        }
+    }
 }
 
 /// Partial update: repaint only the footer pressure + progress bar region.
