@@ -13,7 +13,7 @@ const BACKOFF_SECS: u64 = 5;
 /// 在独立线程中循环：每隔 interval_secs 向 inbound_tx 推一条 PcMsg（channel=cron, chat_id=cron）。
 /// 发送失败时打日志并退避 BACKOFF_SECS，不 panic。
 pub fn run_cron_loop(inbound_tx: InboundTx, interval_secs: u64) {
-    std::thread::spawn(move || {
+    crate::util::spawn_guarded("cron", move || {
         let interval = Duration::from_secs(interval_secs);
         let mut backoff = 0u64;
         loop {

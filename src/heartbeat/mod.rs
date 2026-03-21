@@ -33,7 +33,7 @@ static LAST_TASK_INJECT: OnceLock<Mutex<(String, Option<Instant>)>> = OnceLock::
 /// 周期（秒）打一条日志：版本、运行时长、可选 heap；可被外部脚本/串口抓取判断存活。
 pub fn run_heartbeat_loop(version: &'static str, interval_secs: u64) {
     let v = version;
-    std::thread::spawn(move || {
+    crate::util::spawn_guarded("heartbeat", move || {
         let interval = std::time::Duration::from_secs(interval_secs);
         loop {
             std::thread::sleep(interval);
@@ -67,7 +67,7 @@ pub fn run_heartbeat_loop_with_tasks(
     session_store: std::sync::Arc<dyn crate::memory::SessionStore + Send + Sync>,
 ) {
     let interval = Duration::from_secs(interval_secs);
-    std::thread::spawn(move || {
+    crate::util::spawn_guarded("heartbeat_tasks", move || {
         let mut round: u32 = 0;
         loop {
             std::thread::sleep(interval);

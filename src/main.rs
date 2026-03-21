@@ -268,7 +268,7 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
         let w = wifi_connected;
         let http_inbound_tx = inbound_tx.clone();
         let http_qq_cache = Arc::clone(&qq_msg_id_cache);
-        std::thread::spawn(move || {
+        beetle::util::spawn_guarded("http_server", move || {
             if let Err(e) = beetle::platform::http_server::run(
                 platform_http,
                 w,
@@ -460,7 +460,7 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
         let allowed = parse_allowed_chat_ids(&config.feishu_allowed_chat_ids);
         let pf = Arc::clone(&platform);
         let cfg = Arc::clone(&config);
-        std::thread::spawn(move || {
+        beetle::util::spawn_guarded("feishu_ws", move || {
             run_feishu_ws_loop(
                 id,
                 sec,
@@ -492,7 +492,7 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
                 let qq_cache_ws = std::sync::Arc::clone(&qq_msg_id_cache);
                 let pf = Arc::clone(&platform);
                 let cfg = Arc::clone(&config);
-                std::thread::spawn(move || {
+                beetle::util::spawn_guarded("qq_ws", move || {
                     beetle::run_qq_ws_loop(
                         qq_id,
                         qq_sec,
@@ -516,7 +516,7 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
         beetle::orchestrator::init();
         let outbound_rx_for_dispatch = outbound_rx;
         let sinks_clone = Arc::clone(&sinks);
-        std::thread::spawn(move || run_dispatch(outbound_rx_for_dispatch, sinks_clone));
+        beetle::util::spawn_guarded("dispatch", move || run_dispatch(outbound_rx_for_dispatch, sinks_clone));
 
         if enabled_channel == "telegram" && !config.tg_token.trim().is_empty() {
             let tg_token = config.tg_token.clone();
@@ -531,7 +531,7 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
             let tg_config_store = Arc::clone(&config_store);
             let pf = Arc::clone(&platform);
             let cfg = Arc::clone(&config);
-            std::thread::spawn(move || {
+            beetle::util::spawn_guarded("tg_poll", move || {
                 beetle::run_telegram_poll_loop(
                     tg_token,
                     tg_allowed,
@@ -635,7 +635,7 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
                 Some(Arc::clone(&inbound_depth)),
                 Some(Arc::clone(&outbound_depth)),
             );
-            std::thread::spawn(move || {
+            beetle::util::spawn_guarded("cli_repl", move || {
                 let reader = std::io::BufReader::new(std::io::stdin());
                 beetle::cli::run_repl(cli_ctx, reader);
             });
