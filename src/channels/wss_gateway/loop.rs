@@ -202,11 +202,11 @@ pub fn run_wss_gateway_loop<D, H, C, CreateHttp, Conn>(
                                     == crate::orchestrator::PressureLevel::Critical
                                 {
                                     log::warn!(
-                                        "[{}] pressure critical, dropping msg chat_id={}",
+                                        "[{}] pressure critical, dropping msg chat_id={}, skip ack to trigger re-delivery",
                                         tag,
                                         chat_id
                                     );
-                                    true
+                                    false
                                 } else {
                                     match inbound_tx.try_send(msg) {
                                         Ok(()) => {
