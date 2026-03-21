@@ -78,7 +78,7 @@ pub struct DisplayConfig {
     pub spi: DisplaySpiConfig,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 pub struct DisplayChannelStatus {
     pub name: &'static str,
     pub enabled: bool,
@@ -122,6 +122,9 @@ pub enum DisplayCommand {
     UpdatePressure {
         level: DisplayPressureLevel,
         heap_percent: u8,
+    },
+    UpdateChannels {
+        channels: [DisplayChannelStatus; 5],
     },
     Clear,
 }
