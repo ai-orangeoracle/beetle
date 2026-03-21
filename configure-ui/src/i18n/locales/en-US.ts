@@ -245,6 +245,8 @@ export const enUS = {
       spiFreqHz: 'SPI frequency (Hz)',
       restartRequired: 'Saved. Restart required to take effect.',
       footerHint: 'Note: final validation for driver/bus/pin conflicts is enforced by backend.',
+      sleepTimeoutSecs: 'Auto-sleep timeout (seconds)',
+      sleepTimeoutSecsHelp: 'Turn off backlight after idle for this many seconds. 0 = disabled. Requires BL pin.',
       validation: {
         dimension: 'Width and height must be in range 1..480',
         rotation: 'Rotation must be one of 0/90/180/270',

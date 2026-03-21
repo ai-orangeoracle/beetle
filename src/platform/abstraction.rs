@@ -197,4 +197,16 @@ pub trait Platform: Send + Sync {
     fn display_command(&self, _cmd: DisplayCommand) -> Result<()> {
         Ok(())
     }
+
+    /// 设置显示器背光开关。on=true 开启，on=false 关闭。默认 no-op。
+    /// Set display backlight on/off. Default no-op.
+    fn set_display_backlight(&self, _on: bool) -> Result<()> {
+        Ok(())
+    }
+
+    /// 背光控制是否可用（需有 BL 引脚且显示器已初始化）。默认 false。
+    /// Whether backlight control is available. Default false.
+    fn display_backlight_available(&self) -> bool {
+        false
+    }
 }

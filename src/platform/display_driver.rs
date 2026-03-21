@@ -407,6 +407,8 @@ pub struct DisplayState {
     pub config: DisplayConfig,
     pub available: bool,
     pub last_command_at: Option<Instant>,
+    /// BL GPIO pin number (if configured). Used for backlight on/off control.
+    bl_pin: Option<i32>,
     #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
     backend: Option<esp_backend::SpiDisplayBackend>,
 }
@@ -418,10 +420,13 @@ impl DisplayState {
                 config: config.clone(),
                 available: false,
                 last_command_at: None,
+                bl_pin: None,
                 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
                 backend: None,
             });
         }
+
+        let bl_pin = config.spi.bl;
 
         #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
         {
@@ -430,6 +435,7 @@ impl DisplayState {
                 config: config.clone(),
                 available: true,
                 last_command_at: None,
+                bl_pin,
                 backend: Some(backend),
             })
         }
@@ -441,6 +447,7 @@ impl DisplayState {
                 config: config.clone(),
                 available: false,
                 last_command_at: None,
+                bl_pin,
             })
         }
     }
@@ -540,6 +547,31 @@ impl DisplayState {
             self.last_command_at = Some(Instant::now());
         }
 
+        Ok(())
+    }
+
+    /// 背光控制是否可用（显示器已初始化且有 BL 引脚）。
+    /// Whether backlight control is available.
+    pub fn backlight_available(&self) -> bool {
+        self.available && self.bl_pin.is_some()
+    }
+
+    /// 设置背光开关。on=true 开启（GPIO HIGH），on=false 关闭（GPIO LOW）。
+    /// Set backlight on/off via GPIO level.
+    pub fn set_backlight(&self, on: bool) -> Result<()> {
+        #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+        {
+            if let Some(bl) = self.bl_pin {
+                let level = if on { 1 } else { 0 };
+                unsafe {
+                    esp_idf_svc::sys::gpio_set_level(bl, level);
+                }
+            }
+        }
+        #[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+        {
+            let _ = on;
+        }
         Ok(())
     }
 }

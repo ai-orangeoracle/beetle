@@ -258,4 +258,21 @@ impl Platform for Esp32Platform {
             None => Ok(()),
         }
     }
+
+    fn set_display_backlight(&self, on: bool) -> crate::error::Result<()> {
+        let guard = self.display_state.lock().unwrap_or_else(|e| e.into_inner());
+        match guard.as_ref() {
+            Some(state) => state.set_backlight(on),
+            None => Ok(()),
+        }
+    }
+
+    fn display_backlight_available(&self) -> bool {
+        self.display_state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+            .map(|s| s.backlight_available())
+            .unwrap_or(false)
+    }
 }
