@@ -108,7 +108,7 @@ impl Tool for CronTool {
         let now_secs = obj
             .get("now")
             .and_then(|x| x.as_str())
-            .and_then(|s| parse_iso8601(s))
+            .and_then(parse_iso8601)
             .unwrap_or_else(current_unix_secs);
 
         let parts: Vec<&str> = expr.split_whitespace().collect();
@@ -146,8 +146,8 @@ impl Tool for CronTool {
                     "next_unix": secs,
                     "next_iso": next_iso
                 });
-                return Ok(serde_json::to_string(&out)
-                    .map_err(|e| Error::config("tool_cron", e.to_string()))?);
+                return serde_json::to_string(&out)
+                    .map_err(|e| Error::config("tool_cron", e.to_string()));
             }
             secs += 60;
         }

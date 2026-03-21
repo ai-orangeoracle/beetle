@@ -91,8 +91,7 @@ impl WifiScan for WifiScanHandle {
     fn request_scan(&self) -> Result<Vec<WifiApEntry>> {
         let _ = self.req_tx.send(());
         let guard = self.resp_rx.lock().map_err(|e| Error::Other {
-            source: Box::new(std::io::Error::new(
-                std::io::ErrorKind::Other,
+            source: Box::new(std::io::Error::other(
                 e.to_string(),
             )),
             stage: "wifi_scan_lock",
@@ -176,7 +175,7 @@ fn run_scan_loop(
     loop {
         // -- STA 保活（非阻塞） --
         if has_sta {
-            let in_cooldown = cooldown_until.map_or(false, |t| Instant::now() < t);
+            let in_cooldown = cooldown_until.is_some_and(|t| Instant::now() < t);
             if !in_cooldown {
                 let connected = wifi.is_connected().unwrap_or(false);
                 if connected {

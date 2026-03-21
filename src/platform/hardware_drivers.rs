@@ -130,7 +130,6 @@ pub fn drive_gpio_in(pins: &PinConfig, _params: &Value, options: &Value) -> Resu
 /// LEDC timer index to timer enum (ESP32-S3 has 4 timers 0..3; each pwm_out gets its own for independent frequency).
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 fn ledc_timer_from_index(i: u8) -> esp_idf_svc::sys::ledc_timer_t {
-    use esp_idf_svc::sys::ledc_timer_t;
     // C enum LEDC_TIMER_0=0 .. LEDC_TIMER_3=3; repr(C) enum is typically 4 bytes.
     unsafe { core::mem::transmute((i.min(3)) as u32) }
 }

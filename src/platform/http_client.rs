@@ -400,8 +400,7 @@ fn read_response_body_into_psram<R: Read>(
                     crate::platform::heap::free_spiram_buffer(ptr);
                 }
                 return Err(Error::Other {
-                    source: Box::new(std::io::Error::new(
-                        std::io::ErrorKind::Other,
+                    source: Box::new(std::io::Error::other(
                         format!("{:?}", e),
                     )),
                     stage: "http_read",
