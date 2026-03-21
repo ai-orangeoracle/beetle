@@ -209,4 +209,16 @@ pub trait Platform: Send + Sync {
     fn display_backlight_available(&self) -> bool {
         false
     }
+
+    /// 设置显示器背光亮度（0-100%）。PWM 调光；默认 no-op。
+    /// Set display backlight brightness (0-100%). Default no-op.
+    fn set_display_backlight_brightness(&self, _percent: u8) -> Result<()> {
+        Ok(())
+    }
+
+    /// 背光渐变（阻塞，在调用线程执行）。默认 no-op。
+    /// Fade display backlight from `from`% to `to`% over `duration_ms`. Blocking. Default no-op.
+    fn fade_display_backlight(&self, _from: u8, _to: u8, _duration_ms: u32) -> Result<()> {
+        Ok(())
+    }
 }
