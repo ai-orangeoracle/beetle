@@ -4,7 +4,7 @@
 mod build_info;
 mod constants;
 mod metrics;
-mod util;
+pub mod util;
 
 pub use build_info::{build_board_id, ota_manifest_url};
 /// Re-export PlatformHttpClient at crate root so core modules (agent, tools) can depend on

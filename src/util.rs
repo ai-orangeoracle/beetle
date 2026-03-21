@@ -463,6 +463,32 @@ pub fn is_private_url(url: &str) -> bool {
     false
 }
 
+/// Spawn a named thread with panic protection. If the closure panics, the panic is caught
+/// and logged. This prevents silent thread death in long-running background loops.
+/// 带 panic 保护的线程启动：闭包 panic 时捕获并记日志，避免后台线程静默消亡。
+pub fn spawn_guarded<F>(name: &str, f: F)
+where
+    F: FnOnce() + Send + 'static,
+{
+    let tag = name.to_string();
+    std::thread::Builder::new()
+        .name(tag.clone())
+        .spawn(move || {
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
+            if let Err(e) = result {
+                let msg = if let Some(s) = e.downcast_ref::<&str>() {
+                    (*s).to_string()
+                } else if let Some(s) = e.downcast_ref::<String>() {
+                    s.clone()
+                } else {
+                    "unknown panic".to_string()
+                };
+                log::error!("[{}] thread panicked: {}", tag, msg);
+            }
+        })
+        .ok();
+}
+
 #[cfg(test)]
 mod marker_string_tests {
     use super::*;
