@@ -18,7 +18,9 @@ use crate::metrics;
 use crate::orchestrator::admission::{AdmissionDecision, LlmDecision, ToolDecision};
 use crate::state;
 use crate::tools::ToolContext;
-use crate::util::truncate_content_to_max;
+use crate::util::{
+    remove_substrings_all_trim, strip_agent_stop_confirmation, truncate_content_to_max,
+};
 use crate::PlatformHttpClient;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
@@ -203,9 +205,7 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
         let now_for_key = Instant::now();
         if llm_failure_count
             .get(&msg_key)
-            .map(|(count, ts)| {
-                *count >= 3 && now_for_key.duration_since(*ts) < FAILURE_EXPIRY
-            })
+            .map(|(count, ts)| *count >= 3 && now_for_key.duration_since(*ts) < FAILURE_EXPIRY)
             .unwrap_or(false)
         {
             let out = PcMsg {
@@ -392,29 +392,34 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
         let (mut reply_content, is_interrupt) = match outcome {
             WorkerOutcome::Interrupt(confirm) => {
                 let cow = truncate_content_to_max(&confirm, MAX_CONTENT_LEN);
-                let s = if let std::borrow::Cow::Borrowed(_) = &cow { confirm } else { cow.into_owned() };
+                let s = if let std::borrow::Cow::Borrowed(_) = &cow {
+                    confirm
+                } else {
+                    cow.into_owned()
+                };
                 (s, true)
             }
             WorkerOutcome::Content(s) => {
                 let cow = truncate_content_to_max(&s, MAX_CONTENT_LEN);
-                let s = if let std::borrow::Cow::Borrowed(_) = &cow { s } else { cow.into_owned() };
+                let s = if let std::borrow::Cow::Borrowed(_) = &cow {
+                    s
+                } else {
+                    cow.into_owned()
+                };
                 (s, false)
             }
         };
         let mark_important = !is_interrupt && reply_content.contains(AGENT_MARKER_MARK_IMPORTANT);
         let signal_comfort = !is_interrupt && reply_content.contains(AGENT_MARKER_SIGNAL_COMFORT);
         if mark_important || signal_comfort {
-            if mark_important {
-                // In-place removal: replace returns new String only when marker present.
-                reply_content = reply_content.replace(AGENT_MARKER_MARK_IMPORTANT, "");
-            }
+            reply_content = remove_substrings_all_trim(
+                &reply_content,
+                &[AGENT_MARKER_MARK_IMPORTANT, AGENT_MARKER_SIGNAL_COMFORT],
+            );
             if signal_comfort {
-                reply_content = reply_content.replace(AGENT_MARKER_SIGNAL_COMFORT, "");
                 let _ = config.emotion_signal_store.set(&msg.chat_id, "comfort");
             }
-            // Single trim + truncate pass after all markers removed.
-            let trimmed = reply_content.trim();
-            reply_content = truncate_content_to_max(trimmed, MAX_CONTENT_LEN).into_owned();
+            reply_content = truncate_content_to_max(&reply_content, MAX_CONTENT_LEN).into_owned();
         }
 
         if !is_interrupt && config.task_continuation_max_rounds > 0 {
@@ -697,7 +702,7 @@ fn run_worker_path<H: PlatformHttpClient>(
         if response.stop_reason == StopReason::EndTurn {
             let content = response.content;
             if content.contains(AGENT_MARKER_STOP) {
-                let confirmation = content.replace(AGENT_MARKER_STOP, "").trim().to_string();
+                let confirmation = strip_agent_stop_confirmation(&content);
                 // 流式编辑：更新为清理后的确认文案，避免用户看到原始标记。
                 let streamed = if let (Some(ref mid), Some(ed)) = (&stream_msg_id, editor) {
                     if !confirmation.is_empty() {
@@ -732,8 +737,9 @@ fn run_worker_path<H: PlatformHttpClient>(
                     response.content
                 },
             });
-            let mut user_content_raw =
-                String::with_capacity(MAX_TOOL_RESULTS_USER_MESSAGE_LEN.min(tool_calls.len() * 192));
+            let mut user_content_raw = String::with_capacity(
+                MAX_TOOL_RESULTS_USER_MESSAGE_LEN.min(tool_calls.len() * 192),
+            );
             let mut truncated = false;
             for (i, tc) in tool_calls.iter().enumerate() {
                 // 工具执行门控
@@ -765,11 +771,13 @@ fn run_worker_path<H: PlatformHttpClient>(
                     }
                 };
                 crate::platform::task_wdt::feed_current_task();
-                if i > 0 && push_bounded_utf8(
-                    &mut user_content_raw,
-                    "\n",
-                    MAX_TOOL_RESULTS_USER_MESSAGE_LEN,
-                ) {
+                if i > 0
+                    && push_bounded_utf8(
+                        &mut user_content_raw,
+                        "\n",
+                        MAX_TOOL_RESULTS_USER_MESSAGE_LEN,
+                    )
+                {
                     truncated = true;
                     break;
                 }
@@ -814,7 +822,7 @@ fn run_worker_path<H: PlatformHttpClient>(
 
         let content = response.content;
         if content.contains(AGENT_MARKER_STOP) {
-            let confirmation = content.replace(AGENT_MARKER_STOP, "").trim().to_string();
+            let confirmation = strip_agent_stop_confirmation(&content);
             let streamed = if let (Some(ref mid), Some(ed)) = (&stream_msg_id, editor) {
                 if !confirmation.is_empty() {
                     let _ = ed.edit(&msg.chat_id, mid, &confirmation);
