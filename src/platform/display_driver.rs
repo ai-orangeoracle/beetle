@@ -3,7 +3,6 @@
 
 use crate::display::{
     DisplayChannelStatus, DisplayCommand, DisplayConfig, DisplayPressureLevel, DisplaySystemState,
-    default_display_layout,
 };
 use crate::error::Result;
 use std::time::Instant;
@@ -28,6 +27,7 @@ mod esp_backend {
     /// SPI-connected display backend (ST7789 / ILI9341).
     /// Framebuffer lives in PSRAM; rendering via `embedded-graphics` `DrawTarget`.
     pub(super) struct SpiDisplayBackend {
+        spi_host: u32,
         spi_handle: spi_device_handle_t,
         dc_pin: i32,
         width: u16,
@@ -43,6 +43,7 @@ mod esp_backend {
         fn drop(&mut self) {
             unsafe {
                 spi_bus_remove_device(self.spi_handle);
+                spi_bus_free(self.spi_host);
                 heap::free_spiram_buffer(self.framebuf);
             }
         }
@@ -171,6 +172,7 @@ mod esp_backend {
             }
 
             let mut backend = Self {
+                spi_host,
                 spi_handle,
                 dc_pin: spi.dc,
                 width,
@@ -239,13 +241,17 @@ mod esp_backend {
             self.send_data(&[madctl])?;
 
             // INVON / INVOFF
-            if config.invert_colors {
+            // ST7789 panels are typically inverted by default, so normal display needs INVON.
+            // ILI9341 panels are typically non-inverted, so normal display needs INVOFF.
+            // config.invert_colors flips the driver's default behavior.
+            let needs_invon = match config.driver {
+                DisplayDriver::St7789 => !config.invert_colors,
+                DisplayDriver::Ili9341 => config.invert_colors,
+            };
+            if needs_invon {
                 self.send_cmd(0x21)?; // INVON
             } else {
-                match config.driver {
-                    DisplayDriver::St7789 => self.send_cmd(0x21)?, // ST7789 typically needs INVON
-                    DisplayDriver::Ili9341 => self.send_cmd(0x20)?, // ILI9341 typically INVOFF
-                }
+                self.send_cmd(0x20)?; // INVOFF
             }
 
             // NORON
@@ -273,12 +279,26 @@ mod esp_backend {
             rot_bits | color_bit
         }
 
-        /// Set column/row address window then push framebuf via SPI.
+        /// Set column/row address window then push full framebuf via SPI.
         pub fn flush(&self, offset_x: i16, offset_y: i16) -> Result<()> {
+            self.flush_region(offset_x, offset_y, 0, 0, self.width, self.height)
+        }
+
+        /// Push only the rows `[ry..ry+rh)` from the framebuffer, reducing SPI transfer.
+        pub fn flush_region(
+            &self,
+            offset_x: i16,
+            offset_y: i16,
+            ry: u16,
+            _rx: u16,
+            _rw: u16,
+            rh: u16,
+        ) -> Result<()> {
+            // ST7789/ILI9341 require full-width rows for RAMWR; we send only the dirty row band.
             let x0 = offset_x.max(0) as u16;
-            let y0 = offset_y.max(0) as u16;
+            let y0 = offset_y.max(0) as u16 + ry;
             let x1 = x0 + self.width - 1;
-            let y1 = y0 + self.height - 1;
+            let y1 = y0 + rh - 1;
 
             // CASET
             self.send_cmd(0x2A)?;
@@ -301,10 +321,13 @@ mod esp_backend {
             // RAMWR
             self.send_cmd(0x2C)?;
 
-            // Send framebuffer in chunks (SPI DMA max transfer is typically 32KB-64KB)
-            const CHUNK_SIZE: usize = 32768;
+            // Send only the dirty rows from framebuf
+            let row_bytes = self.width as usize * 2;
+            let start = ry as usize * row_bytes;
+            let end = start + rh as usize * row_bytes;
             let buf = unsafe { core::slice::from_raw_parts(self.framebuf, self.framebuf_len) };
-            for chunk in buf.chunks(CHUNK_SIZE) {
+            const CHUNK_SIZE: usize = 32768;
+            for chunk in buf[start..end].chunks(CHUNK_SIZE) {
                 self.send_data(chunk)?;
             }
             Ok(())
@@ -443,7 +466,15 @@ impl DisplayState {
                 DisplayCommand::UpdateIp { ip } => {
                     let bg = bg_color_for_state(self.last_state);
                     render_ip_partial(backend, ip, bg, self.config.width);
-                    backend.flush(self.config.offset_x, self.config.offset_y)?;
+                    let layout = LAYOUT;
+                    backend.flush_region(
+                        self.config.offset_x,
+                        self.config.offset_y,
+                        layout.subtitle_top,
+                        0,
+                        self.config.width,
+                        16,
+                    )?;
                 }
                 DisplayCommand::UpdatePressure {
                     level,
@@ -456,8 +487,18 @@ impl DisplayState {
                         *heap_percent,
                         bg,
                         self.config.width,
+                        self.config.height,
                     );
-                    backend.flush(self.config.offset_x, self.config.offset_y)?;
+                    let layout = LAYOUT;
+                    let footer_h = self.config.height.saturating_sub(layout.footer_top);
+                    backend.flush_region(
+                        self.config.offset_x,
+                        self.config.offset_y,
+                        layout.footer_top,
+                        0,
+                        self.config.width,
+                        footer_h,
+                    )?;
                 }
                 DisplayCommand::Clear => {
                     use embedded_graphics::prelude::*;
@@ -490,6 +531,18 @@ use embedded_graphics::{
     text::Text,
 };
 use embedded_graphics_core::pixelcolor::Rgb565;
+
+/// Cached layout constants (avoid re-creating on each call).
+const LAYOUT: crate::display::DisplayLayout = crate::display::DisplayLayout {
+    header_top: 16,
+    icon_left: 12,
+    icon_size: 64,
+    title_left: 88,
+    title_top: 18,
+    subtitle_top: 44,
+    middle_top: 104,
+    footer_top: 168,
+};
 
 /// Beetle drawing options.
 #[derive(Default)]
@@ -695,6 +748,37 @@ fn approx_cos_sin(deg: i32) -> (i32, i32) {
     }
 }
 
+/// Draw a top-half arc (WiFi signal style) centered at (cx, cy) with radius `r`.
+/// Uses 6 line segments covering roughly -150° to -30° (i.e. the upper arc).
+fn draw_top_arc<D: DrawTarget<Color = Rgb565>>(
+    target: &mut D,
+    cx: i32,
+    cy: i32,
+    r: i32,
+    style: &PrimitiveStyle<Rgb565>,
+) {
+    // Pre-computed (cos, sin) * 1000 for angles -150, -130, -110, -90, -70, -50, -30 degrees.
+    const POINTS: [(i32, i32); 7] = [
+        (-866, -500),  // -150°
+        (-643, -766),  // -130°
+        (-342, -940),  // -110°
+        (0, -1000),    // -90°
+        (342, -940),   // -70°
+        (643, -766),   // -50°
+        (866, -500),   // -30°
+    ];
+    for pair in POINTS.windows(2) {
+        let (c0, s0) = pair[0];
+        let (c1, s1) = pair[1];
+        let _ = Line::new(
+            Point::new(cx + r * c0 / 1000, cy + r * s0 / 1000),
+            Point::new(cx + r * c1 / 1000, cy + r * s1 / 1000),
+        )
+        .into_styled(*style)
+        .draw(target);
+    }
+}
+
 /// Dashboard render parameters (avoids clippy::too_many_arguments).
 struct DashboardParams<'a> {
     state: DisplaySystemState,
@@ -708,7 +792,7 @@ struct DashboardParams<'a> {
 
 /// Render the full dashboard UI.
 fn render_dashboard<D: DrawTarget<Color = Rgb565>>(target: &mut D, p: &DashboardParams<'_>) {
-    let layout = default_display_layout();
+    let layout = LAYOUT;
 
     // --- Background fill ---
     let bg_color = bg_color_for_state(p.state);
@@ -751,17 +835,11 @@ fn render_dashboard<D: DrawTarget<Color = Rgb565>>(target: &mut D, p: &Dashboard
     // --- State-specific overlays ---
     match p.state {
         DisplaySystemState::Booting | DisplaySystemState::NoWifi => {
-            // WiFi signal arcs above head
+            // WiFi signal arcs above head (top-half arcs via line segments)
             let sig_y = head_cy - head_r - 4;
             let arc_style = PrimitiveStyle::with_stroke(beetle_color, 2);
             for &r in &[7i32, 13] {
-                // Approximate arc with a circle outline (top half visible)
-                let _ = Circle::new(
-                    Point::new(cx - r, sig_y - r),
-                    (r * 2) as u32,
-                )
-                .into_styled(arc_style)
-                .draw(target);
+                draw_top_arc(target, cx, sig_y, r, &arc_style);
             }
         }
         DisplaySystemState::Idle => {
@@ -931,7 +1009,7 @@ fn render_ip_partial<D: DrawTarget<Color = Rgb565>>(
     bg: Rgb565,
     width: u16,
 ) {
-    let layout = default_display_layout();
+    let layout = LAYOUT;
     // Clear subtitle row: from title_left to right edge, height = font height (13px)
     let y = layout.subtitle_top as i32;
     let x = layout.title_left as i32;
@@ -951,14 +1029,16 @@ fn render_pressure_partial<D: DrawTarget<Color = Rgb565>>(
     heap_percent: u8,
     bg: Rgb565,
     width: u16,
+    height: u16,
 ) {
-    let layout = default_display_layout();
+    let layout = LAYOUT;
     let footer_y = layout.footer_top as i32;
 
     // Clear entire footer region (pressure text + progress bar + percentage)
+    let footer_h = (height as i32 - footer_y).max(1) as u32;
     let _ = Rectangle::new(
         Point::new(0, footer_y),
-        Size::new(width as u32, (width as i32 - footer_y).max(40) as u32),
+        Size::new(width as u32, footer_h),
     )
     .into_styled(PrimitiveStyle::with_fill(bg))
     .draw(target);
