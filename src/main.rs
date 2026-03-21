@@ -301,7 +301,10 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
 
     if platform.display_available() {
         let display_platform = Arc::clone(&platform);
-        std::thread::spawn(move || {
+        std::thread::Builder::new()
+            .name("display".into())
+            .stack_size(4096)
+            .spawn(move || {
             loop {
                 std::thread::sleep(std::time::Duration::from_secs(5));
             let snapshot = beetle::orchestrator::snapshot();
@@ -314,7 +317,9 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
             let busy = snapshot.inbound_depth > 0
                 || snapshot.outbound_depth > 0
                 || snapshot.active_http_count > 0;
-            let state = if !wifi_connected {
+            let state = if snapshot.pressure == beetle::orchestrator::PressureLevel::Critical {
+                DisplaySystemState::Fault
+            } else if !wifi_connected {
                 DisplaySystemState::NoWifi
             } else if busy {
                 DisplaySystemState::Busy
@@ -357,7 +362,8 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
             };
             let _ = display_platform.display_command(cmd);
             }
-        });
+        })
+        .ok();
     }
 
     beetle::memory::run_remind_loop(Arc::clone(&remind_at_store), inbound_tx.clone(), 60);
