@@ -144,6 +144,7 @@ pub struct AgentLoopConfig<'a> {
 /// 从 inbound_rx 取一条 PcMsg，构建 context，多轮 chat（含 tool 执行），写会话并发送一条出站。
 /// router_llm：若为 Some 则先调路由，解析 REPLY/WORKER 再决定是否调 worker_llm；None 则仅用 worker_llm。
 /// worker_llm：执行完整 context + tools 的客户端（可为 FallbackLlmClient）。
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub fn run_agent_loop<H: PlatformHttpClient>(
     http: &mut H,
     router_llm: Option<&dyn LlmClient>,

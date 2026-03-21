@@ -158,6 +158,7 @@ pub fn connect(config: &AppConfig) -> Result<Option<WifiScanHandle>> {
 /// 常驻循环：
 /// 1. 每 `STA_POLL_INTERVAL_MS` 检查 STA 连接状态，断连时非阻塞发起 reconnect。
 /// 2. 响应扫描请求（scan_req_rx）。
+///
 /// `has_sta` 为 true 时才做 STA 保活检测（纯 AP 模式不需要）。
 ///
 /// **重连策略**：只调 `wifi.connect()` 发起重连，**不调 `wait_netif_up()`**。

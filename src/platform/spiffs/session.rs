@@ -76,8 +76,8 @@ fn parse_jsonl_line(line: &str) -> Option<SessionMessage> {
 /// 从文件首行解析 "# chat_id: <id>"，非该格式返回 None。
 fn parse_chat_id_header(line: &str) -> Option<String> {
     let line = line.trim();
-    if line.starts_with(CHAT_ID_HEADER_PREFIX) {
-        let id = line[CHAT_ID_HEADER_PREFIX.len()..].trim();
+    if let Some(stripped) = line.strip_prefix(CHAT_ID_HEADER_PREFIX) {
+        let id = stripped.trim();
         if !id.is_empty() {
             return Some(id.to_string());
         }

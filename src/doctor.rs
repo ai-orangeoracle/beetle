@@ -15,6 +15,7 @@ const DEPTH_WARN_THRESHOLD: usize = 6;
 const LAST_ERROR_MAX_LEN: usize = 200;
 
 /// 根据当前状态生成自检列表。不依赖 platform/state，便于单测与 host 编译。
+#[allow(clippy::too_many_arguments)]
 pub fn diagnose(
     wifi_connected: bool,
     inbound_depth: usize,
