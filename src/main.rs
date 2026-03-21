@@ -313,6 +313,19 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
                 let mut last_channels: [(bool, bool); 5] = [(false, false); 5];
                 let mut last_pressure: Option<DisplayPressureLevel> = None;
                 let mut last_heap: u8 = 255; // 255 forces first-round refresh
+
+                // Auto-sleep: backlight off after N seconds of no activity.
+                let sleep_timeout = display_config
+                    .display
+                    .as_ref()
+                    .map(|d| d.sleep_timeout_secs)
+                    .unwrap_or(0);
+                let sleep_enabled =
+                    sleep_timeout > 0 && display_platform.display_backlight_available();
+                let sleep_duration = std::time::Duration::from_secs(sleep_timeout as u64);
+                let mut last_activity_at = std::time::Instant::now();
+                let mut backlight_off = false;
+
                 loop {
                     std::thread::sleep(std::time::Duration::from_secs(5));
                     let snapshot = beetle::orchestrator::snapshot();
@@ -371,8 +384,50 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
                     ];
                     let heap_percent = heap_used_percent(&snapshot);
 
+                    // Detect any dirty region change as "activity".
+                    let state_changed = last_state != Some(state);
+                    let ip_changed = last_ip.as_str() != ip.as_str();
+                    let channels_changed = channels.iter().enumerate().any(|(i, ch)| {
+                        last_channels[i] != (ch.enabled, ch.healthy)
+                    });
+                    let pressure_changed = last_pressure.as_ref() != Some(&pressure);
+                    let heap_changed = last_heap.abs_diff(heap_percent) >= 2;
+                    let any_change = state_changed
+                        || ip_changed
+                        || channels_changed
+                        || pressure_changed
+                        || heap_changed;
+
+                    if any_change {
+                        last_activity_at = std::time::Instant::now();
+                    }
+
+                    // Auto-sleep logic: wake on change, sleep on idle timeout.
+                    if sleep_enabled {
+                        if any_change && backlight_off {
+                            // Wake up: turn backlight on, force full refresh next iteration.
+                            let _ = display_platform.set_display_backlight(true);
+                            backlight_off = false;
+                            last_state = None; // force full RefreshDashboard
+                            last_heap = 255;
+                            log::info!("[{}] display backlight woke up", TAG);
+                            continue;
+                        }
+                        if !backlight_off && !any_change && last_activity_at.elapsed() >= sleep_duration {
+                            // Go to sleep: turn backlight off, skip rendering.
+                            let _ = display_platform.set_display_backlight(false);
+                            backlight_off = true;
+                            log::info!("[{}] display backlight auto-sleep", TAG);
+                            continue;
+                        }
+                        if backlight_off {
+                            // Still sleeping, no change — skip all rendering.
+                            continue;
+                        }
+                    }
+
                     // State changed (icon + title area) → full refresh + update all cache
-                    if last_state != Some(state) {
+                    if state_changed {
                         let cmd = DisplayCommand::RefreshDashboard {
                             state,
                             wifi_connected,
@@ -396,15 +451,12 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
                     }
 
                     // State unchanged → partial updates per dirty region
-                    if last_ip.as_str() != ip.as_str() {
+                    if ip_changed {
                         let _ = display_platform
                             .display_command(DisplayCommand::UpdateIp { ip: ip.clone() });
                         last_ip.clear();
                         last_ip.push_str(&ip);
                     }
-                    let channels_changed = channels.iter().enumerate().any(|(i, ch)| {
-                        last_channels[i] != (ch.enabled, ch.healthy)
-                    });
                     if channels_changed {
                         let _ = display_platform.display_command(
                             DisplayCommand::UpdateChannels {
@@ -416,8 +468,6 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
                         }
                     }
                     // 2% hysteresis on heap to avoid progress bar flicker
-                    let pressure_changed = last_pressure.as_ref() != Some(&pressure);
-                    let heap_changed = last_heap.abs_diff(heap_percent) >= 2;
                     if pressure_changed || heap_changed {
                         let _ = display_platform.display_command(
                             DisplayCommand::UpdatePressure {

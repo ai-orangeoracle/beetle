@@ -245,6 +245,8 @@ export const zhCN = {
       spiFreqHz: 'SPI 频率（Hz）',
       restartRequired: '保存成功，重启后生效',
       footerHint: '提示：driver/bus/引脚冲突最终以后端校验结果为准。',
+      sleepTimeoutSecs: '自动熄屏超时（秒）',
+      sleepTimeoutSecsHelp: '空闲指定秒数后关闭背光。0 = 不熄屏。需配置 BL 引脚。',
       validation: {
         dimension: '宽高需在 1~480 范围内',
         rotation: '旋转角度仅支持 0/90/180/270',

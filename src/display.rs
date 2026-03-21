@@ -76,6 +76,10 @@ pub struct DisplayConfig {
     #[serde(default)]
     pub offset_y: i16,
     pub spi: DisplaySpiConfig,
+    /// 空闲自动熄屏超时（秒）。0 = 禁用。
+    /// Auto-sleep timeout in seconds. 0 = disabled.
+    #[serde(default)]
+    pub sleep_timeout_secs: u16,
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -185,6 +189,7 @@ pub fn default_disabled_display_config() -> DisplayConfig {
             bl: None,
             freq_hz: default_spi_freq_hz(),
         },
+        sleep_timeout_secs: 0,
     }
 }
 
