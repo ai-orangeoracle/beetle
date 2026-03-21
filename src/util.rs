@@ -1,6 +1,8 @@
 //! 轻量工具，避免热路径堆分配；敏感信息脱敏供日志安全。
 //! Lightweight helpers; secret redaction for safe logging.
 
+use crate::constants::AGENT_MARKER_STOP;
+
 /// 按字符边界截断内容至最多 max 个字符；不截断时零分配返回借用。
 /// Truncate to at most `max` chars; returns `Cow::Borrowed` (zero alloc) when no truncation needed.
 pub fn truncate_content_to_max(s: &str, max: usize) -> std::borrow::Cow<'_, str> {
@@ -13,6 +15,86 @@ pub fn truncate_content_to_max(s: &str, max: usize) -> std::borrow::Cow<'_, str>
         Some((byte_offset, _)) => std::borrow::Cow::Owned(s[..byte_offset].to_string()),
         None => std::borrow::Cow::Borrowed(s), // fewer than max chars despite byte len > max
     }
+}
+
+/// 移除 `s` 中所有非重叠的 `needle` 子串（`needle` 按字节匹配；模型标记为 ASCII）。
+/// Remove all non-overlapping occurrences of `needle` without `replace` + `trim` 的多次分配。
+pub fn remove_substring_all(s: &str, needle: &str) -> String {
+    if needle.is_empty() {
+        return s.to_string();
+    }
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(pos) = rest.find(needle) {
+        out.push_str(&rest[..pos]);
+        rest = &rest[pos + needle.len()..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// 反复移除「最早出现」的任一 `needles` 子串，直到无法再匹配；再原地 trim。
+/// Repeatedly remove the earliest match among `needles`, then trim in place (one allocation for body).
+pub fn remove_substrings_all_trim(s: &str, needles: &[&str]) -> String {
+    let mut out = remove_substrings_all_untrimmed(s, needles);
+    trim_string_inplace(&mut out);
+    out
+}
+
+fn remove_substrings_all_untrimmed(s: &str, needles: &[&str]) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    loop {
+        let mut best: Option<(usize, usize)> = None;
+        for needle in needles {
+            if needle.is_empty() {
+                continue;
+            }
+            if let Some(pos) = rest.find(needle) {
+                match best {
+                    None => best = Some((pos, needle.len())),
+                    Some((bp, _)) if pos < bp => best = Some((pos, needle.len())),
+                    _ => {}
+                }
+            }
+        }
+        match best {
+            Some((pos, len)) => {
+                out.push_str(&rest[..pos]);
+                rest = &rest[pos + len..];
+            }
+            None => {
+                out.push_str(rest);
+                break;
+            }
+        }
+    }
+    out
+}
+
+fn trim_string_inplace(s: &mut String) {
+    let trimmed = s.trim();
+    if trimmed.len() == s.len() {
+        return;
+    }
+    if trimmed.is_empty() {
+        s.clear();
+        return;
+    }
+    let start = trimmed.as_ptr() as usize - s.as_ptr() as usize;
+    let len = trimmed.len();
+    if start > 0 {
+        s.drain(..start);
+    }
+    s.truncate(len);
+}
+
+/// 去掉 `[STOP]` 标记并 trim；用于 agent 确认路径，避免 `replace` + `trim` + `to_string` 链式分配。
+/// Strip `[STOP]` marker and trim for agent interrupt confirmation path.
+pub fn strip_agent_stop_confirmation(s: &str) -> String {
+    let mut out = remove_substring_all(s, AGENT_MARKER_STOP);
+    trim_string_inplace(&mut out);
+    out
 }
 
 /// 按 UTF-8 字符边界截断至最多 max_bytes 字节；若发生截断则末尾追加 "…"（3 字节）。保证返回值 len() <= max_bytes。
@@ -379,4 +461,27 @@ pub fn is_private_url(url: &str) -> bool {
         return true;
     }
     false
+}
+
+#[cfg(test)]
+mod marker_string_tests {
+    use super::*;
+    use crate::constants::{AGENT_MARKER_MARK_IMPORTANT, AGENT_MARKER_SIGNAL_COMFORT};
+
+    #[test]
+    fn strip_stop_removes_all_and_trims() {
+        assert_eq!(
+            strip_agent_stop_confirmation("  [STOP] hello [STOP]  "),
+            "hello"
+        );
+    }
+
+    #[test]
+    fn remove_both_markers_then_trim() {
+        let s = remove_substrings_all_trim(
+            "a [MARK_IMPORTANT] b [SIGNAL:comfort] c",
+            &[AGENT_MARKER_MARK_IMPORTANT, AGENT_MARKER_SIGNAL_COMFORT],
+        );
+        assert_eq!(s, "a  b  c");
+    }
 }
