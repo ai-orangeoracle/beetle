@@ -14,6 +14,7 @@ pub enum QqWebhookOutcome {
 }
 
 /// 处理已读取的 body 与签名头，验签并调用通道 handle_webhook；超长 body 由调用方拒绝后不再调用。
+#[allow(clippy::too_many_arguments)]
 pub fn post(
     store: &dyn crate::platform::ConfigStore,
     body: &[u8],

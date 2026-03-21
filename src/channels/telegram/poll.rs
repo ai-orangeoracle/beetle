@@ -16,6 +16,7 @@ const BIND_HINT_NOT_IN_LIST: &str =
     "Bind: add your chat_id to BEETLE_TG_ALLOWED_CHAT_IDS (comma-separated) and rebuild.";
 
 /// Telegram 控制命令（/activation、/session clear、/status）执行所需的上下文，由 main 传入轮询线程。
+#[allow(clippy::type_complexity)]
 pub struct TelegramCommandCtx {
     pub outbound_tx: OutboundTx,
     pub session_store: Arc<dyn SessionStore + Send + Sync>,
@@ -105,6 +106,7 @@ fn message_mentions_bot(
 const TELEGRAM_API_BASE: &str = "https://api.telegram.org/bot";
 
 /// 轮询一次 getUpdates，解析消息并推入 inbound_tx；失败返回 Err 带 stage，调用方退避。
+#[allow(clippy::too_many_arguments)]
 pub fn poll_telegram_once<H: ChannelHttpClient>(
     http: &mut H,
     token: &str,
@@ -249,6 +251,7 @@ pub fn poll_telegram_once<H: ChannelHttpClient>(
 
 /// 启动 Telegram 长轮询循环（阻塞，应在独立线程调用）。
 /// 内部通过 create_http 工厂创建 HTTP 客户端，执行轮询循环。
+#[allow(clippy::too_many_arguments)]
 pub fn run_telegram_poll_loop<H, F>(
     token: String,
     allowed_chat_ids: Vec<String>,
