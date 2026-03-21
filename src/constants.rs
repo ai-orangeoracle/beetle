@@ -111,3 +111,15 @@ pub const OUTBOUND_DEFER_DELAY_MS: u64 = 2000;
 /// 出站门禁 Cautious 压力时轻量退避毫秒数（短于 Critical，与队列拥塞→Cautious 闭环）。
 /// Light outbound defer under Cautious pressure (shorter than Critical).
 pub const OUTBOUND_DEFER_DELAY_MS_CAUTIOUS: u64 = 500;
+
+// ---------- 显示自适应刷新频率 ----------
+/// 显示刷新间隔：Busy 状态（秒）。
+pub const DISPLAY_REFRESH_BUSY_SECS: u64 = 2;
+/// 显示刷新间隔：Idle 状态（秒）。
+pub const DISPLAY_REFRESH_IDLE_SECS: u64 = 5;
+/// 显示刷新间隔：长时间 Idle（秒）。
+pub const DISPLAY_REFRESH_IDLE_LONG_SECS: u64 = 10;
+/// 显示刷新间隔：熄屏/睡眠状态（秒）。
+pub const DISPLAY_REFRESH_SLEEP_SECS: u64 = 30;
+/// 进入长时间 Idle 刷新的阈值（秒）。
+pub const DISPLAY_IDLE_LONG_THRESHOLD_SECS: u64 = 30;

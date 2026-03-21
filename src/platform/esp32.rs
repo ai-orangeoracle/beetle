@@ -275,4 +275,20 @@ impl Platform for Esp32Platform {
             .map(|s| s.backlight_available())
             .unwrap_or(false)
     }
+
+    fn set_display_backlight_brightness(&self, percent: u8) -> crate::error::Result<()> {
+        let guard = self.display_state.lock().unwrap_or_else(|e| e.into_inner());
+        match guard.as_ref() {
+            Some(state) => state.set_brightness(percent),
+            None => Ok(()),
+        }
+    }
+
+    fn fade_display_backlight(&self, from: u8, to: u8, duration_ms: u32) -> crate::error::Result<()> {
+        let guard = self.display_state.lock().unwrap_or_else(|e| e.into_inner());
+        match guard.as_ref() {
+            Some(state) => state.fade_brightness(from, to, duration_ms),
+            None => Ok(()),
+        }
+    }
 }

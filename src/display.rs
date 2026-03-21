@@ -87,6 +87,8 @@ pub struct DisplayChannelStatus {
     pub name: &'static str,
     pub enabled: bool,
     pub healthy: bool,
+    /// 连续失败次数（F5: 通道失败计数）。
+    pub consecutive_failures: u32,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -122,6 +124,14 @@ pub enum DisplayCommand {
         messages_in: u32,
         messages_out: u32,
         last_active_epoch_secs: u32,
+        /// F3: 系统运行时间（秒）。
+        uptime_secs: u64,
+        /// F4: Busy 呼吸动画相位。
+        busy_phase: bool,
+        /// F6: 最近一次 LLM 调用延迟（毫秒），0 表示无数据。
+        llm_last_ms: u32,
+        /// F7: 错误闪烁标志（本轮有新错误时为 true）。
+        error_flash: bool,
     },
     UpdateIp {
         ip: String,
@@ -132,9 +142,17 @@ pub enum DisplayCommand {
         messages_in: u32,
         messages_out: u32,
         last_active_epoch_secs: u32,
+        /// F6: 最近一次 LLM 调用延迟（毫秒），0 表示无数据。
+        llm_last_ms: u32,
+        /// F7: 错误闪烁标志。
+        error_flash: bool,
     },
     UpdateChannels {
         channels: [DisplayChannelStatus; 5],
+    },
+    /// F8: 启动进度条。stage: 0=WiFi前, 1=WiFi后, 2=SNTP后, 3=Channels后, 4=Agent前。
+    UpdateBootProgress {
+        stage: u8,
     },
     Clear,
 }

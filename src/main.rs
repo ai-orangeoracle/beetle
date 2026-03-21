@@ -103,6 +103,29 @@ impl beetle::StreamEditor for FeishuStreamEditor {
     }
 }
 
+/// F2: 根据当前状态计算下一轮显示刷新间隔（秒）。
+fn compute_refresh_secs(
+    state: DisplaySystemState,
+    backlight_off: bool,
+    last_activity_at: &std::time::Instant,
+) -> u64 {
+    use beetle::constants::*;
+    if backlight_off {
+        return DISPLAY_REFRESH_SLEEP_SECS;
+    }
+    match state {
+        DisplaySystemState::Busy => DISPLAY_REFRESH_BUSY_SECS,
+        DisplaySystemState::Idle | DisplaySystemState::NoWifi => {
+            if last_activity_at.elapsed().as_secs() >= DISPLAY_IDLE_LONG_THRESHOLD_SECS {
+                DISPLAY_REFRESH_IDLE_LONG_SECS
+            } else {
+                DISPLAY_REFRESH_IDLE_SECS
+            }
+        }
+        _ => DISPLAY_REFRESH_IDLE_SECS,
+    }
+}
+
 fn main() {
     let platform: Arc<dyn Platform> = Arc::new(Esp32Platform::new());
     if let Err(e) = platform.init() {
@@ -137,6 +160,10 @@ fn main() {
             log::warn!("[{}] config validate_for_wifi: {}", TAG, e);
         }
     }
+    // F8: 启动进度条 stage=1（WiFi 前发送）
+    if platform.display_available() {
+        let _ = platform.display_command(DisplayCommand::UpdateBootProgress { stage: 1 });
+    }
     let wifi_connected = match platform.connect_wifi(&config) {
         Ok(()) => {
             log::info!(
@@ -144,6 +171,10 @@ fn main() {
                 TAG
             );
             platform.init_sntp();
+            // F8: 启动进度条 stage=2（SNTP 后）
+            if platform.display_available() {
+                let _ = platform.display_command(DisplayCommand::UpdateBootProgress { stage: 2 });
+            }
             true
         }
         Err(e) => {
@@ -158,6 +189,8 @@ fn main() {
                 log::warn!("[{}] display init failed (degraded): {}", TAG, e);
             } else {
                 log::info!("[{}] display initialized", TAG);
+                // F8: 启动进度条 stage=0（WiFi 前）
+                let _ = platform.display_command(DisplayCommand::UpdateBootProgress { stage: 0 });
                 let _ = platform.display_command(DisplayCommand::RefreshDashboard {
                     state: DisplaySystemState::Booting,
                     wifi_connected: false,
@@ -167,26 +200,31 @@ fn main() {
                             name: "telegram",
                             enabled: config.enabled_channel == "telegram",
                             healthy: false,
+                            consecutive_failures: 0,
                         },
                         DisplayChannelStatus {
                             name: "feishu",
                             enabled: config.enabled_channel == "feishu",
                             healthy: false,
+                            consecutive_failures: 0,
                         },
                         DisplayChannelStatus {
                             name: "dingtalk",
                             enabled: config.enabled_channel == "dingtalk",
                             healthy: false,
+                            consecutive_failures: 0,
                         },
                         DisplayChannelStatus {
                             name: "wecom",
                             enabled: config.enabled_channel == "wecom",
                             healthy: false,
+                            consecutive_failures: 0,
                         },
                         DisplayChannelStatus {
                             name: "qq_channel",
                             enabled: config.enabled_channel == "qq_channel",
                             healthy: false,
+                            consecutive_failures: 0,
                         },
                     ],
                     pressure: DisplayPressureLevel::Normal,
@@ -194,11 +232,16 @@ fn main() {
                     messages_in: 0,
                     messages_out: 0,
                     last_active_epoch_secs: 0,
+                    uptime_secs: 0,
+                    busy_phase: false,
+                    llm_last_ms: 0,
+                    error_flash: false,
                 });
             }
         }
     }
     if wifi_connected && platform.display_available() {
+        // F8: 启动进度条 stage=1（WiFi 后，已在上方 connect_wifi 成功时发送 stage=2）
         let ip = platform
             .wifi_sta_ip()
             .unwrap_or_else(|| "192.168.4.1".to_string());
@@ -333,11 +376,22 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
                 // Dirty-region cache: skip SPI when nothing changed.
                 let mut last_state: Option<DisplaySystemState> = None;
                 let mut last_ip = String::new();
-                let mut last_channels: [(bool, bool); 5] = [(false, false); 5];
+                let mut last_channels: [(bool, bool, u32); 5] = [(false, false, 0); 5]; // F5: +consecutive_failures
                 let mut last_pressure: Option<DisplayPressureLevel> = None;
                 let mut last_heap: u8 = 255; // 255 forces first-round refresh
                 let mut last_msg_in: u32 = u32::MAX; // force first-round refresh
                 let mut last_msg_out: u32 = u32::MAX;
+                let mut last_llm_ms: u32 = 0; // F6: LLM 延迟 dirty cache
+
+                // F2: 自适应刷新频率
+                let mut refresh_secs: u64 = beetle::constants::DISPLAY_REFRESH_IDLE_SECS;
+
+                // F4: Busy 呼吸动画
+                let mut busy_toggle: bool = false;
+
+                // F7: 错误闪烁指示
+                let mut last_error_total: u64 = 0;
+                let mut flash_active: bool = false;
 
                 // Auto-sleep: backlight off after N seconds of no activity.
                 let sleep_timeout = display_config
@@ -352,7 +406,7 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
                 let mut backlight_off = false;
 
                 loop {
-                    std::thread::sleep(std::time::Duration::from_secs(5));
+                    std::thread::sleep(std::time::Duration::from_secs(refresh_secs));
                     let snapshot = beetle::orchestrator::snapshot();
                     let pressure = match snapshot.pressure {
                         beetle::orchestrator::PressureLevel::Normal => DisplayPressureLevel::Normal,
@@ -380,31 +434,38 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
                     let ip = display_platform
                         .wifi_sta_ip()
                         .unwrap_or_else(|| "192.168.4.1".to_string());
+
+                    // F5: 通道状态含 consecutive_failures
                     let channels = [
                         DisplayChannelStatus {
                             name: "telegram",
                             enabled: enabled == "telegram",
                             healthy: snapshot.channels.telegram.healthy,
+                            consecutive_failures: snapshot.channels.telegram.consecutive_failures,
                         },
                         DisplayChannelStatus {
                             name: "feishu",
                             enabled: enabled == "feishu",
                             healthy: snapshot.channels.feishu.healthy,
+                            consecutive_failures: snapshot.channels.feishu.consecutive_failures,
                         },
                         DisplayChannelStatus {
                             name: "dingtalk",
                             enabled: enabled == "dingtalk",
                             healthy: snapshot.channels.dingtalk.healthy,
+                            consecutive_failures: snapshot.channels.dingtalk.consecutive_failures,
                         },
                         DisplayChannelStatus {
                             name: "wecom",
                             enabled: enabled == "wecom",
                             healthy: snapshot.channels.wecom.healthy,
+                            consecutive_failures: snapshot.channels.wecom.consecutive_failures,
                         },
                         DisplayChannelStatus {
                             name: "qq_channel",
                             enabled: enabled == "qq_channel",
                             healthy: snapshot.channels.qq_channel.healthy,
+                            consecutive_failures: snapshot.channels.qq_channel.consecutive_failures,
                         },
                     ];
                     let heap_percent = heap_used_percent(&snapshot);
@@ -414,6 +475,45 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
                     let msg_in = m_snap.messages_in as u32;
                     let msg_out = m_snap.messages_out as u32;
                     let last_active = m_snap.last_active_epoch_secs as u32;
+                    let llm_ms = m_snap.llm_last_ms as u32; // F6
+
+                    // F3: uptime
+                    let uptime_secs = beetle::platform::time::uptime_secs();
+
+                    // F4: Busy 呼吸动画翻转
+                    if state == DisplaySystemState::Busy {
+                        busy_toggle = !busy_toggle;
+                    } else {
+                        busy_toggle = false;
+                    }
+
+                    // F7: 错误闪烁 — 检测新错误
+                    let current_error_total = m_snap.errors_agent_router
+                        + m_snap.errors_agent_chat
+                        + m_snap.errors_agent_context
+                        + m_snap.errors_tool_execute
+                        + m_snap.errors_llm_request
+                        + m_snap.errors_llm_parse
+                        + m_snap.errors_channel_dispatch
+                        + m_snap.errors_session_append
+                        + m_snap.errors_other;
+                    let error_flash = if current_error_total > last_error_total {
+                        last_error_total = current_error_total;
+                        true
+                    } else {
+                        last_error_total = current_error_total;
+                        false
+                    };
+                    // flash_active tracks: this round flash, next round auto-reset
+                    let show_flash = if error_flash {
+                        flash_active = true;
+                        true
+                    } else if flash_active {
+                        flash_active = false; // auto-reset after one cycle
+                        false
+                    } else {
+                        false
+                    };
 
                     // Detect any dirty region change as "activity".
                     let state_changed = last_state != Some(state);
@@ -421,16 +521,19 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
                     let channels_changed = channels
                         .iter()
                         .enumerate()
-                        .any(|(i, ch)| last_channels[i] != (ch.enabled, ch.healthy));
+                        .any(|(i, ch)| last_channels[i] != (ch.enabled, ch.healthy, ch.consecutive_failures));
                     let pressure_changed = last_pressure.as_ref() != Some(&pressure);
                     let heap_changed = last_heap.abs_diff(heap_percent) >= 2;
                     let msg_changed = msg_in != last_msg_in || msg_out != last_msg_out;
+                    let llm_changed = llm_ms != last_llm_ms; // F6
                     let any_change = state_changed
                         || ip_changed
                         || channels_changed
                         || pressure_changed
                         || heap_changed
-                        || msg_changed;
+                        || msg_changed
+                        || llm_changed
+                        || show_flash;
 
                     if any_change {
                         last_activity_at = std::time::Instant::now();
@@ -439,8 +542,8 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
                     // Auto-sleep logic: wake on change, sleep on idle timeout.
                     if sleep_enabled {
                         if any_change && backlight_off {
-                            // Wake up: turn backlight on, force full refresh next iteration.
-                            let _ = display_platform.set_display_backlight(true);
+                            // F1: Wake up with fade
+                            let _ = display_platform.fade_display_backlight(0, 100, 500);
                             backlight_off = false;
                             last_state = None; // force full RefreshDashboard
                             last_heap = 255;
@@ -451,8 +554,8 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
                             && !any_change
                             && last_activity_at.elapsed() >= sleep_duration
                         {
-                            // Go to sleep: turn backlight off, skip rendering.
-                            let _ = display_platform.set_display_backlight(false);
+                            // F1: Go to sleep with fade
+                            let _ = display_platform.fade_display_backlight(100, 0, 500);
                             backlight_off = true;
                             log::info!("[{}] display backlight auto-sleep", TAG);
                             continue;
@@ -475,6 +578,10 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
                             messages_in: msg_in,
                             messages_out: msg_out,
                             last_active_epoch_secs: last_active,
+                            uptime_secs,
+                            busy_phase: busy_toggle,
+                            llm_last_ms: llm_ms,
+                            error_flash: show_flash,
                         };
                         if let Err(e) = display_platform.display_command(cmd) {
                             log::warn!("[{}] display refresh failed: {}", TAG, e);
@@ -483,12 +590,16 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
                         last_ip.clear();
                         last_ip.push_str(&ip);
                         for (i, ch) in channels.iter().enumerate() {
-                            last_channels[i] = (ch.enabled, ch.healthy);
+                            last_channels[i] = (ch.enabled, ch.healthy, ch.consecutive_failures);
                         }
-                        last_pressure = Some(pressure);
+                        last_pressure = Some(pressure.clone());
                         last_heap = heap_percent;
                         last_msg_in = msg_in;
                         last_msg_out = msg_out;
+                        last_llm_ms = llm_ms;
+
+                        // F2: 计算下一轮刷新间隔
+                        refresh_secs = compute_refresh_secs(state, backlight_off, &last_activity_at);
                         continue;
                     }
 
@@ -504,23 +615,29 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
                             channels: channels.clone(),
                         });
                         for (i, ch) in channels.iter().enumerate() {
-                            last_channels[i] = (ch.enabled, ch.healthy);
+                            last_channels[i] = (ch.enabled, ch.healthy, ch.consecutive_failures);
                         }
                     }
                     // 2% hysteresis on heap to avoid progress bar flicker
-                    if pressure_changed || heap_changed || msg_changed {
+                    if pressure_changed || heap_changed || msg_changed || llm_changed || show_flash {
                         let _ = display_platform.display_command(DisplayCommand::UpdatePressure {
                             level: pressure.clone(),
                             heap_percent,
                             messages_in: msg_in,
                             messages_out: msg_out,
                             last_active_epoch_secs: last_active,
+                            llm_last_ms: llm_ms,
+                            error_flash: show_flash,
                         });
-                        last_pressure = Some(pressure);
+                        last_pressure = Some(pressure.clone());
                         last_heap = heap_percent;
                         last_msg_in = msg_in;
                         last_msg_out = msg_out;
+                        last_llm_ms = llm_ms;
                     }
+
+                    // F2: 计算下一轮刷新间隔
+                    refresh_secs = compute_refresh_secs(state, backlight_off, &last_activity_at);
                 }
             })
             .ok();
@@ -530,6 +647,11 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
 
     let (sinks, mut channel_rx_set) =
         beetle::channels::build_channel_sinks(config.as_ref(), &qq_msg_id_cache);
+    // F8: 启动进度条 stage=3（channel sinks 后）
+    if platform.display_available() {
+        let _ = platform.display_command(DisplayCommand::UpdateBootProgress { stage: 3 });
+    }
+
     let sinks = Arc::new(sinks);
     let enabled_channel = config.enabled_channel.as_str();
     log::info!(
@@ -745,6 +867,11 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
             move || pf.create_http_client(cfg.as_ref())
         });
         beetle::channels::spawn_sender_threads(&mut channel_rx_set, &config.tg_token, create_http);
+
+        // F8: 启动进度条 stage=4（agent 前）
+        if platform.display_available() {
+            let _ = platform.display_command(DisplayCommand::UpdateBootProgress { stage: 4 });
+        }
 
         if let Err(e) = run_agent_loop(
             &mut http_client,

@@ -2,7 +2,7 @@
 //! beetle - stable public API.
 
 mod build_info;
-mod constants;
+pub mod constants;
 pub mod metrics;
 pub mod util;
 
