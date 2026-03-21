@@ -13,7 +13,7 @@ use esp_idf_svc::nvs::EspDefaultNvsPartition;
 use esp_idf_svc::wifi::{BlockingWifi, EspWifi};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 const TAG: &str = "platform::wifi";
@@ -28,10 +28,20 @@ const STA_POLL_INTERVAL_MS: u64 = 5_000;
 const STA_RECONNECT_COOLDOWN_MS: u64 = 15_000;
 /// WiFi STA 是否已连接且获得 IP；由 WiFi 线程写入，WSS/HTTP 线程读取。
 static WIFI_STA_CONNECTED: AtomicBool = AtomicBool::new(false);
+static WIFI_STA_IP: OnceLock<Mutex<Option<String>>> = OnceLock::new();
 
 /// 其他线程查询 WiFi STA 是否就绪（已连接且有 IP）。
 pub fn is_wifi_sta_connected() -> bool {
     WIFI_STA_CONNECTED.load(Ordering::Relaxed)
+}
+
+/// 读取当前 STA IPv4（点分十进制），无可用地址时返回 None。
+pub fn wifi_sta_ip() -> Option<String> {
+    WIFI_STA_IP
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .ok()
+        .and_then(|g| g.clone())
 }
 
 /// 阻塞直到出站网络就绪（STA 已连接）；轮询 2s 并喂狗。仅 ESP 生效，host 立即返回。
@@ -174,12 +184,16 @@ fn run_scan_loop(
                         WIFI_STA_CONNECTED.store(true, Ordering::Relaxed);
                         log::info!("[{}] STA connected (detected in poll)", TAG);
                     }
+                    update_sta_ip_cache();
                     cooldown_until = None;
                 } else {
                     if WIFI_STA_CONNECTED.load(Ordering::Relaxed) {
                         log::warn!("[{}] STA disconnected, will reconnect", TAG);
                     }
                     WIFI_STA_CONNECTED.store(false, Ordering::Relaxed);
+                    if let Ok(mut g) = WIFI_STA_IP.get_or_init(|| Mutex::new(None)).lock() {
+                        *g = None;
+                    }
                     match wifi.connect() {
                         Ok(()) => {
                             log::info!(
@@ -405,6 +419,39 @@ fn do_connect(
         return send_err(e);
     }
     WIFI_STA_CONNECTED.store(true, Ordering::Relaxed);
+    update_sta_ip_cache();
     let _ = result_tx.send(Ok(()));
     run_scan_loop(&mut wifi, &scan_req_rx, &scan_resp_tx, true);
+}
+
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+fn update_sta_ip_cache() {
+    let ip = read_sta_ipv4_string();
+    if let Ok(mut g) = WIFI_STA_IP.get_or_init(|| Mutex::new(None)).lock() {
+        *g = ip;
+    }
+}
+
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+fn update_sta_ip_cache() {}
+
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+fn read_sta_ipv4_string() -> Option<String> {
+    const WIFI_STA_DEF: &[u8] = b"WIFI_STA_DEF\0";
+    let netif = unsafe {
+        esp_idf_svc::sys::esp_netif_get_handle_from_ifkey(WIFI_STA_DEF.as_ptr() as *const _)
+    };
+    if netif.is_null() {
+        return None;
+    }
+    let mut ip_info: esp_idf_svc::sys::esp_netif_ip_info_t = unsafe { std::mem::zeroed() };
+    let ret = unsafe { esp_idf_svc::sys::esp_netif_get_ip_info(netif, &mut ip_info) };
+    if ret != esp_idf_svc::sys::ESP_OK {
+        return None;
+    }
+    let octets = ip_info.ip.addr.to_ne_bytes();
+    Some(format!(
+        "{}.{}.{}.{}",
+        octets[0], octets[1], octets[2], octets[3]
+    ))
 }

@@ -78,18 +78,40 @@ pub struct DisplayConfig {
     pub spi: DisplaySpiConfig,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize)]
 pub struct DisplayChannelStatus {
-    pub name: String,
+    pub name: &'static str,
     pub healthy: bool,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub enum DisplaySystemState {
+    Booting,
+    NoWifi,
+    Idle,
+    Busy,
+    Fault,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DisplayLayout {
+    pub header_top: u16,
+    pub icon_left: u16,
+    pub icon_size: u16,
+    pub title_left: u16,
+    pub title_top: u16,
+    pub subtitle_top: u16,
+    pub middle_top: u16,
+    pub footer_top: u16,
+}
+
+#[derive(Clone, Debug, Serialize)]
 pub enum DisplayCommand {
     RefreshDashboard {
+        state: DisplaySystemState,
         wifi_connected: bool,
         ip_address: Option<String>,
-        channels: Vec<DisplayChannelStatus>,
+        channels: [DisplayChannelStatus; 5],
         pressure: DisplayPressureLevel,
         heap_percent: u8,
     },
@@ -101,6 +123,19 @@ pub enum DisplayCommand {
         heap_percent: u8,
     },
     Clear,
+}
+
+pub fn default_display_layout() -> DisplayLayout {
+    DisplayLayout {
+        header_top: 16,
+        icon_left: 12,
+        icon_size: 64,
+        title_left: 88,
+        title_top: 18,
+        subtitle_top: 44,
+        middle_top: 104,
+        footer_top: 168,
+    }
 }
 
 fn default_config_version() -> u32 {

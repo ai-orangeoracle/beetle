@@ -167,7 +167,7 @@ pub fn poll_telegram_once<H: ChannelHttpClient>(
                 .chat
                 .type_
                 .as_deref()
-                .map_or(false, |t| t == "group" || t == "supergroup");
+                .is_some_and(|t| t == "group" || t == "supergroup");
             if is_group && group_activation == "mention" {
                 let mentioned = message_mentions_bot(
                     &text,

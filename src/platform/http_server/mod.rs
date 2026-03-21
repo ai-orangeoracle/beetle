@@ -191,12 +191,14 @@ pub fn run(
     use embedded_svc::http::Method;
     use esp_idf_svc::http::server::{Configuration, EspHttpServer};
 
-    let mut server_config = Configuration::default();
-    server_config.max_open_sockets = MAX_OPEN_SOCKETS;
-    // 路由多（每 URI 常含 Get+Options，部分有 Post），需 ≥ 实际 register! 数量，否则 ESP_ERR_HTTPD_HANDLERS_FULL
-    server_config.max_uri_handlers = 96;
-    // 默认 6KB 栈在 Rust handler（闭包+JSON+深层调用）下易溢出；GET /api/channel_connectivity 在任务内串行执行多次外网 HTTP，栈压力大，故提高到 12KB
-    server_config.stack_size = 12 * 1024;
+    let server_config = Configuration {
+        max_open_sockets: MAX_OPEN_SOCKETS,
+        // 路由多（每 URI 常含 Get+Options，部分有 Post），需 ≥ 实际 register! 数量，否则 ESP_ERR_HTTPD_HANDLERS_FULL
+        max_uri_handlers: 96,
+        // 默认 6KB 栈在 Rust handler（闭包+JSON+深层调用）下易溢出；GET /api/channel_connectivity 在任务内串行执行多次外网 HTTP，栈压力大，故提高到 12KB
+        stack_size: 12 * 1024,
+        ..Default::default()
+    };
 
     let mut server = EspHttpServer::new(&server_config).map_err(|e| Error::Other {
         source: Box::new(e),

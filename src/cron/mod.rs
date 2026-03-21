@@ -18,7 +18,7 @@ pub fn run_cron_loop(inbound_tx: InboundTx, interval_secs: u64) {
         let mut backoff = 0u64;
         loop {
             std::thread::sleep(interval + Duration::from_secs(backoff));
-            let content = format!("tick"); // 简短内容，满足 MAX_CONTENT_LEN
+            let content = "tick".to_string(); // 简短内容，满足 MAX_CONTENT_LEN
             let msg = match PcMsg::new("cron", "cron", content) {
                 Ok(m) => m,
                 Err(e) => {

@@ -127,6 +127,10 @@ pub trait Platform: Send + Sync {
     fn wifi_scan(&self) -> Option<Arc<dyn crate::platform::WifiScan + Send + Sync>> {
         None
     }
+    /// 当前 STA IPv4 地址（例如 192.168.1.42）；不可用时返回 None。
+    fn wifi_sta_ip(&self) -> Option<String> {
+        None
+    }
     fn memory_store(&self) -> Arc<dyn MemoryStore + Send + Sync>;
     fn session_store(&self) -> Arc<dyn SessionStore + Send + Sync>;
     fn pending_retry_store(&self) -> Arc<dyn PendingRetryStore + Send + Sync>;

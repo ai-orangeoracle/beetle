@@ -87,7 +87,7 @@ impl LlmResponse {
             if b.block_type == "text" {
                 if let Some(t) = b.text {
                     if !content.is_empty() {
-                        content.push_str("\n");
+                        content.push('\n');
                     }
                     content.push_str(&t);
                 }

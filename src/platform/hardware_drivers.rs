@@ -132,7 +132,7 @@ pub fn drive_gpio_in(pins: &PinConfig, _params: &Value, options: &Value) -> Resu
 fn ledc_timer_from_index(i: u8) -> esp_idf_svc::sys::ledc_timer_t {
     use esp_idf_svc::sys::ledc_timer_t;
     // C enum LEDC_TIMER_0=0 .. LEDC_TIMER_3=3; repr(C) enum is typically 4 bytes.
-    unsafe { core::mem::transmute::<u32, ledc_timer_t>((i.min(3)) as u32) }
+    unsafe { core::mem::transmute((i.min(3)) as u32) }
 }
 
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
@@ -146,7 +146,7 @@ pub fn drive_pwm_out(
     use esp_idf_svc::sys::{
         ledc_channel_config, ledc_channel_config_t, ledc_intr_type_t_LEDC_INTR_DISABLE,
         ledc_mode_t_LEDC_LOW_SPEED_MODE, ledc_set_duty,
-        ledc_sleep_mode_t_LEDC_SLEEP_MODE_NO_ALIVE_NO_PD, ledc_timer_bit_t_LEDC_TIMER_13_BIT,
+        ledc_timer_bit_t_LEDC_TIMER_13_BIT,
         ledc_timer_config, ledc_timer_config_t, ledc_update_duty, ESP_OK,
     };
 
@@ -201,8 +201,8 @@ pub fn drive_pwm_out(
             gpio_num: pin,
             duty: duty_raw,
             hpoint: 0,
-            sleep_mode: ledc_sleep_mode_t_LEDC_SLEEP_MODE_NO_ALIVE_NO_PD,
             flags: Default::default(),
+            ..Default::default()
         };
         let ret = ledc_channel_config(&ch_conf);
         if ret != ESP_OK {

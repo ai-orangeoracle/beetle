@@ -36,7 +36,10 @@ function asNumber(v: string): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-function validate(form: DisplayConfig, t: (k: string) => string): string | null {
+function validate(
+  form: DisplayConfig,
+  t: (k: string) => string,
+): string | null {
   if (!form.enabled) return null;
   const dimOk =
     form.width >= DIM_MIN &&
@@ -44,7 +47,8 @@ function validate(form: DisplayConfig, t: (k: string) => string): string | null 
     form.height >= DIM_MIN &&
     form.height <= DIM_MAX;
   if (!dimOk) return t("displayConfig.validation.dimension");
-  if (![0, 90, 180, 270].includes(form.rotation)) return t("displayConfig.validation.rotation");
+  if (![0, 90, 180, 270].includes(form.rotation))
+    return t("displayConfig.validation.rotation");
   const offsetOk =
     form.offset_x >= OFFSET_MIN &&
     form.offset_x <= OFFSET_MAX &&
@@ -55,8 +59,12 @@ function validate(form: DisplayConfig, t: (k: string) => string): string | null 
     return t("displayConfig.validation.freq");
   }
   const pins = [form.spi.sclk, form.spi.mosi, form.spi.cs, form.spi.dc];
-  if (pins.some((p) => p < PIN_MIN || p > PIN_MAX)) return t("displayConfig.validation.pin");
-  if (form.spi.rst != null && (form.spi.rst < PIN_MIN || form.spi.rst > PIN_MAX))
+  if (pins.some((p) => p < PIN_MIN || p > PIN_MAX))
+    return t("displayConfig.validation.pin");
+  if (
+    form.spi.rst != null &&
+    (form.spi.rst < PIN_MIN || form.spi.rst > PIN_MAX)
+  )
     return t("displayConfig.validation.pin");
   if (form.spi.bl != null && (form.spi.bl < PIN_MIN || form.spi.bl > PIN_MAX))
     return t("displayConfig.validation.pin");
@@ -65,35 +73,43 @@ function validate(form: DisplayConfig, t: (k: string) => string): string | null 
 
 export function DisplayConfigPage() {
   const { t } = useTranslation();
-  const { displayConfig, displayLoading, displayError, loadDisplayConfig, saveDisplayConfig } = useConfig();
+  const {
+    displayConfig,
+    displayLoading,
+    displayError,
+    loadDisplayConfig,
+    saveDisplayConfig,
+  } = useConfig();
   const saveFeedback = useSaveFeedback(t);
   const { setDirty } = useUnsaved();
-  const [form, setForm] = useState<DisplayConfig | null>(null);
+  const [draft, setDraft] = useState<DisplayConfig | null>(null);
+  const form = draft ?? displayConfig ?? defaultDisplayConfig();
 
   useEffect(() => {
     void loadDisplayConfig();
   }, [loadDisplayConfig]);
 
-  useEffect(() => {
-    setForm(displayConfig ?? defaultDisplayConfig());
-  }, [displayConfig]);
-
-  const saveDisabled = saveFeedback.status === "saving" || !form;
-  const setField = <K extends keyof DisplayConfig>(key: K, value: DisplayConfig[K]) => {
+  const saveDisabled = saveFeedback.status === "saving";
+  const setField = <K extends keyof DisplayConfig>(
+    key: K,
+    value: DisplayConfig[K],
+  ) => {
     setDirty(true);
-    setForm((prev) => (prev ? { ...prev, [key]: value } : prev));
+    setDraft((prev) => ({ ...(prev ?? form), [key]: value }));
   };
 
-  if (displayLoading && !form) {
+  if (displayLoading && !displayConfig && !draft) {
     return (
-      <SettingsSection icon={<MonitorOutlined />} label={t("displayConfig.sectionMain")}>
+      <SettingsSection
+        icon={<MonitorOutlined />}
+        label={t("displayConfig.sectionMain")}
+      >
         <FormLoadingSkeleton />
       </SettingsSection>
     );
   }
 
   const save = async () => {
-    if (!form) return;
     const err = validate(form, t);
     if (err) {
       saveFeedback.fail(err);
@@ -104,6 +120,18 @@ export function DisplayConfigPage() {
     saveFeedback.finishFromResult(result);
     if (result.ok) setDirty(false);
   };
+
+  const fieldGridSx = {
+    display: "grid",
+    gap: 2,
+    gridTemplateColumns: {
+      xs: "minmax(0, 1fr)",
+      md: "repeat(2, minmax(0, 1fr))",
+    },
+    "& .MuiFormControl-root": {
+      minWidth: 0,
+    },
+  } as const;
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 4 }}>
@@ -120,7 +148,9 @@ export function DisplayConfigPage() {
             onClick={save}
             disabled={saveDisabled}
           >
-            {saveFeedback.status === "saving" ? t("common.saving") : t("common.save")}
+            {saveFeedback.status === "saving"
+              ? t("common.saving")
+              : t("common.save")}
           </Button>
         }
         belowTitleRow={
@@ -128,15 +158,18 @@ export function DisplayConfigPage() {
             <SaveFeedback
               placement="belowTitle"
               status={saveFeedback.status}
-              message={saveFeedback.status === "ok" ? t("displayConfig.restartRequired") : saveFeedback.error}
+              message={
+                saveFeedback.status === "ok"
+                  ? t("displayConfig.restartRequired")
+                  : saveFeedback.error
+              }
               autoDismissMs={3000}
               onDismiss={saveFeedback.dismiss}
             />
           ) : null
         }
       >
-        {form && (
-          <FormFieldStack>
+        <FormFieldStack>
             <FormSectionSub title={t("displayConfig.sectionBasic")}>
               <FormControlLabel
                 control={
@@ -147,169 +180,196 @@ export function DisplayConfigPage() {
                 }
                 label={t("displayConfig.enabled")}
               />
-              <TextField
-                select
-                size="small"
-                fullWidth
-                disabled={!form.enabled}
-                value={form.driver}
-                label={t("displayConfig.driver")}
-                onChange={(e) => setField("driver", e.target.value as DisplayConfig["driver"])}
-                slotProps={{ select: { native: true } }}
-              >
-                <option value="st7789">ST7789</option>
-                <option value="ili9341">ILI9341</option>
-              </TextField>
-              <TextField
-                select
-                size="small"
-                fullWidth
-                disabled={!form.enabled}
-                value={form.rotation}
-                label={t("displayConfig.rotation")}
-                onChange={(e) => setField("rotation", Number(e.target.value) as DisplayConfig["rotation"])}
-                slotProps={{ select: { native: true } }}
-              >
-                <option value={0}>0</option>
-                <option value={90}>90</option>
-                <option value={180}>180</option>
-                <option value={270}>270</option>
-              </TextField>
-              <TextField
-                select
-                size="small"
-                fullWidth
-                disabled={!form.enabled}
-                value={form.color_order}
-                label={t("displayConfig.colorOrder")}
-                onChange={(e) => setField("color_order", e.target.value as DisplayConfig["color_order"])}
-                slotProps={{ select: { native: true } }}
-              >
-                <option value="rgb">RGB</option>
-                <option value="bgr">BGR</option>
-              </TextField>
-              <FormControlLabel
-                control={
-                  <Switch
-                    checked={form.invert_colors}
-                    onChange={(_, checked) => setField("invert_colors", checked)}
-                    disabled={!form.enabled}
-                  />
-                }
-                label={t("displayConfig.invertColors")}
-              />
+              <Box sx={fieldGridSx}>
+                <TextField
+                  select
+                  size="small"
+                  fullWidth
+                  disabled={!form.enabled}
+                  value={form.driver}
+                  label={t("displayConfig.driver")}
+                  onChange={(e) =>
+                    setField("driver", e.target.value as DisplayConfig["driver"])
+                  }
+                  slotProps={{ select: { native: true } }}
+                >
+                  <option value="st7789">ST7789</option>
+                  <option value="ili9341">ILI9341</option>
+                </TextField>
+                <TextField
+                  select
+                  size="small"
+                  fullWidth
+                  disabled={!form.enabled}
+                  value={form.rotation}
+                  label={t("displayConfig.rotation")}
+                  onChange={(e) =>
+                    setField(
+                      "rotation",
+                      Number(e.target.value) as DisplayConfig["rotation"],
+                    )
+                  }
+                  slotProps={{ select: { native: true } }}
+                >
+                  <option value={0}>0</option>
+                  <option value={90}>90</option>
+                  <option value={180}>180</option>
+                  <option value={270}>270</option>
+                </TextField>
+                <TextField
+                  select
+                  size="small"
+                  fullWidth
+                  disabled={!form.enabled}
+                  value={form.color_order}
+                  label={t("displayConfig.colorOrder")}
+                  onChange={(e) =>
+                    setField(
+                      "color_order",
+                      e.target.value as DisplayConfig["color_order"],
+                    )
+                  }
+                  slotProps={{ select: { native: true } }}
+                >
+                  <option value="rgb">RGB</option>
+                  <option value="bgr">BGR</option>
+                </TextField>
+                <FormControlLabel
+                  control={
+                    <Switch
+                      checked={form.invert_colors}
+                      onChange={(_, checked) =>
+                        setField("invert_colors", checked)
+                      }
+                      disabled={!form.enabled}
+                    />
+                  }
+                  label={t("displayConfig.invertColors")}
+                />
+              </Box>
             </FormSectionSub>
 
             <FormSectionSub title={t("displayConfig.sectionGeometry")}>
-              <TextField
-                type="number"
-                size="small"
-                label={t("displayConfig.width")}
-                disabled={!form.enabled}
-                value={form.width}
-                onChange={(e) => {
-                  const n = asNumber(e.target.value);
-                  if (n != null) setField("width", n);
-                }}
-              />
-              <TextField
-                type="number"
-                size="small"
-                label={t("displayConfig.height")}
-                disabled={!form.enabled}
-                value={form.height}
-                onChange={(e) => {
-                  const n = asNumber(e.target.value);
-                  if (n != null) setField("height", n);
-                }}
-              />
-              <TextField
-                type="number"
-                size="small"
-                label={t("displayConfig.offsetX")}
-                disabled={!form.enabled}
-                value={form.offset_x}
-                onChange={(e) => {
-                  const n = asNumber(e.target.value);
-                  if (n != null) setField("offset_x", n);
-                }}
-              />
-              <TextField
-                type="number"
-                size="small"
-                label={t("displayConfig.offsetY")}
-                disabled={!form.enabled}
-                value={form.offset_y}
-                onChange={(e) => {
-                  const n = asNumber(e.target.value);
-                  if (n != null) setField("offset_y", n);
-                }}
-              />
+              <Box sx={fieldGridSx}>
+                <TextField
+                  type="number"
+                  size="small"
+                  label={t("displayConfig.width")}
+                  disabled={!form.enabled}
+                  value={form.width}
+                  onChange={(e) => {
+                    const n = asNumber(e.target.value);
+                    if (n != null) setField("width", n);
+                  }}
+                />
+                <TextField
+                  type="number"
+                  size="small"
+                  label={t("displayConfig.height")}
+                  disabled={!form.enabled}
+                  value={form.height}
+                  onChange={(e) => {
+                    const n = asNumber(e.target.value);
+                    if (n != null) setField("height", n);
+                  }}
+                />
+                <TextField
+                  type="number"
+                  size="small"
+                  label={t("displayConfig.offsetX")}
+                  disabled={!form.enabled}
+                  value={form.offset_x}
+                  onChange={(e) => {
+                    const n = asNumber(e.target.value);
+                    if (n != null) setField("offset_x", n);
+                  }}
+                />
+                <TextField
+                  type="number"
+                  size="small"
+                  label={t("displayConfig.offsetY")}
+                  disabled={!form.enabled}
+                  value={form.offset_y}
+                  onChange={(e) => {
+                    const n = asNumber(e.target.value);
+                    if (n != null) setField("offset_y", n);
+                  }}
+                />
+              </Box>
             </FormSectionSub>
 
             <FormSectionSub title={t("displayConfig.sectionSpi")}>
-              <TextField
-                select
-                size="small"
-                fullWidth
-                disabled={!form.enabled}
-                value={form.spi.host}
-                label={t("displayConfig.spiHost")}
-                onChange={(e) => {
-                  const host = Number(e.target.value) as 2 | 3;
-                  setForm((prev) => (prev ? { ...prev, spi: { ...prev.spi, host } } : prev));
-                  setDirty(true);
-                }}
-                slotProps={{ select: { native: true } }}
-              >
-                <option value={2}>2</option>
-                <option value={3}>3</option>
-              </TextField>
-              {(["sclk", "mosi", "cs", "dc", "rst", "bl"] as const).map((k) => (
+              <Box sx={fieldGridSx}>
                 <TextField
-                  key={k}
+                  select
+                  size="small"
+                  fullWidth
+                  disabled={!form.enabled}
+                  value={form.spi.host}
+                  label={t("displayConfig.spiHost")}
+                  onChange={(e) => {
+                    const host = Number(e.target.value) as 2 | 3;
+                    setDraft((prev) => ({
+                      ...(prev ?? form),
+                      spi: { ...(prev ?? form).spi, host },
+                    }));
+                    setDirty(true);
+                  }}
+                  slotProps={{ select: { native: true } }}
+                >
+                  <option value={2}>2</option>
+                  <option value={3}>3</option>
+                </TextField>
+                {(["sclk", "mosi", "cs", "dc", "rst", "bl"] as const).map((k) => (
+                  <TextField
+                    key={k}
+                    type="number"
+                    size="small"
+                    disabled={!form.enabled}
+                    label={t(
+                      `displayConfig.spi${k[0].toUpperCase()}${k.slice(1)}`,
+                    )}
+                    value={form.spi[k] ?? ""}
+                    onChange={(e) => {
+                      const raw = e.target.value.trim();
+                      setDraft((prev) => {
+                        const base = prev ?? form;
+                        const next = { ...base.spi };
+                        if (raw === "" && (k === "rst" || k === "bl")) {
+                          next[k] = null;
+                        } else {
+                          const n = asNumber(raw);
+                          if (n == null) return base;
+                          next[k] = n as never;
+                        }
+                        return { ...base, spi: next };
+                      });
+                      setDirty(true);
+                    }}
+                  />
+                ))}
+                <TextField
                   type="number"
                   size="small"
+                  label={t("displayConfig.spiFreqHz")}
                   disabled={!form.enabled}
-                  label={t(`displayConfig.spi${k[0].toUpperCase()}${k.slice(1)}`)}
-                  value={form.spi[k] ?? ""}
+                  value={form.spi.freq_hz}
                   onChange={(e) => {
-                    const raw = e.target.value.trim();
-                    setForm((prev) => {
-                      if (!prev) return prev;
-                      const next = { ...prev.spi };
-                      if (raw === "" && (k === "rst" || k === "bl")) {
-                        next[k] = null;
-                      } else {
-                        const n = asNumber(raw);
-                        if (n == null) return prev;
-                        next[k] = n as never;
-                      }
-                      return { ...prev, spi: next };
-                    });
+                    const n = asNumber(e.target.value);
+                    if (n == null) return;
+                    setDraft((prev) => ({
+                      ...(prev ?? form),
+                      spi: { ...(prev ?? form).spi, freq_hz: n },
+                    }));
                     setDirty(true);
                   }}
                 />
-              ))}
-              <TextField
-                type="number"
-                size="small"
-                label={t("displayConfig.spiFreqHz")}
-                disabled={!form.enabled}
-                value={form.spi.freq_hz}
-                onChange={(e) => {
-                  const n = asNumber(e.target.value);
-                  if (n == null) return;
-                  setForm((prev) => (prev ? { ...prev, spi: { ...prev.spi, freq_hz: n } } : prev));
-                  setDirty(true);
-                }}
-              />
+              </Box>
             </FormSectionSub>
             <Typography variant="caption" sx={{ color: "var(--muted)" }}>
               {t("displayConfig.footerHint")}
             </Typography>
           </FormFieldStack>
-        )}
       </SettingsSection>
     </Box>
   );

@@ -143,7 +143,7 @@ pub fn build_context(p: &ContextParams<'_>) -> Result<(String, Vec<Message>)> {
         system.truncate(end);
     }
 
-    let n = p.session_max_messages.max(1).min(128);
+    let n = p.session_max_messages.clamp(1, 128);
     let recent = p
         .session
         .load_recent(&p.msg.chat_id, n)

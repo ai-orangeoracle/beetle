@@ -39,6 +39,32 @@
 - 公共 API 必须有 rustdoc（中英均可）；新增模块在 `lib.rs` 或对应 `mod.rs` 中导出稳定接口。
 - 遵循 `rustfmt` 与 `clippy`（`cargo clippy` 无警告）；嵌入式注意栈与堆使用，大 buffer 使用 PSRAM。
 
+### 后台线程与资源
+
+- **禁止重复线程**：同一职责（如显示刷新）只允许一个后台线程。若需要不同频率执行不同逻辑，在单一线程内用计数器区分，不得为此多开线程。ESP32 每个线程占 ~4KB 栈，资源宝贵。
+- **禁止虚假度量**：显示、日志、API 返回的度量值（heap、CPU、温度等）必须来自真实数据源（如 `orchestrator::snapshot()`、`platform::heap`）。禁止用固定映射或占位值冒充真实度量；暂时不可用的度量应传 0 或在 UI 标注 N/A。
+
+### 嵌入式字节序
+
+- **ESP32 为 little-endian**：处理网络协议数据（IP 地址、端口等）时，注意网络字节序（大端）与平台字节序的转换。ESP-IDF 中 `esp_netif_ip_info_t.ip.addr` 以平台原生字节序存储，拆分字节应使用 `to_ne_bytes()` 而非 `to_be_bytes()`。
+
+### 条件初始化
+
+- **disabled 功能不初始化后端**：当功能被配置为 disabled 时（如 `display.enabled = false`），不应初始化对应的硬件后端或申请硬件资源。避免 disabled 配置的默认值变更导致意外初始化失败。
+
+### 惯用 Rust
+
+- 优先使用 `unwrap_or_else` 而非 `.or_else(|| Some(...))` + 后续 unwrap；避免不必要的 `Option` 包装。当 fallback 值确定时直接 `unwrap_or_else(|| default)` 得到内部类型。
+
+### 显示与嵌入式性能规范（新增）
+
+- **延时语义统一**：业务代码中的“毫秒级等待”统一使用 `std::thread::sleep(Duration::from_millis(...))`，禁止直接把毫秒值传给 `vTaskDelay`（tick 频率可配置，语义不稳定）。
+- **热路径禁止无意义拷贝**：高频刷新路径（显示循环、队列消费）禁止 `clone()` 大缓冲（如行缓冲）；优先复用已分配内存并按引用发送。
+- **disabled 必须零硬件副作用**：功能关闭时（如 `display.enabled=false`）不得初始化后端、不得申请总线/GPIO 资源。后端句柄使用 `Option`，执行时显式短路。
+- **禁留伪检查死代码**：禁止 `_assets_sanity` 这类“只读取不校验”的占位代码；编译期可保证的事实（如 `include_bytes!` 文件存在）不再做运行时伪校验。
+- **后台循环复用容器**：周期线程中禁止每轮新建 `Vec<String/...>`；循环外预分配，循环内 `clear + extend` 复用，降低堆碎片与抖动。
+- **字节序先证实再改**：涉及网络/IP 字节序时，必须先确认 ESP-IDF/lwIP 字段存储语义再改实现；禁止“凭经验”把 `to_ne_bytes()` 直接改为 `to_be_bytes()`。
+
 ## Git
 
 - **Commit messages**：必须使用英文撰写（subject 与 body 均英文），便于国际协作与历史检索。
