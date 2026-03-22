@@ -600,7 +600,7 @@ fn run_worker_path<H: PlatformHttpClient>(
     })
     .map_err(|e| e.with_stage("agent_context"))?;
 
-    let mut final_content = String::new();
+    let mut final_content = String::with_capacity(4096);
     // 流式编辑状态（跨 ReAct 轮次共享）。
     let editor = if config.llm_stream {
         config.stream_editor

@@ -74,7 +74,8 @@ pub fn build_context(p: &ContextParams<'_>) -> Result<(String, Vec<Message>)> {
         .system_max_len
         .saturating_sub(p.tool_descriptions.len().min(tools_max));
     let system_base = build_system_prompt(&soul, &user, &mem, &daily_contents, base_max);
-    let mut system = system_base;
+    let mut system = String::with_capacity(p.system_max_len);
+    system.push_str(&system_base);
     if !p.tool_descriptions.is_empty() {
         let remain = p.system_max_len.saturating_sub(system.len());
         if remain > 0 {
