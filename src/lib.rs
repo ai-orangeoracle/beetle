@@ -72,9 +72,9 @@ pub use platform::{
 pub use platform::{ConfigStore, Platform, SkillStorage};
 pub use tools::{
     build_default_registry, CronManageTool, CronTool, DailyNoteTool, DeviceControlTool,
-    FetchUrlTool, FileWriteTool, FilesTool, GetTimeTool, HttpPostTool, HttpRequestTool, KvStoreTool,
-    MemoryManageTool, ModelConfigTool, ProxyConfigTool, RemindAtTool, SessionManageTool,
-    SystemControlTool, Tool, ToolContext, ToolRegistry, UpdateSessionSummaryTool, WebSearchTool,
+    FileWriteTool, FilesTool, GetTimeTool, HttpRequestTool, KvStoreTool, MemoryManageTool,
+    ModelConfigTool, ProxyConfigTool, RemindAtTool, SessionManageTool, SystemControlTool, Tool,
+    ToolContext, ToolRegistry, UpdateSessionSummaryTool, WebSearchTool,
 };
 
 /// 任何 PlatformHttpClient 均可作为 LlmHttpClient、ToolContext、ChannelHttpClient 使用。
