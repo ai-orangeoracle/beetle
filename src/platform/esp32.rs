@@ -258,4 +258,45 @@ impl Platform for Esp32Platform {
             None => Ok(()),
         }
     }
+
+    fn set_display_backlight(&self, on: bool) -> crate::error::Result<()> {
+        let guard = self.display_state.lock().unwrap_or_else(|e| e.into_inner());
+        match guard.as_ref() {
+            Some(state) => state.set_backlight(on),
+            None => Ok(()),
+        }
+    }
+
+    fn display_backlight_available(&self) -> bool {
+        self.display_state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+            .map(|s| s.backlight_available())
+            .unwrap_or(false)
+    }
+
+    fn set_display_backlight_brightness(&self, percent: u8) -> crate::error::Result<()> {
+        let guard = self.display_state.lock().unwrap_or_else(|e| e.into_inner());
+        match guard.as_ref() {
+            Some(state) => state.set_brightness(percent),
+            None => Ok(()),
+        }
+    }
+
+    fn fade_display_backlight(&self, from: u8, to: u8, duration_ms: u32) -> crate::error::Result<()> {
+        let guard = self.display_state.lock().unwrap_or_else(|e| e.into_inner());
+        match guard.as_ref() {
+            Some(state) => state.fade_brightness(from, to, duration_ms),
+            None => Ok(()),
+        }
+    }
+
+    fn i2c_read(&self, addr: u8, register: u8, len: usize) -> crate::error::Result<Vec<u8>> {
+        crate::platform::hardware_drivers::drive_i2c_read(addr, register, len)
+    }
+
+    fn i2c_write(&self, addr: u8, register: u8, data: &[u8]) -> crate::error::Result<()> {
+        crate::platform::hardware_drivers::drive_i2c_write(addr, register, data)
+    }
 }

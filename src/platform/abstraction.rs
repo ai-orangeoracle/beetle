@@ -63,6 +63,23 @@ pub trait PlatformHttpClient {
     ) -> Result<(u16, ResponseBody)> {
         self.post(url, headers, body)
     }
+    /// HTTP PUT; default implementation falls back to POST.
+    fn put(
+        &mut self,
+        url: &str,
+        headers: &[(&str, &str)],
+        body: &[u8],
+    ) -> Result<(u16, ResponseBody)> {
+        self.post(url, headers, body)
+    }
+    /// HTTP DELETE; default implementation falls back to GET.
+    fn delete(
+        &mut self,
+        url: &str,
+        headers: &[(&str, &str)],
+    ) -> Result<(u16, ResponseBody)> {
+        self.get(url, headers)
+    }
     /// SSE 流式 POST：发送请求后逐块回调 on_chunk，不将响应体读入内存。
     /// 默认实现回退到 post()，将完整响应体一次性传给 on_chunk。
     fn post_streaming(
@@ -110,6 +127,21 @@ impl PlatformHttpClient for Box<dyn PlatformHttpClient + '_> {
         body: &[u8],
     ) -> Result<(u16, ResponseBody)> {
         (**self).patch(url, headers, body)
+    }
+    fn put(
+        &mut self,
+        url: &str,
+        headers: &[(&str, &str)],
+        body: &[u8],
+    ) -> Result<(u16, ResponseBody)> {
+        (**self).put(url, headers, body)
+    }
+    fn delete(
+        &mut self,
+        url: &str,
+        headers: &[(&str, &str)],
+    ) -> Result<(u16, ResponseBody)> {
+        (**self).delete(url, headers)
     }
 }
 
@@ -196,5 +228,47 @@ pub trait Platform: Send + Sync {
     /// 执行显示指令。默认 no-op。
     fn display_command(&self, _cmd: DisplayCommand) -> Result<()> {
         Ok(())
+    }
+
+    /// 设置显示器背光开关。on=true 开启，on=false 关闭。默认 no-op。
+    /// Set display backlight on/off. Default no-op.
+    fn set_display_backlight(&self, _on: bool) -> Result<()> {
+        Ok(())
+    }
+
+    /// 背光控制是否可用（需有 BL 引脚且显示器已初始化）。默认 false。
+    /// Whether backlight control is available. Default false.
+    fn display_backlight_available(&self) -> bool {
+        false
+    }
+
+    /// 设置显示器背光亮度（0-100%）。PWM 调光；默认 no-op。
+    /// Set display backlight brightness (0-100%). Default no-op.
+    fn set_display_backlight_brightness(&self, _percent: u8) -> Result<()> {
+        Ok(())
+    }
+
+    /// 背光渐变（阻塞，在调用线程执行）。默认 no-op。
+    /// Fade display backlight from `from`% to `to`% over `duration_ms`. Blocking. Default no-op.
+    fn fade_display_backlight(&self, _from: u8, _to: u8, _duration_ms: u32) -> Result<()> {
+        Ok(())
+    }
+
+    /// I2C 读取：从指定地址的寄存器读取数据。默认返回不支持错误。
+    /// I2C read: read data from register at given address. Default returns unsupported error.
+    fn i2c_read(&self, _addr: u8, _register: u8, _len: usize) -> Result<Vec<u8>> {
+        Err(crate::error::Error::config(
+            "i2c_read",
+            "I2C not supported on this platform",
+        ))
+    }
+
+    /// I2C 写入：向指定地址的寄存器写入数据。默认返回不支持错误。
+    /// I2C write: write data to register at given address. Default returns unsupported error.
+    fn i2c_write(&self, _addr: u8, _register: u8, _data: &[u8]) -> Result<()> {
+        Err(crate::error::Error::config(
+            "i2c_write",
+            "I2C not supported on this platform",
+        ))
     }
 }

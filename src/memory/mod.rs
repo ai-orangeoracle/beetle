@@ -227,7 +227,7 @@ pub fn run_remind_loop(
     inbound_tx: crate::bus::InboundTx,
     poll_interval_secs: u64,
 ) {
-    std::thread::spawn(move || loop {
+    crate::util::spawn_guarded("remind", move || loop {
         std::thread::sleep(std::time::Duration::from_secs(poll_interval_secs));
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

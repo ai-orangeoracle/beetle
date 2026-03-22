@@ -131,7 +131,7 @@ pub fn drive_gpio_in(pins: &PinConfig, _params: &Value, options: &Value) -> Resu
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 fn ledc_timer_from_index(i: u8) -> esp_idf_svc::sys::ledc_timer_t {
     // C enum LEDC_TIMER_0=0 .. LEDC_TIMER_3=3; repr(C) enum is typically 4 bytes.
-    unsafe { core::mem::transmute((i.min(3)) as u32) }
+    i.min(3) as u32
 }
 
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
@@ -515,4 +515,117 @@ pub fn drive_buzzer(pins: &PinConfig, params: &Value) -> Result<String> {
             duration_ms
         ))
     }
+}
+
+// ── I2C drivers ──
+
+/// I2C 读取：ESP32 真实驱动。
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+pub fn drive_i2c_read(addr: u8, register: u8, len: usize) -> Result<Vec<u8>> {
+    use esp_idf_svc::sys::{
+        i2c_cmd_handle_t, i2c_cmd_link_create, i2c_cmd_link_delete,
+        i2c_master_cmd_begin, i2c_master_read, i2c_master_start, i2c_master_stop,
+        i2c_master_write_byte, i2c_ack_type_t_I2C_MASTER_ACK,
+        i2c_ack_type_t_I2C_MASTER_LAST_NACK, ESP_OK,
+    };
+
+    let mut buf = vec![0u8; len];
+    unsafe {
+        let cmd: i2c_cmd_handle_t = i2c_cmd_link_create();
+        if cmd.is_null() {
+            return Err(Error::config("i2c_read", "failed to create I2C cmd link"));
+        }
+        // Write register address
+        i2c_master_start(cmd);
+        i2c_master_write_byte(cmd, addr << 1, true);
+        i2c_master_write_byte(cmd, register, true);
+        // Read data
+        i2c_master_start(cmd);
+        i2c_master_write_byte(cmd, (addr << 1) | 1, true);
+        if len > 1 {
+            i2c_master_read(
+                cmd,
+                buf.as_mut_ptr(),
+                len - 1,
+                i2c_ack_type_t_I2C_MASTER_ACK,
+            );
+        }
+        i2c_master_read(
+            cmd,
+            buf.as_mut_ptr().add(len - 1),
+            1,
+            i2c_ack_type_t_I2C_MASTER_LAST_NACK,
+        );
+        i2c_master_stop(cmd);
+        let ret = i2c_master_cmd_begin(0, cmd, 100);
+        i2c_cmd_link_delete(cmd);
+        if ret != ESP_OK {
+            return Err(Error::Other {
+                source: Box::new(std::io::Error::other(format!(
+                    "i2c_master_cmd_begin (read) failed: {}",
+                    ret
+                ))),
+                stage: "i2c_read",
+            });
+        }
+    }
+    Ok(buf)
+}
+
+/// I2C 写入：ESP32 真实驱动。
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+pub fn drive_i2c_write(addr: u8, register: u8, data: &[u8]) -> Result<()> {
+    use esp_idf_svc::sys::{
+        i2c_cmd_handle_t, i2c_cmd_link_create, i2c_cmd_link_delete,
+        i2c_master_cmd_begin, i2c_master_start, i2c_master_stop,
+        i2c_master_write, i2c_master_write_byte, ESP_OK,
+    };
+
+    unsafe {
+        let cmd: i2c_cmd_handle_t = i2c_cmd_link_create();
+        if cmd.is_null() {
+            return Err(Error::config("i2c_write", "failed to create I2C cmd link"));
+        }
+        i2c_master_start(cmd);
+        i2c_master_write_byte(cmd, addr << 1, true);
+        i2c_master_write_byte(cmd, register, true);
+        i2c_master_write(cmd, data.as_ptr(), data.len(), true);
+        i2c_master_stop(cmd);
+        let ret = i2c_master_cmd_begin(0, cmd, 100);
+        i2c_cmd_link_delete(cmd);
+        if ret != ESP_OK {
+            return Err(Error::Other {
+                source: Box::new(std::io::Error::other(format!(
+                    "i2c_master_cmd_begin (write) failed: {}",
+                    ret
+                ))),
+                stage: "i2c_write",
+            });
+        }
+    }
+    Ok(())
+}
+
+/// I2C 读取：Host stub。
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+pub fn drive_i2c_read(addr: u8, register: u8, len: usize) -> Result<Vec<u8>> {
+    log::info!(
+        "[i2c_read] stub: addr=0x{:02X} reg=0x{:02X} len={}",
+        addr,
+        register,
+        len
+    );
+    Ok(vec![0u8; len])
+}
+
+/// I2C 写入：Host stub。
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+pub fn drive_i2c_write(addr: u8, register: u8, data: &[u8]) -> Result<()> {
+    log::info!(
+        "[i2c_write] stub: addr=0x{:02X} reg=0x{:02X} data={:?}",
+        addr,
+        register,
+        data
+    );
+    Ok(())
 }

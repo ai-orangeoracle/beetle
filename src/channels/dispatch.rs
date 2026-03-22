@@ -343,7 +343,7 @@ pub fn spawn_sender_threads(
     if let Some(tg_rx) = rx_set.telegram.take() {
         let f = Arc::clone(&create_http);
         let tg_send_token = tg_token.to_string();
-        std::thread::spawn(move || {
+        crate::util::spawn_guarded("tg_sender", move || {
             super::run_telegram_sender_loop(tg_rx, &tg_send_token, move || f());
         });
         log::info!("[{}] Telegram sender thread started", TAG);
@@ -354,7 +354,7 @@ pub fn spawn_sender_threads(
         let fs_rx = c.rx;
         let fs_id = c.app_id;
         let fs_sec = c.app_secret;
-        std::thread::spawn(move || {
+        crate::util::spawn_guarded("fs_sender", move || {
             super::run_feishu_sender_loop(fs_rx, &fs_id, &fs_sec, move || f());
         });
         log::info!("[{}] Feishu sender thread started", TAG);
@@ -363,7 +363,7 @@ pub fn spawn_sender_threads(
         let f = Arc::clone(&create_http);
         let dt_rx = c.rx;
         let dt_url = c.webhook_url;
-        std::thread::spawn(move || {
+        crate::util::spawn_guarded("dt_sender", move || {
             super::run_dingtalk_sender_loop(dt_rx, &dt_url, move || f());
         });
         log::info!("[{}] DingTalk sender thread started", TAG);
@@ -375,7 +375,7 @@ pub fn spawn_sender_threads(
         let wc_sec = c.corp_secret;
         let wc_aid = c.agent_id;
         let wc_usr = c.default_touser;
-        std::thread::spawn(move || {
+        crate::util::spawn_guarded("wc_sender", move || {
             super::run_wecom_sender_loop(wc_rx, &wc_cid, &wc_sec, &wc_aid, &wc_usr, move || f());
         });
         log::info!("[{}] WeCom sender thread started", TAG);
@@ -386,7 +386,7 @@ pub fn spawn_sender_threads(
         let qq_id = c.app_id;
         let qq_sec = c.app_secret;
         let qq_cache = c.msg_id_cache;
-        std::thread::spawn(move || {
+        crate::util::spawn_guarded("qq_sender", move || {
             super::run_qq_sender_loop(qq_rx, &qq_id, &qq_sec, qq_cache, move || f());
         });
         log::info!("[{}] QQ Channel sender thread started", TAG);

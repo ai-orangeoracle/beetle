@@ -42,5 +42,5 @@ pub fn body(ctx: &HandlerContext) -> Result<String, std::io::Error> {
         metrics: metrics::snapshot(),
         resource: orchestrator::snapshot(),
     };
-    serde_json::to_string(&payload).map_err(|e| std::io::Error::other(e))
+    serde_json::to_string(&payload).map_err(std::io::Error::other)
 }

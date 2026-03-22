@@ -60,14 +60,14 @@ const NAV_ITEMS: { path: string; labelKey: string; icon: ReactElement }[] = [
     icon: <HistoryOutlined />,
   },
   {
-    path: "/system-config",
-    labelKey: "nav.systemConfig",
-    icon: <SettingsOutlined />,
-  },
-  {
     path: "/display-config",
     labelKey: "nav.displayConfig",
     icon: <MonitorOutlined />,
+  },
+  {
+    path: "/system-config",
+    labelKey: "nav.systemConfig",
+    icon: <SettingsOutlined />,
   },
 ];
 

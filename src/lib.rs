@@ -2,9 +2,9 @@
 //! beetle - stable public API.
 
 mod build_info;
-mod constants;
-mod metrics;
-mod util;
+pub mod constants;
+pub mod metrics;
+pub mod util;
 
 pub use build_info::{build_board_id, ota_manifest_url};
 /// Re-export PlatformHttpClient at crate root so core modules (agent, tools) can depend on
@@ -52,7 +52,7 @@ pub use channels::{
 };
 pub use config::{
     parse_allowed_chat_ids, save_hardware_segment, AppConfig, DeviceEntry, HardwareSegment,
-    LlmSource, PinConfig,
+    I2cBusConfig, I2cDeviceEntry, LlmSource, PinConfig,
 };
 pub use display::{
     default_disabled_display_config, validate_display_config_core, DisplayBus, DisplayChannelStatus,
@@ -71,8 +71,10 @@ pub use platform::{
 };
 pub use platform::{ConfigStore, Platform, SkillStorage};
 pub use tools::{
-    build_default_registry, CronTool, DeviceControlTool, FetchUrlTool, FilesTool, GetTimeTool,
-    HttpPostTool, KvStoreTool, RemindAtTool, Tool, ToolContext, ToolRegistry,
+    build_default_registry, CronManageTool, DeviceControlTool,
+    FileWriteTool, FilesTool, GetTimeTool, HttpRequestTool, I2cDeviceTool, KvStoreTool,
+    MemoryManageTool, ModelConfigTool, NetworkScanTool, ProxyConfigTool, RemindAtTool,
+    SensorWatchTool, SessionManageTool, SystemControlTool, Tool, ToolContext, ToolRegistry,
     UpdateSessionSummaryTool, WebSearchTool,
 };
 
@@ -115,6 +117,21 @@ impl<T: platform::PlatformHttpClient> tools::ToolContext for T {
         body: &[u8],
     ) -> Result<(u16, platform::ResponseBody)> {
         platform::PlatformHttpClient::post(self, url, headers, body)
+    }
+    fn put_with_headers(
+        &mut self,
+        url: &str,
+        headers: &[(&str, &str)],
+        body: &[u8],
+    ) -> Result<(u16, platform::ResponseBody)> {
+        platform::PlatformHttpClient::put(self, url, headers, body)
+    }
+    fn delete_with_headers(
+        &mut self,
+        url: &str,
+        headers: &[(&str, &str)],
+    ) -> Result<(u16, platform::ResponseBody)> {
+        platform::PlatformHttpClient::delete(self, url, headers)
     }
 }
 

@@ -169,6 +169,7 @@ macro_rules! read_body_utf8 {
 const FEISHU_EVENT_BODY_MAX: usize = 64 * 1024;
 
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+#[allow(clippy::too_many_arguments)]
 pub fn run(
     platform: std::sync::Arc<dyn crate::platform::Platform>,
     wifi_connected: bool,

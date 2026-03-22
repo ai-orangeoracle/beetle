@@ -26,6 +26,7 @@ export interface DisplayConfig {
   offset_x: number
   offset_y: number
   spi: DisplaySpiConfig
+  sleep_timeout_secs: number
 }
 
 export function defaultDisplayConfig(): DisplayConfig {
@@ -51,5 +52,6 @@ export function defaultDisplayConfig(): DisplayConfig {
       bl: null,
       freq_hz: 40_000_000,
     },
+    sleep_timeout_secs: 0,
   }
 }

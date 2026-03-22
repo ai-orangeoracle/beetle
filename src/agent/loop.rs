@@ -6,7 +6,8 @@ use crate::bus::{InboundTx, OutboundTx, PcMsg, MAX_CONTENT_LEN};
 use crate::constants::{
     AGENT_MARKER_MARK_IMPORTANT, AGENT_MARKER_SIGNAL_COMFORT, AGENT_MARKER_STOP,
     AGENT_RETRY_BASE_MS, AGENT_RETRY_MAX_MS, INBOUND_RECV_TIMEOUT_SECS,
-    MAX_TOOL_RESULTS_USER_MESSAGE_LEN, TASK_CONTINUATION_CONTINUE_THRESHOLD_LEN,
+    MAX_DEFER_RETRIES, MAX_TOOL_RESULTS_USER_MESSAGE_LEN,
+    TASK_CONTINUATION_CONTINUE_THRESHOLD_LEN,
 };
 use crate::error::Result;
 use crate::llm::{LlmClient, LlmHttpClient, Message, StopReason, ToolSpec};
@@ -144,6 +145,7 @@ pub struct AgentLoopConfig<'a> {
 /// 从 inbound_rx 取一条 PcMsg，构建 context，多轮 chat（含 tool 执行），写会话并发送一条出站。
 /// router_llm：若为 Some 则先调路由，解析 REPLY/WORKER 再决定是否调 worker_llm；None 则仅用 worker_llm。
 /// worker_llm：执行完整 context + tools 的客户端（可为 FallbackLlmClient）。
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub fn run_agent_loop<H: PlatformHttpClient>(
     http: &mut H,
     router_llm: Option<&dyn LlmClient>,
@@ -161,12 +163,15 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
     // Key: u64 hash of (channel, chat_id, content) — avoids per-message format! String alloc.
     // Value: (failure count, last failure time) — entries expire after 5 minutes.
     let mut llm_failure_count: HashMap<u64, (u8, Instant)> = HashMap::new();
+    // Track consecutive defer count per message key to break infinite defer loops.
+    let mut defer_tracker: HashMap<u64, (u8, Instant)> = HashMap::new();
     // Throttle "low memory, defer" log per chat_id to avoid log spam.
     let mut low_mem_defer_log: Option<(String, Instant)> = None;
-    // Periodic GC for llm_failure_count: evict expired entries every N messages.
+    // Periodic GC for llm_failure_count + defer_tracker: evict expired entries every N messages.
     let mut msg_since_gc: u16 = 0;
     const GC_INTERVAL_MSGS: u16 = 50;
     const FAILURE_EXPIRY: Duration = Duration::from_secs(300);
+    const DEFER_EXPIRY: Duration = Duration::from_secs(300);
 
     if let Ok(Some(m)) = config.pending_retry.load_pending_retry() {
         let _ = config.pending_retry.clear_pending_retry();
@@ -187,12 +192,16 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
         metrics::record_message_in();
         crate::platform::task_wdt::feed_current_task();
 
-        // Periodic GC: evict expired failure entries to prevent unbounded growth.
+        // Periodic GC: evict expired failure/defer entries to prevent unbounded growth.
         msg_since_gc += 1;
-        if msg_since_gc >= GC_INTERVAL_MSGS {
+        if msg_since_gc >= GC_INTERVAL_MSGS
+            || llm_failure_count.len() > 64
+            || defer_tracker.len() > 64
+        {
             msg_since_gc = 0;
             let now_gc = Instant::now();
             llm_failure_count.retain(|_, (_, ts)| now_gc.duration_since(*ts) < FAILURE_EXPIRY);
+            defer_tracker.retain(|_, (_, ts)| now_gc.duration_since(*ts) < DEFER_EXPIRY);
         }
 
         let msg_key = {
@@ -224,6 +233,30 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
         match crate::orchestrator::should_accept_inbound_pub(&msg.channel, &msg.chat_id) {
             AdmissionDecision::Accept => {}
             AdmissionDecision::Defer { delay_ms } => {
+                // Check defer count for this message; drop after MAX_DEFER_RETRIES.
+                let entry = defer_tracker.entry(msg_key).or_insert((0, Instant::now()));
+                entry.0 = entry.0.saturating_add(1);
+                entry.1 = Instant::now();
+                let defer_count = entry.0;
+
+                if defer_count >= MAX_DEFER_RETRIES {
+                    log::warn!(
+                        "[agent] defer limit reached ({}) for chat_id={}, dropping message",
+                        MAX_DEFER_RETRIES,
+                        msg.chat_id
+                    );
+                    defer_tracker.remove(&msg_key);
+                    let defer_out = PcMsg {
+                        channel: msg.channel.clone(),
+                        chat_id: msg.chat_id.clone(),
+                        content: LOW_MEMORY_USER_MESSAGE.to_string(),
+                        is_group: false,
+                    };
+                    metrics::record_message_out();
+                    let _ = outbound_tx.try_send(defer_out);
+                    continue;
+                }
+
                 let defer_out = PcMsg {
                     channel: msg.channel.clone(),
                     chat_id: msg.chat_id.clone(),
@@ -451,12 +484,7 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
         // SILENT 或 cron 空回复不写 session，直接跳过。
         if reply_content.trim() == "SILENT" || (msg.channel == "cron" && reply_content.is_empty()) {
             llm_failure_count.remove(&msg_key);
-            if llm_failure_count.len() > 64 {
-                let now = Instant::now();
-                llm_failure_count.retain(|_, (count, ts)| {
-                    *count > 0 && now.duration_since(*ts) < Duration::from_secs(300)
-                });
-            }
+            defer_tracker.remove(&msg_key);
             continue;
         }
 
@@ -480,12 +508,7 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
                 .set_important_offset_from_end(&msg.chat_id, 1);
         }
         llm_failure_count.remove(&msg_key);
-        if llm_failure_count.len() > 64 {
-            let now = Instant::now();
-            llm_failure_count.retain(|_, (count, ts)| {
-                *count > 0 && now.duration_since(*ts) < Duration::from_secs(300)
-            });
-        }
+        defer_tracker.remove(&msg_key);
 
         // 流式编辑已发送到通道时，跳过 outbound_tx 避免重复发送。
         if !streamed {

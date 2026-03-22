@@ -59,10 +59,7 @@ mod esp_backend {
             let framebuf = heap::alloc_spiram_buffer(framebuf_len).ok_or_else(|| {
                 crate::error::Error::config(
                     "display_init",
-                    format!(
-                        "failed to allocate {}B PSRAM framebuffer",
-                        framebuf_len
-                    ),
+                    format!("failed to allocate {}B PSRAM framebuffer", framebuf_len),
                 )
             })?;
             // Zero the framebuffer
@@ -112,7 +109,7 @@ mod esp_backend {
                 }
             }
 
-            // --- Optional BL pin: set high ---
+            // --- Optional BL pin: set high (will be reconfigured to PWM if LEDC succeeds) ---
             if let Some(bl) = spi.bl {
                 unsafe {
                     let bl_conf = gpio_config_t {
@@ -150,11 +147,7 @@ mod esp_backend {
             bus_cfg.flags = SPICOMMON_BUSFLAG_MASTER;
             let spi_host = spi.host as u32;
             unsafe {
-                let ret = spi_bus_initialize(
-                    spi_host,
-                    &bus_cfg,
-                    spi_common_dma_t_SPI_DMA_CH_AUTO,
-                );
+                let ret = spi_bus_initialize(spi_host, &bus_cfg, spi_common_dma_t_SPI_DMA_CH_AUTO);
                 if ret != ESP_OK {
                     heap::free_spiram_buffer(framebuf);
                     return Err(crate::error::Error::Esp {
@@ -299,13 +292,7 @@ mod esp_backend {
         }
 
         /// Push only the rows `[ry..ry+rh)` from the framebuffer, reducing SPI transfer.
-        pub fn flush_rows(
-            &self,
-            offset_x: i16,
-            offset_y: i16,
-            ry: u16,
-            rh: u16,
-        ) -> Result<()> {
+        pub fn flush_rows(&self, offset_x: i16, offset_y: i16, ry: u16, rh: u16) -> Result<()> {
             if rh == 0 || self.width == 0 {
                 return Ok(());
             }
@@ -324,21 +311,11 @@ mod esp_backend {
 
             // CASET
             self.send_cmd(0x2A)?;
-            self.send_data(&[
-                (x0 >> 8) as u8,
-                x0 as u8,
-                (x1 >> 8) as u8,
-                x1 as u8,
-            ])?;
+            self.send_data(&[(x0 >> 8) as u8, x0 as u8, (x1 >> 8) as u8, x1 as u8])?;
 
             // RASET
             self.send_cmd(0x2B)?;
-            self.send_data(&[
-                (y0 >> 8) as u8,
-                y0 as u8,
-                (y1 >> 8) as u8,
-                y1 as u8,
-            ])?;
+            self.send_data(&[(y0 >> 8) as u8, y0 as u8, (y1 >> 8) as u8, y1 as u8])?;
 
             // RAMWR
             self.send_cmd(0x2C)?;
@@ -407,9 +384,20 @@ pub struct DisplayState {
     pub config: DisplayConfig,
     pub available: bool,
     pub last_command_at: Option<Instant>,
+    /// BL GPIO pin number (if configured). Used for backlight on/off control.
+    bl_pin: Option<i32>,
+    /// F1: LEDC PWM 背光是否已初始化。
+    bl_ledc_initialized: bool,
     #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
     backend: Option<esp_backend::SpiDisplayBackend>,
 }
+
+/// F1: LEDC PWM 背光常量。Channel 7 / Timer 3，不与 tool pwm_out 的 0-5 冲突。
+const BL_LEDC_CHANNEL: u32 = 7;
+const BL_LEDC_TIMER: u32 = 3;
+const BL_LEDC_FREQ_HZ: u32 = 5000;
+const BL_LEDC_DUTY_RESOLUTION: u32 = 13; // 13-bit → max duty 8191
+const BL_LEDC_MAX_DUTY: u32 = 8191;
 
 impl DisplayState {
     pub fn init(config: &DisplayConfig) -> Result<Self> {
@@ -418,20 +406,29 @@ impl DisplayState {
                 config: config.clone(),
                 available: false,
                 last_command_at: None,
+                bl_pin: None,
+                bl_ledc_initialized: false,
                 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
                 backend: None,
             });
         }
 
+        let bl_pin = config.spi.bl;
+
         #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
         {
             let backend = esp_backend::SpiDisplayBackend::new(config)?;
-            Ok(Self {
+            let mut state = Self {
                 config: config.clone(),
                 available: true,
                 last_command_at: None,
+                bl_pin,
+                bl_ledc_initialized: false,
                 backend: Some(backend),
-            })
+            };
+            // F1: 尝试初始化 LEDC PWM 背光；失败则降级为 GPIO 开关
+            state.try_init_ledc_backlight();
+            Ok(state)
         }
 
         #[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
@@ -441,7 +438,52 @@ impl DisplayState {
                 config: config.clone(),
                 available: false,
                 last_command_at: None,
+                bl_pin,
+                bl_ledc_initialized: false,
             })
+        }
+    }
+
+    /// F1: 尝试用 LEDC 初始化 PWM 背光（channel 7 / timer 3, 5kHz, 13-bit）。
+    fn try_init_ledc_backlight(&mut self) {
+        #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+        {
+            let bl = match self.bl_pin {
+                Some(pin) => pin,
+                None => return,
+            };
+            unsafe {
+                use esp_idf_svc::sys::*;
+                let timer_cfg = ledc_timer_config_t {
+                    speed_mode: ledc_mode_t_LEDC_LOW_SPEED_MODE,
+                    duty_resolution: BL_LEDC_DUTY_RESOLUTION,
+                    timer_num: BL_LEDC_TIMER,
+                    freq_hz: BL_LEDC_FREQ_HZ,
+                    clk_cfg: soc_periph_ledc_clk_src_legacy_t_LEDC_AUTO_CLK,
+                    ..core::mem::zeroed()
+                };
+                let ret = ledc_timer_config(&timer_cfg);
+                if ret != ESP_OK {
+                    log::warn!("[display] LEDC timer init failed ({}), fallback to GPIO BL", ret);
+                    return;
+                }
+                let ch_cfg = ledc_channel_config_t {
+                    gpio_num: bl,
+                    speed_mode: ledc_mode_t_LEDC_LOW_SPEED_MODE,
+                    channel: BL_LEDC_CHANNEL,
+                    timer_sel: BL_LEDC_TIMER,
+                    duty: BL_LEDC_MAX_DUTY, // 启动时全亮
+                    hpoint: 0,
+                    ..core::mem::zeroed()
+                };
+                let ret = ledc_channel_config(&ch_cfg);
+                if ret != ESP_OK {
+                    log::warn!("[display] LEDC channel init failed ({}), fallback to GPIO BL", ret);
+                    return;
+                }
+            }
+            self.bl_ledc_initialized = true;
+            log::info!("[display] LEDC PWM backlight initialized (ch{}, 5kHz, 13-bit)", BL_LEDC_CHANNEL);
         }
     }
 
@@ -464,6 +506,13 @@ impl DisplayState {
                     channels,
                     pressure,
                     heap_percent,
+                    messages_in,
+                    messages_out,
+                    last_active_epoch_secs,
+                    uptime_secs,
+                    busy_phase,
+                    llm_last_ms,
+                    error_flash,
                 } => {
                     render_dashboard(
                         backend,
@@ -475,6 +524,13 @@ impl DisplayState {
                             heap_percent: *heap_percent,
                             width: self.config.width,
                             height: self.config.height,
+                            messages_in: *messages_in,
+                            messages_out: *messages_out,
+                            last_active_epoch_secs: *last_active_epoch_secs,
+                            uptime_secs: *uptime_secs,
+                            busy_phase: *busy_phase,
+                            llm_last_ms: *llm_last_ms,
+                            error_flash: *error_flash,
                         },
                     );
                     backend.flush(self.config.offset_x, self.config.offset_y)?;
@@ -493,16 +549,52 @@ impl DisplayState {
                 DisplayCommand::UpdatePressure {
                     level,
                     heap_percent,
+                    messages_in,
+                    messages_out,
+                    last_active_epoch_secs,
+                    llm_last_ms,
+                    error_flash,
                 } => {
                     let bg = DISPLAY_BG;
                     render_pressure_partial(
                         backend,
                         level,
-                        *heap_percent,
                         bg,
-                        self.config.width,
-                        self.config.height,
+                        &FooterPartialParams {
+                            heap_percent: *heap_percent,
+                            width: self.config.width,
+                            height: self.config.height,
+                            messages_in: *messages_in,
+                            messages_out: *messages_out,
+                            last_active_epoch_secs: *last_active_epoch_secs,
+                            llm_last_ms: *llm_last_ms,
+                            error_flash: *error_flash,
+                        },
                     );
+                    let layout = LAYOUT;
+                    let footer_h = self.config.height.saturating_sub(layout.footer_top);
+                    backend.flush_rows(
+                        self.config.offset_x,
+                        self.config.offset_y,
+                        layout.footer_top,
+                        footer_h,
+                    )?;
+                }
+                DisplayCommand::UpdateChannels { channels } => {
+                    let bg = DISPLAY_BG;
+                    render_channels_partial(backend, channels, bg, self.config.width);
+                    let layout = LAYOUT;
+                    let ch_h = layout.footer_top.saturating_sub(layout.middle_top);
+                    backend.flush_rows(
+                        self.config.offset_x,
+                        self.config.offset_y,
+                        layout.middle_top,
+                        ch_h,
+                    )?;
+                }
+                DisplayCommand::UpdateBootProgress { stage } => {
+                    let bg = DISPLAY_BG;
+                    render_boot_progress(backend, *stage, self.config.width, self.config.height, bg);
                     let layout = LAYOUT;
                     let footer_h = self.config.height.saturating_sub(layout.footer_top);
                     backend.flush_rows(
@@ -528,6 +620,84 @@ impl DisplayState {
             self.last_command_at = Some(Instant::now());
         }
 
+        Ok(())
+    }
+
+    /// 背光控制是否可用（显示器已初始化且有 BL 引脚）。
+    /// Whether backlight control is available.
+    pub fn backlight_available(&self) -> bool {
+        self.available && self.bl_pin.is_some()
+    }
+
+    /// 设置背光开关。on=true 开启（GPIO HIGH 或 PWM 100%），on=false 关闭。
+    /// Set backlight on/off. Uses PWM if LEDC initialized, otherwise GPIO level.
+    pub fn set_backlight(&self, on: bool) -> Result<()> {
+        if self.bl_ledc_initialized {
+            return self.set_brightness(if on { 100 } else { 0 });
+        }
+        #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+        {
+            if let Some(bl) = self.bl_pin {
+                let level = if on { 1 } else { 0 };
+                unsafe {
+                    esp_idf_svc::sys::gpio_set_level(bl, level);
+                }
+            }
+        }
+        #[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+        {
+            let _ = on;
+        }
+        Ok(())
+    }
+
+    /// F1: 设置背光亮度（0-100%）。duty = percent * 8191 / 100。
+    /// Set backlight brightness via LEDC PWM (0-100%).
+    pub fn set_brightness(&self, percent: u8) -> Result<()> {
+        #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+        {
+            if !self.bl_ledc_initialized {
+                // 降级为 GPIO 开关
+                return self.set_backlight(percent > 0);
+            }
+            let duty = (percent.min(100) as u32) * BL_LEDC_MAX_DUTY / 100;
+            unsafe {
+                use esp_idf_svc::sys::*;
+                let ret = ledc_set_duty(ledc_mode_t_LEDC_LOW_SPEED_MODE, BL_LEDC_CHANNEL, duty);
+                if ret != ESP_OK {
+                    log::warn!("[display] ledc_set_duty failed ({})", ret);
+                }
+                let ret = ledc_update_duty(ledc_mode_t_LEDC_LOW_SPEED_MODE, BL_LEDC_CHANNEL);
+                if ret != ESP_OK {
+                    log::warn!("[display] ledc_update_duty failed ({})", ret);
+                }
+            }
+        }
+        #[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+        {
+            let _ = percent;
+        }
+        Ok(())
+    }
+
+    /// F1: 背光渐变，20 步线性插值，阻塞在调用线程。
+    /// Fade backlight from `from`% to `to`% over `duration_ms`, 20 steps, blocking.
+    pub fn fade_brightness(&self, from: u8, to: u8, duration_ms: u32) -> Result<()> {
+        if !self.bl_ledc_initialized {
+            // 无 PWM 则直接开关
+            return self.set_backlight(to > 0);
+        }
+        const STEPS: u32 = 20;
+        let step_ms = duration_ms / STEPS;
+        let from_val = from.min(100) as i32;
+        let to_val = to.min(100) as i32;
+        for i in 0..=STEPS {
+            let pct = from_val + (to_val - from_val) * i as i32 / STEPS as i32;
+            self.set_brightness(pct as u8)?;
+            if i < STEPS {
+                std::thread::sleep(std::time::Duration::from_millis(step_ms as u64));
+            }
+        }
         Ok(())
     }
 }
@@ -564,7 +734,6 @@ struct BeetleOpts {
     wings: bool,
 }
 
-
 /// RGB565 color helpers.
 fn rgb565(r: u8, g: u8, b: u8) -> Rgb565 {
     Rgb565::new(r >> 3, g >> 2, b >> 3)
@@ -593,7 +762,7 @@ fn draw_beetle<D: DrawTarget<Color = Rgb565>>(
     let dir: i32 = if opts.flipped { -1 } else { 1 };
 
     let body_r = size * 28 / 100;
-    let head_r = size * 10 / 100;
+    let head_r = size * 14 / 100;
     let head_cy = if opts.flipped {
         y + size * 72 / 100
     } else {
@@ -688,16 +857,10 @@ fn draw_beetle<D: DrawTarget<Color = Rgb565>>(
 
             // Wing vein (central line for realism)
             let vein_style = PrimitiveStyle::with_stroke(wing_color, 1);
-            let vein_mid = Point::new(
-                mid_x - side * wing_span / 10,
-                wing_top + wing_h / 2,
-            );
-            let _ = Line::new(
-                Point::new(base_x, wing_top + wing_h * 4 / 10),
-                vein_mid,
-            )
-            .into_styled(vein_style)
-            .draw(target);
+            let vein_mid = Point::new(mid_x - side * wing_span / 10, wing_top + wing_h / 2);
+            let _ = Line::new(Point::new(base_x, wing_top + wing_h * 4 / 10), vein_mid)
+                .into_styled(vein_style)
+                .draw(target);
             let _ = Line::new(
                 vein_mid,
                 Point::new(tip_x - side * 2, wing_top + wing_h * 4 / 10),
@@ -726,27 +889,20 @@ fn draw_beetle<D: DrawTarget<Color = Rgb565>>(
     .into_styled(seam_style)
     .draw(target);
 
-    // --- Elytra spots (2 pairs of small dots, like a ladybug pattern) ---
-    let spot_color = darken(color, 40);
-    let spot_fill = PrimitiveStyle::with_fill(spot_color);
-    let spot_r = (body_r * 15 / 100).max(2);
-    // Upper pair
+    // --- Elytra ridges (longitudinal lines, typical beetle texture) ---
+    let ridge_color = darken(color, 30);
+    let ridge_style = PrimitiveStyle::with_stroke(ridge_color, 1);
+    // 2 ridges per side, running along the body length
     for &sx in &[-1i32, 1] {
-        let _ = Circle::new(
-            Point::new(cx + sx * body_r * 45 / 100 - spot_r, body_cy - body_r * 30 / 100 - spot_r),
-            (spot_r * 2) as u32,
-        )
-        .into_styled(spot_fill)
-        .draw(target);
-    }
-    // Lower pair
-    for &sx in &[-1i32, 1] {
-        let _ = Circle::new(
-            Point::new(cx + sx * body_r * 40 / 100 - spot_r, body_cy + body_r * 20 / 100 - spot_r),
-            (spot_r * 2) as u32,
-        )
-        .into_styled(spot_fill)
-        .draw(target);
+        for &frac in &[30i32, 60] {
+            let rx = cx + sx * body_r * frac / 100;
+            // Ridge runs from upper body to lower body, following the curvature
+            let ry_top = body_cy - body_r * 70 / 100;
+            let ry_bot = body_cy + body_r * 70 / 100;
+            let _ = Line::new(Point::new(rx, ry_top), Point::new(rx, ry_bot))
+                .into_styled(ridge_style)
+                .draw(target);
+        }
     }
 
     // --- Head (smaller filled circle, slightly darker) ---
@@ -759,39 +915,53 @@ fn draw_beetle<D: DrawTarget<Color = Rgb565>>(
     .into_styled(head_fill)
     .draw(target);
 
-    // --- Eyes ---
-    let eye_spread = head_r * 6 / 10;
-    let eye_y = head_cy - dir;
+    // --- Eyes (compound eyes on sides of head) ---
+    let eye_r = (head_r * 4 / 10).max(2);
+    let eye_spread = head_r * 8 / 10;
+    let eye_y = head_cy;
 
     if opts.x_eyes {
         // X eyes (fault state)
         let x_style = PrimitiveStyle::with_stroke(Rgb565::WHITE, 2);
         for &sx in &[-1i32, 1] {
             let ex = cx + sx * eye_spread;
-            let _ = Line::new(
-                Point::new(ex - 2, eye_y - 2),
-                Point::new(ex + 2, eye_y + 2),
-            )
-            .into_styled(x_style)
-            .draw(target);
-            let _ = Line::new(
-                Point::new(ex + 2, eye_y - 2),
-                Point::new(ex - 2, eye_y + 2),
-            )
-            .into_styled(x_style)
-            .draw(target);
+            let _ = Line::new(Point::new(ex - 2, eye_y - 2), Point::new(ex + 2, eye_y + 2))
+                .into_styled(x_style)
+                .draw(target);
+            let _ = Line::new(Point::new(ex + 2, eye_y - 2), Point::new(ex - 2, eye_y + 2))
+                .into_styled(x_style)
+                .draw(target);
         }
     } else {
-        // Normal eyes (white dots)
-        let eye_fill = PrimitiveStyle::with_fill(Rgb565::WHITE);
+        // Compound eyes (small circles on head sides)
+        let eye_color = darken(color, 60);
+        let eye_fill = PrimitiveStyle::with_fill(eye_color);
+        let eye_highlight = PrimitiveStyle::with_fill(Rgb565::WHITE);
         for &sx in &[-1i32, 1] {
-            let _ = Circle::new(
-                Point::new(cx + sx * eye_spread - 2, eye_y - 2),
-                5,
-            )
-            .into_styled(eye_fill)
-            .draw(target);
+            let ex = cx + sx * eye_spread;
+            let _ = Circle::new(Point::new(ex - eye_r, eye_y - eye_r), (eye_r * 2) as u32)
+                .into_styled(eye_fill)
+                .draw(target);
+            // Highlight dot
+            let _ = Circle::new(Point::new(ex - 1, eye_y - eye_r + 1), 2)
+                .into_styled(eye_highlight)
+                .draw(target);
         }
+    }
+
+    // --- Mandibles (V-shaped jaws extending from front of head) ---
+    let mandible_style = PrimitiveStyle::with_stroke(darken(color, 40), 2);
+    let jaw_base_y = head_cy - dir * head_r * 8 / 10;
+    let jaw_tip_y = head_cy - dir * (head_r + size * 8 / 100);
+    let jaw_spread = head_r * 5 / 10;
+    let jaw_tip_spread = head_r * 9 / 10;
+    for &sx in &[-1i32, 1] {
+        let _ = Line::new(
+            Point::new(cx + sx * jaw_spread, jaw_base_y),
+            Point::new(cx + sx * jaw_tip_spread, jaw_tip_y),
+        )
+        .into_styled(mandible_style)
+        .draw(target);
     }
 
     (cx, body_cy, body_r, head_cy, head_r)
@@ -821,13 +991,13 @@ fn draw_top_arc<D: DrawTarget<Color = Rgb565>>(
 ) {
     // Pre-computed (cos, sin) * 1000 for angles -150, -130, -110, -90, -70, -50, -30 degrees.
     const POINTS: [(i32, i32); 7] = [
-        (-866, -500),  // -150°
-        (-643, -766),  // -130°
-        (-342, -940),  // -110°
-        (0, -1000),    // -90°
-        (342, -940),   // -70°
-        (643, -766),   // -50°
-        (866, -500),   // -30°
+        (-866, -500), // -150°
+        (-643, -766), // -130°
+        (-342, -940), // -110°
+        (0, -1000),   // -90°
+        (342, -940),  // -70°
+        (643, -766),  // -50°
+        (866, -500),  // -30°
     ];
     for pair in POINTS.windows(2) {
         let (c0, s0) = pair[0];
@@ -878,6 +1048,17 @@ struct DashboardParams<'a> {
     heap_percent: u8,
     width: u16,
     height: u16,
+    messages_in: u32,
+    messages_out: u32,
+    last_active_epoch_secs: u32,
+    /// F3: 系统运行时间（秒）。
+    uptime_secs: u64,
+    /// F4: Busy 呼吸动画相位。
+    busy_phase: bool,
+    /// F6: 最近一次 LLM 调用延迟（毫秒）。
+    llm_last_ms: u32,
+    /// F7: 错误闪烁标志。
+    error_flash: bool,
 }
 
 /// Render the full dashboard UI.
@@ -886,12 +1067,9 @@ fn render_dashboard<D: DrawTarget<Color = Rgb565>>(target: &mut D, p: &Dashboard
 
     // --- Background fill ---
     let bg_color = DISPLAY_BG;
-    let _ = Rectangle::new(
-        Point::new(0, 0),
-        Size::new(p.width as u32, p.height as u32),
-    )
-    .into_styled(PrimitiveStyle::with_fill(bg_color))
-    .draw(target);
+    let _ = Rectangle::new(Point::new(0, 0), Size::new(p.width as u32, p.height as u32))
+        .into_styled(PrimitiveStyle::with_fill(bg_color))
+        .draw(target);
 
     // --- Beetle icon ---
     let beetle_color = match p.state {
@@ -933,12 +1111,9 @@ fn render_dashboard<D: DrawTarget<Color = Rgb565>>(target: &mut D, p: &Dashboard
             let spacing = body_r * 35 / 100;
             for (i, &r) in [2u32, 3, 4].iter().enumerate() {
                 let dx = (i as i32 - 1) * spacing;
-                let _ = Circle::new(
-                    Point::new(cx + dx - r as i32, dot_y - r as i32),
-                    r * 2,
-                )
-                .into_styled(dot_style)
-                .draw(target);
+                let _ = Circle::new(Point::new(cx + dx - r as i32, dot_y - r as i32), r * 2)
+                    .into_styled(dot_style)
+                    .draw(target);
             }
             // Dashed WiFi arcs above head (dots instead of solid lines)
             let sig_y = head_cy - head_r - 4;
@@ -995,14 +1170,28 @@ fn render_dashboard<D: DrawTarget<Color = Rgb565>>(target: &mut D, p: &Dashboard
             .into_styled(ex_style)
             .draw(target);
             let dot_fill = PrimitiveStyle::with_fill(Rgb565::WHITE);
-            let _ = Circle::new(
-                Point::new(cx - 2, body_cy + body_r * 30 / 100),
-                4,
-            )
-            .into_styled(dot_fill)
-            .draw(target);
+            let _ = Circle::new(Point::new(cx - 2, body_cy + body_r * 30 / 100), 4)
+                .into_styled(dot_fill)
+                .draw(target);
         }
-        _ => {} // Busy — wings already drawn
+        DisplaySystemState::Busy => {
+            // F4: Busy 呼吸动画 — 交替大小白点
+            let dot_color = Rgb565::WHITE;
+            let dot_style = PrimitiveStyle::with_fill(dot_color);
+            let dot_y = body_cy;
+            let spacing = body_r * 35 / 100;
+            let sizes: [u32; 3] = if p.busy_phase {
+                [3, 4, 5]
+            } else {
+                [2, 3, 2]
+            };
+            for (i, &r) in sizes.iter().enumerate() {
+                let dx = (i as i32 - 1) * spacing;
+                let _ = Circle::new(Point::new(cx + dx - r as i32, dot_y - r as i32), r * 2)
+                    .into_styled(dot_style)
+                    .draw(target);
+            }
+        }
     }
 
     // --- Title text: state name ---
@@ -1021,33 +1210,135 @@ fn render_dashboard<D: DrawTarget<Color = Rgb565>>(target: &mut D, p: &Dashboard
     )
     .draw(target);
 
-    // --- Subtitle: IP address or version ---
+    // --- Subtitle: IP address (+ uptime for Idle/Busy) or version ---
     let subtitle_style = MonoTextStyle::new(&FONT_6X13, rgb565(0x66, 0x66, 0x66));
-    let ip_text = if p.state == DisplaySystemState::Booting {
-        p.ip_address.unwrap_or(concat!("beetle v", env!("CARGO_PKG_VERSION")))
+    if p.state == DisplaySystemState::Booting {
+        let ip_text = p
+            .ip_address
+            .unwrap_or(concat!("beetle v", env!("CARGO_PKG_VERSION")));
+        let _ = Text::new(
+            ip_text,
+            Point::new(layout.title_left as i32, layout.subtitle_top as i32 + 11),
+            subtitle_style,
+        )
+        .draw(target);
     } else {
-        p.ip_address.unwrap_or("---.---.---.---")
-    };
-    let _ = Text::new(
-        ip_text,
-        Point::new(layout.title_left as i32, layout.subtitle_top as i32 + 11),
-        subtitle_style,
-    )
-    .draw(target);
+        // F3: IP + uptime — 栈上格式化
+        let ip = p.ip_address.unwrap_or("---.---.---.---");
+        let mut sub_buf = [0u8; 30];
+        let sub_str = format_subtitle_with_uptime(ip, p.uptime_secs, &mut sub_buf);
+        let _ = Text::new(
+            sub_str,
+            Point::new(layout.title_left as i32, layout.subtitle_top as i32 + 11),
+            subtitle_style,
+        )
+        .draw(target);
+    }
 
-    // --- Channel status (middle section) ---
+    // --- Channel status (middle section) with F5 failure count ---
+    render_channels_inner(target, p.channels, p.width, layout.middle_top as i32);
+
+    // --- Footer: pressure level + heap progress bar ---
+    render_footer(
+        target,
+        p.pressure,
+        p.heap_percent,
+        p.width,
+        p.messages_in,
+        p.messages_out,
+        p.last_active_epoch_secs,
+        p.llm_last_ms,
+        p.error_flash,
+    );
+}
+
+/// Dashboard background color (white).
+const DISPLAY_BG: Rgb565 = Rgb565::WHITE;
+
+/// F3: 格式化副标题 "IP Up:XdYh" 或 "IP Up:XhYm"（栈上，无堆分配）。
+fn format_subtitle_with_uptime<'a>(ip: &'a str, secs: u64, buf: &'a mut [u8; 30]) -> &'a str {
+    let mut pos = 0usize;
+    // 写入 IP（截断到留空间给 uptime）
+    let ip_bytes = ip.as_bytes();
+    let ip_max = ip_bytes.len().min(16);
+    buf[pos..pos + ip_max].copy_from_slice(&ip_bytes[..ip_max]);
+    pos += ip_max;
+
+    if secs > 0 {
+        // " Up:"
+        let tag = b" Up:";
+        let tag_len = tag.len().min(buf.len() - pos);
+        buf[pos..pos + tag_len].copy_from_slice(&tag[..tag_len]);
+        pos += tag_len;
+
+        let days = secs / 86400;
+        let hours = (secs % 86400) / 3600;
+        let mins = (secs % 3600) / 60;
+
+        if days > 0 {
+            // "Xd Yh"
+            pos = write_u64_to_buf(days, buf, pos);
+            if pos < buf.len() { buf[pos] = b'd'; pos += 1; }
+            pos = write_u64_to_buf(hours, buf, pos);
+            if pos < buf.len() { buf[pos] = b'h'; pos += 1; }
+        } else {
+            // "Xh Ym"
+            pos = write_u64_to_buf(hours, buf, pos);
+            if pos < buf.len() { buf[pos] = b'h'; pos += 1; }
+            pos = write_u64_to_buf(mins, buf, pos);
+            if pos < buf.len() { buf[pos] = b'm'; pos += 1; }
+        }
+    }
+
+    core::str::from_utf8(&buf[..pos]).unwrap_or(ip)
+}
+
+/// Write a u64 value into a byte buffer at `pos`, return new pos (generic version).
+fn write_u64_to_buf(val: u64, buf: &mut [u8], mut pos: usize) -> usize {
+    if val == 0 {
+        if pos < buf.len() {
+            buf[pos] = b'0';
+            pos += 1;
+        }
+        return pos;
+    }
+    let mut tmp = [0u8; 20];
+    let mut n = val;
+    let mut i = 0;
+    while n > 0 && i < 20 {
+        tmp[i] = b'0' + (n % 10) as u8;
+        n /= 10;
+        i += 1;
+    }
+    for j in (0..i).rev() {
+        if pos < buf.len() {
+            buf[pos] = tmp[j];
+            pos += 1;
+        }
+    }
+    pos
+}
+
+/// Shared channel rendering logic (used by full dashboard and partial update).
+fn render_channels_inner<D: DrawTarget<Color = Rgb565>>(
+    target: &mut D,
+    channels: &[DisplayChannelStatus; 5],
+    width: u16,
+    middle_y: i32,
+) {
     let healthy_color = rgb565(0x22, 0xcc, 0x22);
     let unhealthy_color = rgb565(0xcc, 0x22, 0x22);
     let disabled_color = rgb565(0xbb, 0xbb, 0xbb);
     let text_style = MonoTextStyle::new(&FONT_6X13, rgb565(0x33, 0x33, 0x33));
     let disabled_text_style = MonoTextStyle::new(&FONT_6X13, rgb565(0x99, 0x99, 0x99));
+    let fail_text_style = MonoTextStyle::new(&FONT_6X13, unhealthy_color);
 
-    let col_width = p.width as i32 / 2;
+    let col_width = width as i32 / 2;
     let mut col = 0i32;
     let mut row = 0i32;
-    for ch in p.channels.iter() {
+    for ch in channels.iter() {
         let px = 8 + col * col_width;
-        let py = layout.middle_top as i32 + row * 18;
+        let py = middle_y + row * 18;
 
         if ch.enabled {
             // Enabled channel: filled dot (green=healthy, red=unhealthy)
@@ -1067,8 +1358,40 @@ fn render_dashboard<D: DrawTarget<Color = Rgb565>>(target: &mut D, p: &Dashboard
         }
 
         // Channel name
-        let name_style = if ch.enabled { text_style } else { disabled_text_style };
+        let name_style = if ch.enabled {
+            text_style
+        } else {
+            disabled_text_style
+        };
         let _ = Text::new(ch.name, Point::new(px + 14, py + 11), name_style).draw(target);
+
+        // F5: 通道失败计数 — enabled + unhealthy + failures>0 时显示红色 "xN"
+        if ch.enabled && !ch.healthy && ch.consecutive_failures > 0 {
+            let name_pixel_w = ch.name.len() as i32 * 6; // FONT_6X13 = 6px per char
+            let fail_x = px + 14 + name_pixel_w + 2;
+            let mut fail_buf = [0u8; 6]; // "x" + up to 5 digits
+            fail_buf[0] = b'x';
+            let mut fpos = 1;
+            // write failure count
+            let fc = ch.consecutive_failures;
+            let mut tmp = [0u8; 10];
+            let mut n = fc;
+            let mut i = 0;
+            while n > 0 && i < 10 {
+                tmp[i] = b'0' + (n % 10) as u8;
+                n /= 10;
+                i += 1;
+            }
+            for j in (0..i).rev() {
+                if fpos < fail_buf.len() {
+                    fail_buf[fpos] = tmp[j];
+                    fpos += 1;
+                }
+            }
+            if let Ok(s) = core::str::from_utf8(&fail_buf[..fpos]) {
+                let _ = Text::new(s, Point::new(fail_x, py + 11), fail_text_style).draw(target);
+            }
+        }
 
         col += 1;
         if col >= 2 {
@@ -1076,13 +1399,7 @@ fn render_dashboard<D: DrawTarget<Color = Rgb565>>(target: &mut D, p: &Dashboard
             row += 1;
         }
     }
-
-    // --- Footer: pressure level + heap progress bar ---
-    render_footer(target, p.pressure, p.heap_percent, p.width);
 }
-
-/// Dashboard background color (white).
-const DISPLAY_BG: Rgb565 = Rgb565::WHITE;
 
 /// Partial update: repaint only the IP subtitle region.
 fn render_ip_partial<D: DrawTarget<Color = Rgb565>>(
@@ -1104,36 +1421,84 @@ fn render_ip_partial<D: DrawTarget<Color = Rgb565>>(
     let _ = Text::new(ip, Point::new(x, y + 11), subtitle_style).draw(target);
 }
 
+/// Partial update: repaint only the channel status (middle) region.
+fn render_channels_partial<D: DrawTarget<Color = Rgb565>>(
+    target: &mut D,
+    channels: &[DisplayChannelStatus; 5],
+    bg: Rgb565,
+    width: u16,
+) {
+    let layout = LAYOUT;
+    let middle_y = layout.middle_top as i32;
+    let ch_h = (layout.footer_top - layout.middle_top) as u32;
+
+    // Clear middle region
+    let _ = Rectangle::new(Point::new(0, middle_y), Size::new(width as u32, ch_h))
+        .into_styled(PrimitiveStyle::with_fill(bg))
+        .draw(target);
+
+    // F5: 使用共享渲染逻辑（含失败计数）
+    render_channels_inner(target, channels, width, middle_y);
+}
+
+/// Footer partial-update parameters (avoids clippy::too_many_arguments).
+struct FooterPartialParams {
+    heap_percent: u8,
+    width: u16,
+    height: u16,
+    messages_in: u32,
+    messages_out: u32,
+    last_active_epoch_secs: u32,
+    /// F6: LLM 延迟。
+    llm_last_ms: u32,
+    /// F7: 错误闪烁标志。
+    error_flash: bool,
+}
+
 /// Partial update: repaint only the footer pressure + progress bar region.
 fn render_pressure_partial<D: DrawTarget<Color = Rgb565>>(
     target: &mut D,
     level: &DisplayPressureLevel,
-    heap_percent: u8,
     bg: Rgb565,
-    width: u16,
-    height: u16,
+    fp: &FooterPartialParams,
 ) {
     let layout = LAYOUT;
     let footer_y = layout.footer_top as i32;
 
     // Clear entire footer region
-    let footer_h = (height as i32 - footer_y).max(1) as u32;
+    let footer_h = (fp.height as i32 - footer_y).max(1) as u32;
     let _ = Rectangle::new(
         Point::new(0, footer_y),
-        Size::new(width as u32, footer_h),
+        Size::new(fp.width as u32, footer_h),
     )
     .into_styled(PrimitiveStyle::with_fill(bg))
     .draw(target);
 
-    render_footer(target, level, heap_percent, width);
+    render_footer(
+        target,
+        level,
+        fp.heap_percent,
+        fp.width,
+        fp.messages_in,
+        fp.messages_out,
+        fp.last_active_epoch_secs,
+        fp.llm_last_ms,
+        fp.error_flash,
+    );
 }
 
-/// Shared footer rendering: pressure label + progress bar + percentage text.
+/// Shared footer rendering: pressure label + progress bar + percentage text + message stats.
+#[allow(clippy::too_many_arguments)]
 fn render_footer<D: DrawTarget<Color = Rgb565>>(
     target: &mut D,
     level: &DisplayPressureLevel,
     heap_percent: u8,
     width: u16,
+    messages_in: u32,
+    messages_out: u32,
+    last_active_epoch_secs: u32,
+    llm_last_ms: u32,
+    error_flash: bool,
 ) {
     let footer_y = LAYOUT.footer_top as i32;
     let pressure_text = match level {
@@ -1146,8 +1511,22 @@ fn render_footer<D: DrawTarget<Color = Rgb565>>(
         DisplayPressureLevel::Cautious => rgb565(0xdd, 0xaa, 0x00),
         DisplayPressureLevel::Critical => rgb565(0xee, 0x33, 0x33),
     };
-    let pressure_style = MonoTextStyle::new(&FONT_6X13, pressure_color);
-    let _ = Text::new(pressure_text, Point::new(8, footer_y + 11), pressure_style).draw(target);
+
+    // F7: 错误闪烁 — error_flash=true 时反色渲染压力标签（彩色背景 + 白字）
+    if error_flash {
+        let text_w = pressure_text.len() as u32 * 6 + 4; // FONT_6X13 + padding
+        let _ = Rectangle::new(
+            Point::new(6, footer_y),
+            Size::new(text_w, 14),
+        )
+        .into_styled(PrimitiveStyle::with_fill(pressure_color))
+        .draw(target);
+        let flash_style = MonoTextStyle::new(&FONT_6X13, Rgb565::WHITE);
+        let _ = Text::new(pressure_text, Point::new(8, footer_y + 11), flash_style).draw(target);
+    } else {
+        let pressure_style = MonoTextStyle::new(&FONT_6X13, pressure_color);
+        let _ = Text::new(pressure_text, Point::new(8, footer_y + 11), pressure_style).draw(target);
+    }
 
     let bar_x = 8i32;
     let bar_y = footer_y + 20;
@@ -1178,6 +1557,169 @@ fn render_footer<D: DrawTarget<Color = Rgb565>>(
         text_style,
     )
     .draw(target);
+
+    // --- Message stats line: "In:NNN Out:NNN L:X.Xs HH:MM" (F6: 含 LLM 延迟) ---
+    let stats_y = bar_y + bar_h as i32 + 14; // 2px gap + 12px bar + baseline offset
+    let dim_style = MonoTextStyle::new(&FONT_6X13, rgb565(0x88, 0x88, 0x88));
+    let mut stats_buf = [0u8; 40]; // F6: 扩大到 40 字节
+    let stats_str = format_msg_stats(
+        messages_in,
+        messages_out,
+        last_active_epoch_secs,
+        llm_last_ms,
+        &mut stats_buf,
+    );
+    let _ = Text::new(stats_str, Point::new(8, stats_y), dim_style).draw(target);
+}
+
+/// F8: 启动进度条渲染。4 段：WiFi → SNTP → Channels → Agent。
+fn render_boot_progress<D: DrawTarget<Color = Rgb565>>(
+    target: &mut D,
+    stage: u8,
+    width: u16,
+    height: u16,
+    bg: Rgb565,
+) {
+    let layout = LAYOUT;
+    let footer_y = layout.footer_top as i32;
+    let footer_h = (height as i32 - footer_y).max(1) as u32;
+
+    // Clear footer
+    let _ = Rectangle::new(Point::new(0, footer_y), Size::new(width as u32, footer_h))
+        .into_styled(PrimitiveStyle::with_fill(bg))
+        .draw(target);
+
+    let stage = stage.min(4);
+    let bar_x = 8i32;
+    let bar_y = footer_y + 8;
+    let total_w = (width as i32 - 16).max(40);
+    let seg_w = total_w / 4;
+    let bar_h = 14u32;
+
+    let filled_color = rgb565(0x22, 0xcc, 0x22);
+    let empty_color = rgb565(0xdd, 0xdd, 0xdd);
+    let border_color = rgb565(0xaa, 0xaa, 0xaa);
+
+    // 4 segments
+    for i in 0..4u8 {
+        let sx = bar_x + i as i32 * seg_w;
+        let color = if i < stage { filled_color } else { empty_color };
+        let _ = Rectangle::new(Point::new(sx, bar_y), Size::new(seg_w as u32, bar_h))
+            .into_styled(PrimitiveStyle::with_fill(color))
+            .draw(target);
+        let _ = Rectangle::new(Point::new(sx, bar_y), Size::new(seg_w as u32, bar_h))
+            .into_styled(PrimitiveStyle::with_stroke(border_color, 1))
+            .draw(target);
+    }
+
+    // Labels below bar
+    let label_y = bar_y + bar_h as i32 + 12;
+    let label_style = MonoTextStyle::new(&FONT_6X13, rgb565(0x66, 0x66, 0x66));
+    let labels = ["WiFi", "SNTP", "Chan", "Agent"];
+    for (i, lbl) in labels.iter().enumerate() {
+        let lx = bar_x + i as i32 * seg_w + (seg_w - lbl.len() as i32 * 6) / 2;
+        let _ = Text::new(lbl, Point::new(lx, label_y), label_style).draw(target);
+    }
+}
+
+/// Format message stats line: "In:NNN Out:NNN L:X.Xs HH:MM" (no heap alloc).
+/// F6: 含 LLM 延迟显示。
+fn format_msg_stats(msg_in: u32, msg_out: u32, epoch_secs: u32, llm_ms: u32, buf: &mut [u8; 40]) -> &str {
+    let mut pos = 0;
+    let len = buf.len();
+
+    macro_rules! put {
+        ($b:expr) => {
+            if pos < len { buf[pos] = $b; pos += 1; }
+        };
+    }
+
+    // "In:"
+    put!(b'I'); put!(b'n'); put!(b':');
+    pos = write_u32_to_buf(msg_in, buf, pos);
+
+    put!(b' ');
+
+    // "Out:"
+    put!(b'O'); put!(b'u'); put!(b't'); put!(b':');
+    pos = write_u32_to_buf(msg_out, buf, pos);
+
+    // F6: " L:X.Xs" or " L:XXXms" (only if llm_ms > 0)
+    if llm_ms > 0 {
+        put!(b' '); put!(b'L'); put!(b':');
+        if llm_ms >= 1000 {
+            // Show as seconds with 1 decimal: "1.2s"
+            let secs = llm_ms / 1000;
+            let tenths = (llm_ms % 1000) / 100;
+            pos = write_u32_to_buf(secs, buf, pos);
+            put!(b'.'); put!(b'0' + tenths as u8); put!(b's');
+        } else {
+            // Show as milliseconds: "XXXms"
+            pos = write_u32_to_buf(llm_ms, buf, pos);
+            put!(b'm'); put!(b's');
+        }
+    }
+
+    // " HH:MM"
+    put!(b' ');
+
+    if epoch_secs == 0 {
+        put!(b'-'); put!(b'-'); put!(b':'); put!(b'-'); put!(b'-');
+    } else {
+        // ESP32: use esp_idf_svc::sys::localtime_r for timezone-aware conversion (SNTP).
+        #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+        {
+            use esp_idf_svc::sys::{localtime_r, time_t};
+            let time_val: time_t = epoch_secs as time_t;
+            let mut tm = unsafe { core::mem::zeroed::<esp_idf_svc::sys::tm>() };
+            unsafe { localtime_r(&time_val, &mut tm) };
+            let h = (tm.tm_hour as u8).min(23);
+            let m = (tm.tm_min as u8).min(59);
+            put!(b'0' + h / 10); put!(b'0' + h % 10);
+            put!(b':');
+            put!(b'0' + m / 10); put!(b'0' + m % 10);
+        }
+        #[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+        {
+            // Non-ESP fallback: simple UTC calculation.
+            let secs_of_day = epoch_secs % 86400;
+            let h = ((secs_of_day / 3600) % 24) as u8;
+            let m = ((secs_of_day % 3600) / 60) as u8;
+            put!(b'0' + h / 10); put!(b'0' + h % 10);
+            put!(b':');
+            put!(b'0' + m / 10); put!(b'0' + m % 10);
+        }
+    }
+
+    core::str::from_utf8(&buf[..pos]).unwrap_or("--")
+}
+
+/// Write a u32 value into a byte buffer at `pos`, return new pos.
+fn write_u32_to_buf(val: u32, buf: &mut [u8; 40], mut pos: usize) -> usize {
+    if val == 0 {
+        if pos < buf.len() {
+            buf[pos] = b'0';
+            pos += 1;
+        }
+        return pos;
+    }
+    // Max u32 is 10 digits; write into temp then copy.
+    let mut tmp = [0u8; 10];
+    let mut n = val;
+    let mut i = 0;
+    while n > 0 {
+        tmp[i] = b'0' + (n % 10) as u8;
+        n /= 10;
+        i += 1;
+    }
+    // Reverse copy
+    for j in (0..i).rev() {
+        if pos < buf.len() {
+            buf[pos] = tmp[j];
+            pos += 1;
+        }
+    }
+    pos
 }
 
 /// Format a percentage value into a static buffer (no heap alloc).

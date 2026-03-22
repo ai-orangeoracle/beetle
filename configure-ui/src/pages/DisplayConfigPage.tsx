@@ -366,6 +366,22 @@ export function DisplayConfigPage() {
                 />
               </Box>
             </FormSectionSub>
+
+            <FormSectionSub title={t("displayConfig.sleepTimeoutSecs")}>
+              <TextField
+                type="number"
+                size="small"
+                label={t("displayConfig.sleepTimeoutSecs")}
+                helperText={t("displayConfig.sleepTimeoutSecsHelp")}
+                disabled={!form.enabled}
+                value={form.sleep_timeout_secs}
+                onChange={(e) => {
+                  const n = asNumber(e.target.value);
+                  if (n != null && n >= 0) setField("sleep_timeout_secs", Math.round(n));
+                }}
+                slotProps={{ htmlInput: { min: 0, max: 65535 } }}
+              />
+            </FormSectionSub>
             <Typography variant="caption" sx={{ color: "var(--muted)" }}>
               {t("displayConfig.footerHint")}
             </Typography>

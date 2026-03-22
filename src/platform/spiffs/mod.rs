@@ -92,6 +92,7 @@ pub fn read_file(path: impl AsRef<Path>) -> Result<Vec<u8>> {
 }
 
 /// 写字节到文件。超过 MAX_WRITE_SIZE 返回错误。
+/// Direct overwrite: SPIFFS 不支持可靠的 rename，直接覆盖写入。
 pub fn write_file(path: impl AsRef<Path>, data: &[u8]) -> Result<()> {
     #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
     let _guard = lock_spiffs();
@@ -105,9 +106,9 @@ pub fn write_file(path: impl AsRef<Path>, data: &[u8]) -> Result<()> {
     let path_str = p
         .to_str()
         .ok_or_else(|| Error::config("spiffs_write", "invalid path"))?;
+
     let mut f = std::fs::File::create(path_str).map_err(|e| Error::io("spiffs_write", e))?;
-    f.write_all(data)
-        .map_err(|e| Error::io("spiffs_write", e))?;
+    f.write_all(data).map_err(|e| Error::io("spiffs_write", e))?;
     Ok(())
 }
 
