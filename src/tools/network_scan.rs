@@ -154,10 +154,7 @@ impl Tool for NetworkScanTool {
                     .unwrap_or("http://captive.apple.com");
                 self.do_connectivity_check(host, ctx)
             }
-            _ => Err(Error::config(
-                "network_scan",
-                format!("unknown op: {}", op),
-            )),
+            _ => Err(Error::config("network_scan", format!("unknown op: {}", op))),
         }
     }
 
