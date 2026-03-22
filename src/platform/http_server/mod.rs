@@ -82,6 +82,19 @@ macro_rules! require_pairing_code {
         }
     }};
 }
+/// 验证 CSRF token,失败返回 403。
+macro_rules! require_csrf {
+    ($req:expr) => {{
+        let token = $req.header("X-CSRF-Token").or_else(|| $req.header("x-csrf-token"));
+        if let Some(t) = token {
+            if !crate::platform::csrf::verify_token(t) {
+                return write_response!($req, 403, "Forbidden", CORS_HEADERS, br#"{"error":"invalid CSRF token"}"#);
+            }
+        } else {
+            return write_response!($req, 403, "Forbidden", CORS_HEADERS, br#"{"error":"CSRF token required"}"#);
+        }
+    }};
+}
 /// 已激活 GET + 调用 handler 返回 body + 写 200 JSON。收敛 require_activated + body + write_json_200。
 macro_rules! activated_get_json {
     ($req:expr, $store:expr, $ctx:expr, $handler:path) => {{
@@ -363,6 +376,7 @@ pub fn run(
         Method::Post,
         move |mut req| -> HandlerResult {
             require_pairing_code!(req, store_wifi);
+            require_csrf!(req);
             let body = read_body_utf8!(req, POST_BODY_MAX_LEN, store_wifi);
             let r = handlers::config::post_wifi(ctx_config_wifi.as_ref(), &body).map_err(to_io)?;
             let should_restart = r.status == 200 && common::restart_requested_from_uri(req.uri());
@@ -402,6 +416,7 @@ pub fn run(
                 return resp_options!(req);
             }
             require_pairing_code!(req, store_llm);
+            require_csrf!(req);
             let body = read_body_utf8!(req, POST_BODY_MAX_LEN, store_llm);
             let r = handlers::config::post_llm(ctx_llm.as_ref(), &body).map_err(to_io)?;
             write_api_resp!(req, r)
@@ -425,6 +440,7 @@ pub fn run(
                 return resp_options!(req);
             }
             require_pairing_code!(req, store_channels);
+            require_csrf!(req);
             let body = read_body_utf8!(req, POST_BODY_MAX_LEN, store_channels);
             let r = handlers::config::post_channels(ctx_channels.as_ref(), &body).map_err(to_io)?;
             write_api_resp!(req, r)
@@ -448,6 +464,7 @@ pub fn run(
                 return resp_options!(req);
             }
             require_pairing_code!(req, store_system);
+            require_csrf!(req);
             let body = read_body_utf8!(req, POST_BODY_MAX_LEN, store_system);
             let r = handlers::config::post_system(ctx_system.as_ref(), &body).map_err(to_io)?;
             write_api_resp!(req, r)
@@ -487,6 +504,7 @@ pub fn run(
                 return resp_options!(req);
             }
             require_pairing_code!(req, store_hw_post);
+            require_csrf!(req);
             let body = read_body_utf8!(req, POST_BODY_MAX_LEN, store_hw_post);
             let r = handlers::config::post_hardware(ctx_hw_post.as_ref(), &body).map_err(to_io)?;
             write_api_resp!(req, r)
@@ -523,6 +541,7 @@ pub fn run(
         Method::Post,
         move |mut req| -> HandlerResult {
             require_pairing_code!(req, store_display_post);
+            require_csrf!(req);
             let body = read_body_utf8!(req, POST_BODY_MAX_LEN, store_display_post);
             let r = handlers::config::post_display(ctx_display_post.as_ref(), &body).map_err(to_io)?;
             let should_restart = r.status == 200 && common::restart_requested_from_uri(req.uri());
@@ -791,6 +810,7 @@ pub fn run(
         Method::Delete,
         move |req| -> HandlerResult {
             require_pairing_code!(req, store_sess_del);
+            require_csrf!(req);
             let chat_id = {
                 let uri = req.uri();
                 let query = uri.find('?').map(|i| &uri[i + 1..]).unwrap_or("");
@@ -879,6 +899,7 @@ pub fn run(
         Method::Post,
         move |mut req| -> HandlerResult {
             require_pairing_code!(req, store_skills_post);
+            require_csrf!(req);
             let body = read_body_utf8!(req, POST_BODY_MAX_LEN, store_skills_post);
             let r = handlers::skills::post(ctx_skills_post.as_ref(), &body);
             write_api_resp!(req, r)
@@ -893,6 +914,7 @@ pub fn run(
         Method::Delete,
         move |req| -> HandlerResult {
             require_pairing_code!(req, store_skills_del);
+            require_csrf!(req);
             let name = match name_from_uri(req.uri()) {
                 Some(n) => n,
                 None => {
@@ -918,6 +940,7 @@ pub fn run(
         Method::Post,
         move |mut req| -> HandlerResult {
             require_pairing_code!(req, store_skills_import);
+            require_csrf!(req);
             let body = read_body_utf8!(req, POST_BODY_MAX_LEN, store_skills_import);
             let r = handlers::skills::import(ctx_skills_import.as_ref(), &body).map_err(to_io)?;
             write_api_resp!(req, r)
@@ -989,6 +1012,7 @@ pub fn run(
         Method::Post,
         move |mut req| -> HandlerResult {
             require_pairing_code!(req, store_soul_post);
+            require_csrf!(req);
             let is_json = req
                 .header("Content-Type")
                 .map(|ct| ct.contains("application/json"))
@@ -1007,6 +1031,7 @@ pub fn run(
         Method::Post,
         move |mut req| -> HandlerResult {
             require_pairing_code!(req, store_user_post);
+            require_csrf!(req);
             let is_json = req
                 .header("Content-Type")
                 .map(|ct| ct.contains("application/json"))
@@ -1025,6 +1050,7 @@ pub fn run(
         Method::Post,
         move |req| -> HandlerResult {
             require_pairing_code!(req, store_restart);
+            require_csrf!(req);
             let (r, do_restart) = handlers::restart::post(ctx_restart.as_ref()).map_err(to_io)?;
             write_api_resp!(req, r)?;
             if do_restart {
@@ -1053,6 +1079,7 @@ pub fn run(
         Method::Post,
         move |req| -> HandlerResult {
             require_pairing_code!(req, store_reset);
+            require_csrf!(req);
             let r = handlers::config_reset::post(ctx_reset.as_ref()).map_err(to_io)?;
             write_api_resp!(req, r)
         }
@@ -1074,6 +1101,7 @@ pub fn run(
         Method::Post,
         move |mut req| -> HandlerResult {
             require_pairing_code!(req, store_webhook);
+            require_csrf!(req);
             let body_str = read_body_utf8!(req, POST_BODY_MAX_LEN, store_webhook);
             let token = req
                 .header("X-Webhook-Token")
@@ -1278,6 +1306,7 @@ pub fn run(
             Method::Post,
             move |mut req| -> HandlerResult {
                 require_pairing_code!(req, store_ota);
+                require_csrf!(req);
                 let body = read_body_utf8!(req, POST_BODY_MAX_LEN, store_ota);
                 let (r, do_restart) =
                     handlers::ota::post(ctx_ota.as_ref(), &body).map_err(to_io)?;

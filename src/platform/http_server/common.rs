@@ -287,11 +287,3 @@ pub const HTML_HEADERS: &[(&str, &str)] = &[
     ("Access-Control-Allow-Private-Network", "true"),
     ("Content-Type", "text/html; charset=utf-8"),
 ];
-
-/// 从请求头中提取 CSRF token。
-pub fn csrf_token_from_headers<'a>(headers: &'a [(&str, &str)]) -> Option<&'a str> {
-    headers
-        .iter()
-        .find(|(k, _)| k.eq_ignore_ascii_case("X-CSRF-Token"))
-        .map(|(_, v)| *v)
-}
