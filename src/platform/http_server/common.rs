@@ -8,15 +8,20 @@ pub const POST_BODY_MAX_LEN: usize = 4096;
 pub const RESTART_COOLDOWN_SECS: u64 = 60;
 
 /// CORS 头：所有 API 及 GET / 响应必须带，供外置配置页跨域调用。
-pub const CORS_HEADERS: &[(&str, &str)] = &[("Access-Control-Allow-Origin", "*")];
+pub const CORS_HEADERS: &[(&str, &str)] = &[
+    ("Access-Control-Allow-Origin", "*"),
+    ("Access-Control-Allow-Private-Network", "true"),
+];
 /// CORS + Content-Type: text/plain，用于 GET /api/soul、GET /api/user 的 200 响应。
 pub const CORS_AND_TEXT_PLAIN: &[(&str, &str)] = &[
     ("Access-Control-Allow-Origin", "*"),
+    ("Access-Control-Allow-Private-Network", "true"),
     ("Content-Type", "text/plain"),
 ];
-/// OPTIONS 预检响应：带 1 字节 body，迫使部分嵌入式栈先发送头再写 body，避免“响应头为空”。
+/// OPTIONS 预检响应：带 1 字节 body，迫使部分嵌入式栈先发送头再写 body，避免"响应头为空"。
 pub const CORS_OPTIONS_HEADERS: &[(&str, &str)] = &[
     ("Access-Control-Allow-Origin", "*"),
+    ("Access-Control-Allow-Private-Network", "true"),
     ("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS"),
     (
         "Access-Control-Allow-Headers",
@@ -24,11 +29,6 @@ pub const CORS_OPTIONS_HEADERS: &[(&str, &str)] = &[
     ),
     ("Content-Type", "text/plain; charset=utf-8"),
     ("Content-Length", "1"),
-];
-/// WiFi 配置页 HTML 响应头。
-pub const HTML_HEADERS: &[(&str, &str)] = &[
-    ("Access-Control-Allow-Origin", "*"),
-    ("Content-Type", "text/html; charset=utf-8"),
 ];
 /// 配置页公共 CSS 响应头。
 pub const CSS_HEADERS: &[(&str, &str)] = &[
@@ -281,3 +281,9 @@ impl ApiResponse {
         }
     }
 }
+/// WiFi 配置页 HTML 响应头。
+pub const HTML_HEADERS: &[(&str, &str)] = &[
+    ("Access-Control-Allow-Origin", "*"),
+    ("Access-Control-Allow-Private-Network", "true"),
+    ("Content-Type", "text/html; charset=utf-8"),
+];
