@@ -171,6 +171,8 @@ fn main() {
                 TAG
             );
             platform.init_sntp();
+            // 初始化 CSRF token
+            beetle::platform::csrf::init();
             // F8: 启动进度条 stage=2（SNTP 后）
             if platform.display_available() {
                 let _ = platform.display_command(DisplayCommand::UpdateBootProgress { stage: 2 });

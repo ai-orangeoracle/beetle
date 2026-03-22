@@ -34,6 +34,7 @@ pub mod channel_connectivity;
 pub mod config;
 pub mod config_page;
 pub mod config_reset;
+pub mod csrf_token;
 pub mod diagnose;
 pub mod dingtalk_webhook;
 pub mod feishu_event;

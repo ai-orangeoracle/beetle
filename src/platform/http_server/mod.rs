@@ -646,6 +646,24 @@ pub fn run(
         |req| -> HandlerResult { resp_options!(req) }
     );
 
+    // GET /api/csrf_token - 获取 CSRF token (无需配对码)
+    let ctx_csrf = Arc::clone(&ctx);
+    register!(
+        server,
+        "/api/csrf_token",
+        Method::Get,
+        move |req| -> HandlerResult {
+            let body = handlers::csrf_token::body(&ctx_csrf).map_err(to_io)?;
+            write_response!(req, 200, "OK", CORS_HEADERS, body.as_bytes())
+        }
+    );
+    register!(
+        server,
+        "/api/csrf_token",
+        Method::Options,
+        |req| -> HandlerResult { resp_options!(req) }
+    );
+
     let store_diag = std::sync::Arc::clone(&config_store);
     let ctx_diag = Arc::clone(&ctx);
     register!(
