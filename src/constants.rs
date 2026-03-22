@@ -2,7 +2,7 @@
 //! Single source for resource bounds; only ESP32-S3 with PSRAM supported.
 
 /// 入站/出站队列固定容量（条数）。
-pub const DEFAULT_CAPACITY: usize = 8;
+pub const DEFAULT_CAPACITY: usize = 16;
 
 /// 单条消息 content 最大长度（字节）。
 pub const MAX_CONTENT_LEN: usize = 64 * 1024;
