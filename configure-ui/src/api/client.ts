@@ -11,6 +11,24 @@ export const API_ERROR = {
   PAIRING_REQUIRED: 'PAIRING_REQUIRED',
 } as const
 
+let csrfToken: string | null = null
+
+export async function fetchCsrfToken(baseUrl: string): Promise<string | null> {
+  try {
+    const res = await fetch(buildUrl(baseUrl, '/api/csrf_token'))
+    if (!res.ok) return null
+    const data = await res.json()
+    csrfToken = data.csrf_token || null
+    return csrfToken
+  } catch {
+    return null
+  }
+}
+
+export function getCsrfToken(): string | null {
+  return csrfToken
+}
+
 export interface ApiRequestOptions {
   method?: 'GET' | 'POST' | 'DELETE'
   body?: string | object
@@ -34,6 +52,10 @@ export async function request<T = unknown>(
     Accept: 'application/json',
   }
   if (pairingCode?.trim()) headers['X-Pairing-Code'] = pairingCode.trim()
+  if (method === 'POST' || method === 'DELETE') {
+    const token = getCsrfToken()
+    if (token) headers['X-CSRF-Token'] = token
+  }
   if (body !== undefined) {
     headers['Content-Type'] = 'application/json'
   }
@@ -53,6 +75,13 @@ export async function request<T = unknown>(
     }
 
     if (!res.ok) {
+      if (res.status === 403 && typeof data === 'object' && data !== null && 'error' in data) {
+        const errMsg = String((data as { error: unknown }).error)
+        if (errMsg.includes('CSRF')) {
+          await fetchCsrfToken(baseUrl)
+          return request<T>(baseUrl, path, options)
+        }
+      }
       const err = typeof data === 'object' && data !== null && 'error' in data
         ? String((data as { error: unknown }).error)
         : res.statusText
