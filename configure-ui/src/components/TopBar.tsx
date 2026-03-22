@@ -17,6 +17,10 @@ import { PageHeader } from "./PageHeader";
 
 const PATH_TO_META: Record<string, { titleKey: string; descKey: string }> = {
   "/device": { titleKey: "device.pageTitle", descKey: "device.pageDesc" },
+  "/device-config": {
+    titleKey: "deviceConfig.pageTitle",
+    descKey: "deviceConfig.pageDesc",
+  },
   "/ai-config": {
     titleKey: "aiConfig.pageTitle",
     descKey: "aiConfig.pageDesc",
@@ -29,10 +33,6 @@ const PATH_TO_META: Record<string, { titleKey: string; descKey: string }> = {
     titleKey: "systemConfig.pageTitle",
     descKey: "systemConfig.pageDesc",
   },
-  "/display-config": {
-    titleKey: "displayConfig.pageTitle",
-    descKey: "displayConfig.pageDesc",
-  },
   "/system-logs": {
     titleKey: "systemLogs.pageTitle",
     descKey: "systemLogs.pageDesc",
@@ -43,6 +43,13 @@ const PATH_TO_META: Record<string, { titleKey: string; descKey: string }> = {
   },
   "/skills": { titleKey: "skills.pageTitle", descKey: "skills.pageDesc" },
 };
+
+function metaForPathname(pathname: string) {
+  if (pathname.startsWith("/device-config")) {
+    return PATH_TO_META["/device-config"];
+  }
+  return PATH_TO_META[pathname];
+}
 
 interface TopBarProps {
   onMenuClick?: () => void;
@@ -59,7 +66,7 @@ export function TopBar({ onMenuClick, onOpenSettings }: TopBarProps) {
   const [restartConfirmOpen, setRestartConfirmOpen] = useState(false);
 
   const pathname = location.pathname;
-  const meta = PATH_TO_META[pathname];
+  const meta = metaForPathname(pathname);
   const title = meta ? t(meta.titleKey) : pathname;
   const description = meta ? t(meta.descKey) : undefined;
 

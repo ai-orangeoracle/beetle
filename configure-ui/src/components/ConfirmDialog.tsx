@@ -18,6 +18,12 @@ export interface ConfirmDialogProps {
   confirmLabel?: string;
   /** 取消按钮文案，默认 common.cancel */
   cancelLabel?: string;
+  /** 点击取消时调用；若提供，则取消按钮不再调用 onClose（由本回调自行收尾） */
+  onCancel?: () => void;
+  /** 为 true 时禁止点击遮罩与 Esc 关闭，须点按钮 */
+  requireExplicitAction?: boolean;
+  /** 为 true 时使用较宽弹窗（如长说明） */
+  wide?: boolean;
   /** 点击确认时调用；可异步，关闭由调用方在回调内处理或由 onClose 统一关闭 */
   onConfirm: () => void | Promise<void>;
   /** 确认按钮是否禁用（如提交中） */
@@ -43,6 +49,9 @@ export function ConfirmDialog({
   icon,
   confirmLabel,
   cancelLabel,
+  onCancel,
+  requireExplicitAction = false,
+  wide = false,
   onConfirm,
   confirmDisabled = false,
   confirmColor = "primary",
@@ -53,17 +62,40 @@ export function ConfirmDialog({
     await onConfirm();
   };
 
+  const handleDialogClose = (
+    _: object,
+    reason: "backdropClick" | "escapeKeyDown",
+  ) => {
+    if (
+      requireExplicitAction &&
+      (reason === "backdropClick" || reason === "escapeKeyDown")
+    ) {
+      return;
+    }
+    onClose();
+  };
+
+  const handleCancelClick = () => {
+    if (onCancel) {
+      onCancel();
+    } else {
+      onClose();
+    }
+  };
+
   return (
     <Dialog
       open={open}
-      onClose={onClose}
-      maxWidth="xs"
+      onClose={handleDialogClose}
+      disableEscapeKeyDown={requireExplicitAction}
+      maxWidth={wide ? "sm" : "xs"}
+      fullWidth={wide}
       slotProps={{
         backdrop: { sx: { backgroundColor: "var(--backdrop-overlay)" } },
         paper: {
           sx: {
             width: "100%",
-            maxWidth: 360,
+            maxWidth: wide ? undefined : 360,
             borderRadius: "var(--radius-card)",
             border: "1px solid var(--border-subtle)",
             boxShadow: "var(--shadow-card-hover)",
@@ -100,17 +132,20 @@ export function ConfirmDialog({
                 fontSize: "var(--font-size-body)",
                 fontWeight: 600,
                 color: "var(--foreground)",
-                lineHeight: 1.4,
+                lineHeight: "var(--line-height-snug)",
               }}
             >
               {title}
             </Typography>
             <Typography
               sx={{
-                mt: 1,
+                mt: 1.25,
                 fontSize: "var(--font-size-body-sm)",
                 color: "var(--muted)",
-                lineHeight: 1.5,
+                lineHeight: wide
+                  ? "var(--line-height-loose)"
+                  : "var(--line-height-relaxed)",
+                whiteSpace: "pre-line",
               }}
             >
               {description}
@@ -121,7 +156,7 @@ export function ConfirmDialog({
           <Button
             variant="text"
             size="small"
-            onClick={onClose}
+            onClick={handleCancelClick}
             disabled={confirmDisabled}
             sx={{
               borderRadius: "var(--radius-control)",
