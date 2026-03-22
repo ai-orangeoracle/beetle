@@ -39,7 +39,16 @@ impl OpenAiCompatibleClient {
     /// 从单源配置构造，供多源回退使用。
     pub fn from_source(source: &LlmSource, stream: bool) -> Self {
         let api_base = if source.api_url.is_empty() {
-            DEFAULT_API_BASE.to_string()
+            match source.provider.as_str() {
+                "gemini" => "https://generativelanguage.googleapis.com/v1beta",
+                "glm" => "https://open.bigmodel.cn/api/paas/v4",
+                "qwen" => "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                "deepseek" => "https://api.deepseek.com/v1",
+                "moonshot" => "https://api.moonshot.cn/v1",
+                "ollama" => "http://localhost:11434/v1",
+                _ => DEFAULT_API_BASE,
+            }
+            .to_string()
         } else {
             source.api_url.trim_end_matches('/').to_string()
         };

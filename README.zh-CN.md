@@ -202,7 +202,7 @@ cargo build --release
 | 钉钉        | `DINGTALK_WEBHOOK_URL`                                                                                                                              |
 | 企微        | `WECOM_CORP_ID`、`WECOM_CORP_SECRET`、`WECOM_AGENT_ID`、`WECOM_DEFAULT_TOUSER`                                                                      |
 | QQ 频道     | `QQ_CHANNEL_APP_ID`、`QQ_CHANNEL_SECRET`                                                                                                            |
-| LLM         | 多源：`config/llm.json`（SPIFFS）；编译时环境变量作默认。字段：provider、api_key、model、api_url、stream、max_tokens；路由/工作源下标支持路由模式。 |
+| LLM         | 多源：`config/llm.json`（SPIFFS）；编译时环境变量作默认。字段：provider、api_key、model、api_url、stream、max_tokens；路由/工作源下标支持路由模式。支持提供商：`openai`、`anthropic`、`gemini`、`glm`、`qwen`、`deepseek`、`moonshot`、`ollama`。详见 [LLM 提供商配置指南](docs/zh-cn/llm-providers.md)。 |
 | 代理 / 搜索 | `PROXY_URL`、`SEARCH_KEY`、`TAVILY_KEY`                                                                                                             |
 
 完整键名与校验见 `src/config.rs`。运行时配置分段（LLM、通道、系统）与 API 见 [配置 API 契约](docs/zh-cn/config-api.md)。配网见 [配置与使用](docs/zh-cn/configuration.md)。

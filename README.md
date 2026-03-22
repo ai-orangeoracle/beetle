@@ -202,7 +202,7 @@ Partition table and flash size are chosen by `board_presets.toml` and the board 
 | DingTalk       | `DINGTALK_WEBHOOK_URL`                                                                                                                                                      |
 | WeCom          | `WECOM_CORP_ID`, `WECOM_CORP_SECRET`, `WECOM_AGENT_ID`, `WECOM_DEFAULT_TOUSER`                                                                                              |
 | QQ Channel     | `QQ_CHANNEL_APP_ID`, `QQ_CHANNEL_SECRET`                                                                                                                                    |
-| LLM            | Multi-source: `config/llm.json` (SPIFFS); build-time env for defaults. Keys: provider, api_key, model, api_url, stream, max_tokens; router/worker indices for routing mode. |
+| LLM            | Multi-source: `config/llm.json` (SPIFFS); build-time env for defaults. Keys: provider, api_key, model, api_url, stream, max_tokens; router/worker indices for routing mode. Supported providers: `openai`, `anthropic`, `gemini`, `glm`, `qwen`, `deepseek`, `moonshot`, `ollama`. See [LLM Providers Guide](docs/en-us/llm-providers.md). |
 | Proxy / search | `PROXY_URL`, `SEARCH_KEY`, `TAVILY_KEY`                                                                                                                                     |
 
 Full key names and validation: `src/config.rs`. Runtime config segments (LLM, channels, system) and API: [Config API](docs/en-us/config-api.md). Provisioning: [Configuration](docs/en-us/configuration.md).
