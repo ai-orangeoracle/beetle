@@ -180,6 +180,13 @@ pub struct AppConfig {
     #[serde(skip, default)]
     pub hardware_devices: Vec<DeviceEntry>,
 
+    /// I2C 总线配置（从 SPIFFS config/hardware.json 加载），不序列化到 NVS。
+    #[serde(skip, default)]
+    pub i2c_bus: Option<I2cBusConfig>,
+    /// I2C 设备列表（从 SPIFFS config/hardware.json 加载），不序列化到 NVS。
+    #[serde(skip, default)]
+    pub i2c_devices: Vec<I2cDeviceEntry>,
+
     /// 显示配置（从 SPIFFS config/display.json 加载），不序列化到 NVS。
     #[serde(skip, default)]
     pub display: Option<DisplayConfig>,
@@ -265,6 +272,8 @@ impl AppConfig {
                 .map(|s| s == "1" || s.eq_ignore_ascii_case("true"))
                 .unwrap_or(false),
             hardware_devices: vec![],
+            i2c_bus: None,
+            i2c_devices: vec![],
             display: None,
             load_errors: None,
         }
@@ -450,6 +459,8 @@ impl AppConfig {
                     return;
                 }
                 self.hardware_devices = seg.hardware_devices;
+                self.i2c_bus = seg.i2c_bus;
+                self.i2c_devices = seg.i2c_devices;
             }
             Err(e) => {
                 log::warn!("[config] merge_hardware_from_json parse failed: {}", e);
@@ -921,11 +932,39 @@ pub struct DeviceEntry {
     pub options: serde_json::Value,
 }
 
+/// I2C 总线配置。
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct I2cBusConfig {
+    pub sda_pin: i32,
+    pub scl_pin: i32,
+    #[serde(default = "default_i2c_freq")]
+    pub freq_hz: u32,
+}
+
+fn default_i2c_freq() -> u32 {
+    crate::constants::I2C_DEFAULT_FREQ_HZ
+}
+
+/// 单个 I2C 设备条目。
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct I2cDeviceEntry {
+    pub id: String,
+    pub addr: u8,
+    pub what: String,
+    pub how: String,
+    #[serde(default)]
+    pub options: serde_json::Value,
+}
+
 /// POST /api/config/hardware 请求体；硬件设备列表。
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct HardwareSegment {
     #[serde(default)]
     pub hardware_devices: Vec<DeviceEntry>,
+    #[serde(default)]
+    pub i2c_bus: Option<I2cBusConfig>,
+    #[serde(default)]
+    pub i2c_devices: Vec<I2cDeviceEntry>,
 }
 
 /// 私有：校验 llm_sources 非空、字段长度、router/worker 下标。供 from_json_and_validate 与 save_llm_segment 复用。

@@ -253,4 +253,22 @@ pub trait Platform: Send + Sync {
     fn fade_display_backlight(&self, _from: u8, _to: u8, _duration_ms: u32) -> Result<()> {
         Ok(())
     }
+
+    /// I2C 读取：从指定地址的寄存器读取数据。默认返回不支持错误。
+    /// I2C read: read data from register at given address. Default returns unsupported error.
+    fn i2c_read(&self, _addr: u8, _register: u8, _len: usize) -> Result<Vec<u8>> {
+        Err(crate::error::Error::config(
+            "i2c_read",
+            "I2C not supported on this platform",
+        ))
+    }
+
+    /// I2C 写入：向指定地址的寄存器写入数据。默认返回不支持错误。
+    /// I2C write: write data to register at given address. Default returns unsupported error.
+    fn i2c_write(&self, _addr: u8, _register: u8, _data: &[u8]) -> Result<()> {
+        Err(crate::error::Error::config(
+            "i2c_write",
+            "I2C not supported on this platform",
+        ))
+    }
 }

@@ -52,7 +52,7 @@ pub use channels::{
 };
 pub use config::{
     parse_allowed_chat_ids, save_hardware_segment, AppConfig, DeviceEntry, HardwareSegment,
-    LlmSource, PinConfig,
+    I2cBusConfig, I2cDeviceEntry, LlmSource, PinConfig,
 };
 pub use display::{
     default_disabled_display_config, validate_display_config_core, DisplayBus, DisplayChannelStatus,
@@ -71,10 +71,11 @@ pub use platform::{
 };
 pub use platform::{ConfigStore, Platform, SkillStorage};
 pub use tools::{
-    build_default_registry, CronManageTool, CronTool, DailyNoteTool, DeviceControlTool,
-    FileWriteTool, FilesTool, GetTimeTool, HttpRequestTool, KvStoreTool, MemoryManageTool,
-    ModelConfigTool, ProxyConfigTool, RemindAtTool, SessionManageTool, SystemControlTool, Tool,
-    ToolContext, ToolRegistry, UpdateSessionSummaryTool, WebSearchTool,
+    build_default_registry, CronManageTool, DeviceControlTool,
+    FileWriteTool, FilesTool, GetTimeTool, HttpRequestTool, I2cDeviceTool, KvStoreTool,
+    MemoryManageTool, ModelConfigTool, NetworkScanTool, ProxyConfigTool, RemindAtTool,
+    SensorWatchTool, SessionManageTool, SystemControlTool, Tool, ToolContext, ToolRegistry,
+    UpdateSessionSummaryTool, WebSearchTool,
 };
 
 /// 任何 PlatformHttpClient 均可作为 LlmHttpClient、ToolContext、ChannelHttpClient 使用。

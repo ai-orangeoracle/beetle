@@ -1,5 +1,5 @@
-//! system_control 工具：系统控制（重启、信息、SPIFFS 用量）。
-//! system_control tool: system control (restart, info, SPIFFS usage).
+//! system_control 工具：系统控制（重启、SPIFFS 用量）。
+//! system_control tool: system control (restart, SPIFFS usage).
 
 use crate::error::{Error, Result};
 use crate::platform::Platform;
@@ -22,13 +22,13 @@ impl Tool for SystemControlTool {
         "system_control"
     }
     fn description(&self) -> &str {
-        "System control operations. Op: restart (requires confirm=true), info (board info JSON), spiffs_usage (storage usage)."
+        "System control operations. Op: restart (requires confirm=true), spiffs_usage (storage usage)."
     }
     fn schema(&self) -> serde_json::Value {
         json!({
             "type": "object",
             "properties": {
-                "op": { "type": "string", "description": "Operation: restart|info|spiffs_usage" },
+                "op": { "type": "string", "description": "Operation: restart|spiffs_usage" },
                 "confirm": { "type": "boolean", "description": "Must be true for restart operation" }
             },
             "required": ["op"]
@@ -58,10 +58,6 @@ impl Tool for SystemControlTool {
                 log::warn!("[system_control] restart requested via tool");
                 self.platform.request_restart();
                 Ok(json!({"op": "restart", "ok": true, "message": "restarting..."}).to_string())
-            }
-            "info" => {
-                let info = self.platform.board_info_json()?;
-                Ok(json!({"op": "info", "board_info": serde_json::from_str::<serde_json::Value>(&info).unwrap_or(json!(info))}).to_string())
             }
             "spiffs_usage" => {
                 let usage = self.platform.spiffs_usage();

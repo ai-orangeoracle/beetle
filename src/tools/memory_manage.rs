@@ -31,7 +31,8 @@ impl Tool for MemoryManageTool {
                 "op": { "type": "string", "description": "Operation: get_memory|set_memory|get_soul|set_soul|get_user|set_user|list_daily_notes|get_daily_note|write_daily_note" },
                 "content": { "type": "string", "description": "Content for set_memory/set_soul/set_user/write_daily_note" },
                 "name": { "type": "string", "description": "Daily note name (e.g. 2025-03-10.md) for get_daily_note/write_daily_note" },
-                "recent_n": { "type": "integer", "description": "Max number of daily notes to list (default 10, max 30)" }
+                "recent_n": { "type": "integer", "description": "Max number of daily notes to list (default 10, max 30)" },
+                "append": { "type": "boolean", "description": "If true, append to existing note instead of overwrite (default false, for write_daily_note)" }
             },
             "required": ["op"]
         })
@@ -126,8 +127,22 @@ impl Tool for MemoryManageTool {
                     .get("content")
                     .and_then(|x| x.as_str())
                     .ok_or_else(|| Error::config("tool_memory_manage", "missing content"))?;
-                self.store.write_daily_note(name, content)?;
-                Ok(json!({"op": "write_daily_note", "name": name, "ok": true}).to_string())
+                let append = obj
+                    .get("append")
+                    .and_then(|x| x.as_bool())
+                    .unwrap_or(false);
+                let final_content = if append {
+                    let existing = self.store.get_daily_note(name).unwrap_or_default();
+                    if existing.is_empty() {
+                        content.to_string()
+                    } else {
+                        format!("{}\n{}", existing, content)
+                    }
+                } else {
+                    content.to_string()
+                };
+                self.store.write_daily_note(name, &final_content)?;
+                Ok(json!({"op": "write_daily_note", "name": name, "ok": true, "append": append}).to_string())
             }
             _ => Err(Error::config(
                 "tool_memory_manage",
