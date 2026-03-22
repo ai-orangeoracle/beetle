@@ -107,7 +107,7 @@ pub fn run_dispatch(outbound_rx: OutboundRx, sinks: Arc<ChannelSinks>) {
 
     while let Ok(msg) = outbound_rx.recv() {
         let content = truncate_content_to_max(&msg.content, MAX_CONTENT_LEN);
-        if content.trim() == "SILENT" || msg.channel == "cron" {
+        if content.trim() == "SILENT" || msg.channel.as_ref() == "cron" {
             continue;
         }
 

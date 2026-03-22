@@ -27,6 +27,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::sync::mpsc::RecvTimeoutError;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 /// 最大 ReAct 轮数（含首轮 chat），防止无限 tool 循环。
 const MAX_REACT_ROUNDS: usize = 10;
@@ -68,8 +69,8 @@ fn push_bounded_utf8(dst: &mut String, text: &str, max_bytes: usize) -> bool {
 /// 在 run_worker_path 内包装 http，注入当前 msg 的 chat_id/channel，供 remind_at 等工具使用。
 struct AgentToolCtx<'a, H: PlatformHttpClient> {
     http: &'a mut H,
-    chat_id: String,
-    channel: String,
+    chat_id: Arc<str>,
+    channel: Arc<str>,
 }
 
 impl<H: PlatformHttpClient> LlmHttpClient for AgentToolCtx<'_, H> {
@@ -100,10 +101,10 @@ impl<H: PlatformHttpClient> ToolContext for AgentToolCtx<'_, H> {
         crate::platform::PlatformHttpClient::post(self.http, url, headers, body)
     }
     fn current_chat_id(&self) -> Option<&str> {
-        Some(self.chat_id.as_str())
+        Some(&self.chat_id)
     }
     fn current_channel(&self) -> Option<&str> {
-        Some(self.channel.as_str())
+        Some(&self.channel)
     }
 }
 
@@ -166,7 +167,7 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
     // Track consecutive defer count per message key to break infinite defer loops.
     let mut defer_tracker: HashMap<u64, (u8, Instant)> = HashMap::new();
     // Throttle "low memory, defer" log per chat_id to avoid log spam.
-    let mut low_mem_defer_log: Option<(String, Instant)> = None;
+    let mut low_mem_defer_log: Option<(Arc<str>, Instant)> = None;
     // Periodic GC for llm_failure_count + defer_tracker: evict expired entries every N messages.
     let mut msg_since_gc: u16 = 0;
     const GC_INTERVAL_MSGS: u16 = 50;
@@ -272,12 +273,12 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
                         let should_log = low_mem_defer_log
                             .as_ref()
                             .map(|(id, t)| {
-                                id != &chat_id || t.elapsed() >= LOW_MEM_DEFER_LOG_INTERVAL
+                                id.as_ref() != chat_id.as_ref() || t.elapsed() >= LOW_MEM_DEFER_LOG_INTERVAL
                             })
                             .unwrap_or(true);
                         if should_log {
                             log::warn!("[agent] admission defer chat_id={}", chat_id);
-                            low_mem_defer_log = Some((chat_id, now));
+                            low_mem_defer_log = Some((chat_id.clone(), now));
                         }
                     }
                     Err(std::sync::mpsc::TrySendError::Full(m)) => {
@@ -300,11 +301,11 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
                 let now = Instant::now();
                 let should_log = low_mem_defer_log
                     .as_ref()
-                    .map(|(id, t)| id != reason || t.elapsed() >= LOW_MEM_DEFER_LOG_INTERVAL)
+                    .map(|(id, t)| id.as_ref() != reason || t.elapsed() >= LOW_MEM_DEFER_LOG_INTERVAL)
                     .unwrap_or(true);
                 if should_log {
                     log::warn!("[agent] inbound rejected: {}", reason);
-                    low_mem_defer_log = Some((reason.to_string(), now));
+                    low_mem_defer_log = Some((Arc::from(reason), now));
                 }
                 continue;
             }
@@ -482,7 +483,7 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
         }
 
         // SILENT 或 cron 空回复不写 session，直接跳过。
-        if reply_content.trim() == "SILENT" || (msg.channel == "cron" && reply_content.is_empty()) {
+        if reply_content.trim() == "SILENT" || (msg.channel.as_ref() == "cron" && reply_content.is_empty()) {
             llm_failure_count.remove(&msg_key);
             defer_tracker.remove(&msg_key);
             continue;
