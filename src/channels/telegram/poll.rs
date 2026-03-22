@@ -236,8 +236,8 @@ pub fn poll_telegram_once<H: ChannelHttpClient>(
             };
             let _ = set_message_reaction(http, token, &chat_id, msg.message_id, "👍");
             let pc = PcMsg {
-                channel: "telegram".to_string(),
-                chat_id,
+                channel: Arc::from("telegram"),
+                chat_id: Arc::from(chat_id.as_str()),
                 content,
                 is_group,
             };
