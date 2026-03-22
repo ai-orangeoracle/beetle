@@ -470,9 +470,19 @@ pub fn spawn_guarded<F>(name: &str, f: F)
 where
     F: FnOnce() + Send + 'static,
 {
+    spawn_guarded_with_stack(name, 8192, f);
+}
+
+/// Spawn a named thread with custom stack size and panic protection.
+/// 带自定义栈大小和 panic 保护的线程启动。
+pub fn spawn_guarded_with_stack<F>(name: &str, stack_size: usize, f: F)
+where
+    F: FnOnce() + Send + 'static,
+{
     let tag = name.to_string();
     std::thread::Builder::new()
         .name(tag.clone())
+        .stack_size(stack_size)
         .spawn(move || {
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
             if let Err(e) = result {
