@@ -36,7 +36,17 @@ const MAX_LEN = 64;
 const MAX_API_URL = 256;
 
 /** 后端支持的 LLM provider 取值，与 main.rs 中分支一致。 */
-const LLM_PROVIDER_VALUES = ["anthropic", "openai", "openai_compatible"] as const;
+const LLM_PROVIDER_VALUES = [
+  "anthropic",
+  "openai",
+  "openai_compatible",
+  "gemini",
+  "glm",
+  "qwen",
+  "deepseek",
+  "moonshot",
+  "ollama",
+] as const;
 const DEFAULT_PROVIDER: (typeof LLM_PROVIDER_VALUES)[number] = "openai_compatible";
 
 type LlmProviderValue = (typeof LLM_PROVIDER_VALUES)[number];
