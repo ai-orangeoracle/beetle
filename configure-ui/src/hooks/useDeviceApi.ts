@@ -5,6 +5,7 @@ import { API_ERROR } from '../api/client'
 import { request } from '../api/client'
 import * as configApi from '../api/endpoints/config'
 import * as displayApi from '../api/endpoints/display'
+import * as hardwareApi from '../api/endpoints/hardware'
 import * as soulUserApi from '../api/endpoints/soulUser'
 import * as skillsApi from '../api/endpoints/skills'
 import * as systemApi from '../api/endpoints/system'
@@ -15,6 +16,7 @@ import type {
 } from '../types/appConfig'
 import type { SkillItem } from '../api/endpoints/skills'
 import type { DisplayConfig } from '../types/displayConfig'
+import type { HardwareSegment } from '../types/hardwareConfig'
 
 export { API_ERROR }
 
@@ -40,6 +42,11 @@ export function useDeviceApi() {
         get: () => displayApi.getDisplayConfig(baseUrl ?? ''),
         save: (body: DisplayConfig) =>
           displayApi.saveDisplayConfig(baseUrl ?? '', (pairingCode ?? '').trim(), body),
+      },
+      hardware: {
+        get: () => hardwareApi.getHardwareConfig(baseUrl ?? ''),
+        save: (body: HardwareSegment) =>
+          hardwareApi.saveHardwareConfig(baseUrl ?? '', (pairingCode ?? '').trim(), body),
       },
       soul: {
         get: () => soulUserApi.getSoul(baseUrl ?? ''),

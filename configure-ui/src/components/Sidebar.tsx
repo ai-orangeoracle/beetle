@@ -12,7 +12,7 @@ import HistoryOutlined from "@mui/icons-material/HistoryOutlined";
 import LinkRounded from "@mui/icons-material/LinkRounded";
 import PaletteOutlined from "@mui/icons-material/PaletteOutlined";
 import SettingsOutlined from "@mui/icons-material/SettingsOutlined";
-import MonitorOutlined from "@mui/icons-material/MonitorOutlined";
+import DevicesOtherOutlined from "@mui/icons-material/DevicesOtherOutlined";
 import SmartToyOutlined from "@mui/icons-material/SmartToyOutlined";
 import { BeetleIcon } from "./BeetleIcon";
 import { useTranslation } from "react-i18next";
@@ -55,14 +55,14 @@ const NAV_ITEMS: { path: string; labelKey: string; icon: ReactElement }[] = [
   { path: "/soul-user", labelKey: "nav.soulUser", icon: <PaletteOutlined /> },
   { path: "/skills", labelKey: "nav.skills", icon: <ExtensionOutlined /> },
   {
+    path: "/device-config",
+    labelKey: "nav.deviceConfig",
+    icon: <DevicesOtherOutlined />,
+  },
+  {
     path: "/system-logs",
     labelKey: "nav.systemLogs",
     icon: <HistoryOutlined />,
-  },
-  {
-    path: "/display-config",
-    labelKey: "nav.displayConfig",
-    icon: <MonitorOutlined />,
   },
   {
     path: "/system-config",
@@ -251,7 +251,11 @@ export function Sidebar({ drawer }: SidebarProps) {
 
       <List sx={{ flex: 1, py: 1, px: drawer ? 1 : 1 }}>
         {NAV_ITEMS.map(({ path, labelKey, icon }) => {
-          const active = pathname === path;
+          const active =
+            path === "/device-config"
+              ? pathname === "/device-config" ||
+                pathname.startsWith("/device-config/")
+              : pathname === path;
           const allowNav = canNavigate(path);
           const listItemSx = {
             borderRadius: "var(--radius-control)",

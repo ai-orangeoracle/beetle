@@ -34,7 +34,7 @@ export function Layout({ onOpenSettings }: LayoutProps) {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const location = useLocation();
-  const { dirty } = useContext(UnsavedContext);
+  const { dirty, setDirty } = useContext(UnsavedContext);
   const { config, clearCachedConfig, refreshCachedConfig } = useConfig();
   const { showToast } = useToast();
   const deviceConnected = useDeviceConnected();
@@ -89,9 +89,10 @@ export function Layout({ onOpenSettings }: LayoutProps) {
   const showUnsavedDialog = dirty && pendingPath != null;
 
   const handleUnsavedConfirm = useCallback(() => {
+    setDirty(false);
     if (pendingPath) navigate(pendingPath);
     setPendingPath(null);
-  }, [navigate, pendingPath]);
+  }, [navigate, pendingPath, setDirty]);
 
   const handleRefreshCachedConfig = useCallback(async () => {
     if (refreshingCache) return;
@@ -174,8 +175,8 @@ export function Layout({ onOpenSettings }: LayoutProps) {
           title={t("common.unsavedLeaveTitle")}
           description={t("common.unsavedLeaveDesc")}
           icon={<WarningAmberRounded />}
-          confirmColor="warning"
-          confirmLabel={t("common.confirm")}
+          confirmColor="error"
+          confirmLabel={t("common.discardChanges")}
           onConfirm={handleUnsavedConfirm}
         />
         {showRestartBanner && (
