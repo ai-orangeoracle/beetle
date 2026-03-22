@@ -118,7 +118,6 @@ pub fn build_default_registry(
     registry.register(Box::new(super::FilesTool));
     registry.register(Box::new(super::WebSearchTool::new(config)));
     registry.register(Box::new(super::AnalyzeImageTool::new(config)));
-    registry.register(Box::new(super::FetchUrlTool));
     let remind_at_store_for_list = Arc::clone(&remind_at_store);
     registry.register(Box::new(super::RemindAtTool::new(remind_at_store)));
     registry.register(Box::new(super::RemindListTool::new(remind_at_store_for_list)));
@@ -127,7 +126,6 @@ pub fn build_default_registry(
         Arc::clone(&session_store),
     )));
     registry.register(Box::new(super::BoardInfoTool::new(Arc::clone(&platform))));
-    registry.register(Box::new(super::HttpPostTool));
     registry.register(Box::new(super::KvStoreTool));
     if !config.hardware_devices.is_empty() {
         registry.register(Box::new(super::DeviceControlTool::new(
