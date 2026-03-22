@@ -291,4 +291,12 @@ impl Platform for Esp32Platform {
             None => Ok(()),
         }
     }
+
+    fn i2c_read(&self, addr: u8, register: u8, len: usize) -> crate::error::Result<Vec<u8>> {
+        crate::platform::hardware_drivers::drive_i2c_read(addr, register, len)
+    }
+
+    fn i2c_write(&self, addr: u8, register: u8, data: &[u8]) -> crate::error::Result<()> {
+        crate::platform::hardware_drivers::drive_i2c_write(addr, register, data)
+    }
 }

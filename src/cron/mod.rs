@@ -50,6 +50,8 @@ pub fn run_cron_loop(
             // 2. Check persisted cron tasks
             if let Some(ref store) = memory_store {
                 fire_persisted_tasks(store.as_ref(), &inbound_tx);
+                // 3. Check sensor watches
+                crate::tools::sensor_watch::check_sensor_watches(store.as_ref(), &inbound_tx);
             }
         }
     });

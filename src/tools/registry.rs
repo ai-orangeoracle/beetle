@@ -114,7 +114,6 @@ pub fn build_default_registry(
 ) -> ToolRegistry {
     let mut registry = ToolRegistry::new();
     registry.register(Box::new(super::GetTimeTool));
-    registry.register(Box::new(super::CronTool));
     registry.register(Box::new(super::FilesTool));
     registry.register(Box::new(super::WebSearchTool::new(config)));
     registry.register(Box::new(super::AnalyzeImageTool::new(config)));
@@ -136,17 +135,29 @@ pub fn build_default_registry(
     registry.register(Box::new(super::MemoryManageTool::new(Arc::clone(
         &memory_store,
     ))));
-    registry.register(Box::new(super::DailyNoteTool::new(Arc::clone(
-        &memory_store,
-    ))));
     registry.register(Box::new(super::HttpRequestTool));
     registry.register(Box::new(super::SessionManageTool::new(session_store)));
     registry.register(Box::new(super::FileWriteTool));
     registry.register(Box::new(super::SystemControlTool::new(Arc::clone(
         &platform,
     ))));
-    registry.register(Box::new(super::CronManageTool::new(memory_store)));
+    registry.register(Box::new(super::CronManageTool::new(Arc::clone(
+        &memory_store,
+    ))));
     registry.register(Box::new(super::ProxyConfigTool::new(config_store)));
-    registry.register(Box::new(super::ModelConfigTool::new(platform)));
+    registry.register(Box::new(super::ModelConfigTool::new(Arc::clone(&platform))));
+    registry.register(Box::new(super::NetworkScanTool::new(Arc::clone(&platform))));
+    if !config.hardware_devices.is_empty() {
+        registry.register(Box::new(super::SensorWatchTool::new(
+            Arc::clone(&memory_store),
+            config.hardware_devices.clone(),
+        )));
+    }
+    if config.i2c_bus.is_some() && !config.i2c_devices.is_empty() {
+        registry.register(Box::new(super::I2cDeviceTool::new(
+            Arc::clone(&platform),
+            config.i2c_devices.clone(),
+        )));
+    }
     registry
 }

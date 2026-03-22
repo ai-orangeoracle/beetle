@@ -132,3 +132,29 @@ pub const CRON_TASK_MAX_ACTION_LEN: usize = 512;
 pub const FILE_WRITE_MAX_CONTENT_LEN: usize = 16 * 1024;
 /// daily_note 工具：list 操作最大返回条数。
 pub const DAILY_NOTE_MAX_LIST: usize = 30;
+
+// ---------- network_scan 工具 ----------
+/// WiFi 扫描最小间隔（毫秒）。
+pub const NETWORK_SCAN_MIN_INTERVAL_MS: u64 = 2000;
+
+// ---------- sensor_watch 工具 ----------
+/// 传感器监控最大条目数。
+pub const SENSOR_WATCH_MAX_ENTRIES: usize = 8;
+/// 传感器监控最小检查间隔（秒）。
+pub const SENSOR_WATCH_MIN_INTERVAL_SECS: u64 = 60;
+/// 传感器监控告警消息最大长度（字节）。
+pub const SENSOR_WATCH_MAX_ALERT_LEN: usize = 512;
+
+// ---------- i2c_device 工具 ----------
+/// I2C 读操作最小间隔（毫秒）。
+pub const I2C_READ_MIN_INTERVAL_MS: u64 = 500;
+/// I2C 写操作最小间隔（毫秒）。
+pub const I2C_WRITE_MIN_INTERVAL_MS: u64 = 2000;
+/// I2C 单次读取最大字节数。
+pub const I2C_MAX_READ_LEN: usize = 32;
+/// I2C 单次写入最大字节数。
+pub const I2C_MAX_WRITE_LEN: usize = 32;
+/// I2C 最大设备数。
+pub const I2C_MAX_DEVICES: usize = 8;
+/// I2C 默认频率（Hz）。
+pub const I2C_DEFAULT_FREQ_HZ: u32 = 100_000;
