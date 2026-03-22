@@ -1,0 +1,8 @@
+[build]
+# SRAM 优化配置
+# 主线程栈从 20KB 减到 12KB
+esp_main_task_stack_size = 12288
+
+# pthread 默认栈已通过代码优化到 8KB
+# 这里设置最小值
+pthread_task_stack_size_default = 8192
