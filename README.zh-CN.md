@@ -258,6 +258,7 @@ cargo build --release
 | [硬件与资源](docs/zh-cn/hardware.md)                                | 板型、内存、PSRAM、看门狗、编译选项、排错                           |
 | [硬件设备配置与 LLM 驱动设计](docs/zh-cn/hardware-device-config.md) | 里程碑设计：JSON 配置即用、device_control 工具、GPIO/PWM/ADC/蜂鸣器 |
 | [架构概要](docs/zh-cn/architecture.md)                              | 模块划分、数据流、扩展方式                                          |
+| [Linux 发布目录与回滚](docs/zh-cn/linux-release-rollback.md)      | SBC 安装路径、`current` 软链、升级与回滚（musl 包）                 |
 
 ---
 

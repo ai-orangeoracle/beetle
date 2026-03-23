@@ -8,10 +8,8 @@ bom.json
 .embuild/
 
 dev/
-# dev-docs: only these paths are tracked; rest stay local
-dev-docs/*
-!dev-docs/linux-migration-plan.md
-!dev-docs/linux-release-rollback.md
+# Internal design notes / migration drafts (not part of public docs)
+dev-docs/
 
 # 外置配置前端（configure-ui）
 configure-ui/node_modules/

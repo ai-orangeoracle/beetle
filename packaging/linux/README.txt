@@ -3,7 +3,7 @@ Beetle Linux bundle (musl)
 
 Binary
 ------
-- `beetle`: statically linked (musl). Run from a versioned directory under /opt/beetle/releases/ (see dev-docs/linux-release-rollback.md).
+- `beetle`: statically linked (musl). Run from a versioned directory under /opt/beetle/releases/ (see docs/en-us/linux-release-rollback.md or docs/zh-cn/linux-release-rollback.md).
 
 Config API (optional)
 ---------------------
