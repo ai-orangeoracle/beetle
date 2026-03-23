@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # One-shot: env check, install espup/ldproxy/toolchain, then release build.
+# ESP 固件：本脚本始终为 release 注入默认 --target（见 BUILD_TARGET）；勿依赖仓库 .cargo 默认 target。
 # Usage: ./build.sh  or  ./build.sh --target xtensa-esp32s3-espidf
 #        ./build.sh clean            clean project target dir
 #        ./build.sh --flash          build then flash (prompt y/N erase; if no port, scan and select)
@@ -233,17 +234,13 @@ case "$PARTITION_TABLE" in
     ;;
 esac
 
-# --- Build args: if BOARD or --flash, use resolved target/features + buildArgs (same as build.ps1) ---
+# --- Build args: inject default ESP --target when missing (same as build.ps1); no longer rely on .cargo [build] target ---
 RELEASE_ARGS=()
-if [[ -n "$BOARD" ]] || [[ -n "$DO_FLASH" ]]; then
-  HAS_TARGET=0
-  for a in "${BUILD_ARGS[@]}"; do [[ "$a" == "--target" ]] && HAS_TARGET=1; done
-  [[ $HAS_TARGET -eq 0 ]] && RELEASE_ARGS+=(--target "$BUILD_TARGET")
-  [[ -n "$BUILD_FEATURES" ]] && RELEASE_ARGS+=($BUILD_FEATURES)
-  RELEASE_ARGS+=("${BUILD_ARGS[@]}")
-else
-  RELEASE_ARGS=("${BUILD_ARGS[@]}")
-fi
+HAS_TARGET=0
+for a in "${BUILD_ARGS[@]}"; do [[ "$a" == "--target" ]] && HAS_TARGET=1; done
+[[ $HAS_TARGET -eq 0 ]] && RELEASE_ARGS+=(--target "$BUILD_TARGET")
+[[ -n "$BUILD_FEATURES" ]] && RELEASE_ARGS+=($BUILD_FEATURES)
+RELEASE_ARGS+=("${BUILD_ARGS[@]}")
 
 # --- Build (same as build.ps1) ---
 echo ""

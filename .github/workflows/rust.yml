@@ -21,6 +21,23 @@ jobs:
       - name: Check §14.2 patterns
         run: bash scripts/check_platform_isolation.sh
 
+  linux-musl-check:
+    name: Linux musl check (Step 1)
+    runs-on: ubuntu-latest
+    env:
+      RUSTUP_TOOLCHAIN: stable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install musl targets
+        run: |
+          rustup target add armv7-unknown-linux-musleabihf
+          rustup target add riscv64gc-unknown-linux-musl
+      - name: Cargo check (musl)
+        run: |
+          cargo check --target armv7-unknown-linux-musleabihf
+          cargo check --target riscv64gc-unknown-linux-musl
+
   build:
     name: Build
     runs-on: ubuntu-latest

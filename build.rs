@@ -65,7 +65,9 @@ fn minify_content(content: &str, strip_line_comment: bool, strip_block_comment: 
 
 fn main() {
     let target = std::env::var("TARGET").unwrap_or_default();
-    let is_esp = target.contains("esp") || target.contains("xtensa") || target.contains("riscv32");
+    // Artifact target triple: Xtensa or ESP-IDF RISC-V only (avoid matching unrelated "esp" substrings).
+    let is_esp =
+        target.contains("xtensa") || (target.contains("riscv32") && target.contains("espidf"));
     if is_esp {
         embuild::espidf::sysenv::output();
     }
