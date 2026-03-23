@@ -66,8 +66,13 @@ pub use llm::{
 };
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 pub use platform::{
-    connect_wifi, init_nvs, init_spiffs, spiffs_usage, Esp32Platform, EspHttpClient,
-    SpiffsMemoryStore, SpiffsSessionStore, SPIFFS_BASE,
+    connect_wifi, init_nvs, init_spiffs, spiffs_base_string, spiffs_usage, Esp32Platform,
+    EspHttpClient, SpiffsMemoryStore, SpiffsSessionStore, state_mount_path,
+};
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+pub use platform::{
+    connect_wifi, init_nvs, init_spiffs, spiffs_base_string, spiffs_usage, LinuxPlatform,
+    EspHttpClient, SpiffsMemoryStore, SpiffsSessionStore, state_mount_path,
 };
 pub use platform::{ConfigStore, Platform, SkillStorage, StateFs};
 pub use tools::{

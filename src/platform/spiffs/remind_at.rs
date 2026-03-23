@@ -6,7 +6,7 @@ use crate::memory::RemindAtStore;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-use super::{read_file, write_file, SPIFFS_BASE};
+use super::{read_file, state_path_join, write_file};
 
 const REL_PATH_REMIND_AT: &str = "memory/remind_at.json";
 
@@ -19,9 +19,7 @@ struct RemindEntry {
 }
 
 fn full_path() -> PathBuf {
-    let mut p = PathBuf::from(SPIFFS_BASE);
-    p.push(REL_PATH_REMIND_AT);
-    p
+    state_path_join(REL_PATH_REMIND_AT)
 }
 
 fn truncate_context(s: &str) -> String {

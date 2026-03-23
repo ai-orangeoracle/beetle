@@ -4,11 +4,9 @@
 use crate::config::{self, AppConfig};
 use crate::error::Error;
 use crate::memory::{MemoryStore, SessionStore, REL_PATH_SESSIONS_DIR};
-use crate::platform::spiffs::{list_dir, SPIFFS_BASE};
 use crate::platform::ConfigStore;
 use crate::state;
 use std::io::{self, BufRead, Write};
-use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
@@ -134,11 +132,9 @@ fn cmd_memory_write(ctx: &CliContext, args: Vec<&str>) -> String {
     }
 }
 
-fn cmd_session_list(_ctx: &CliContext) -> String {
-    let mut path = PathBuf::from(SPIFFS_BASE);
-    path.push(REL_PATH_SESSIONS_DIR);
+fn cmd_session_list(ctx: &CliContext) -> String {
     let mut out = "Sessions:\n".to_string();
-    match list_dir(&path) {
+    match ctx.platform.state_fs().list_dir(REL_PATH_SESSIONS_DIR) {
         Ok(names) => {
             let sessions: Vec<_> = names
                 .into_iter()

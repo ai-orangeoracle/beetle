@@ -8,12 +8,10 @@ use crate::memory::{PendingRetryStore, REL_PATH_PENDING_RETRY};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-use super::{read_file, write_file, SPIFFS_BASE};
+use super::{read_file, state_path_join, write_file};
 
 fn full_path() -> PathBuf {
-    let mut p = PathBuf::from(SPIFFS_BASE);
-    p.push(REL_PATH_PENDING_RETRY);
-    p
+    state_path_join(REL_PATH_PENDING_RETRY)
 }
 
 #[derive(Serialize, Deserialize)]

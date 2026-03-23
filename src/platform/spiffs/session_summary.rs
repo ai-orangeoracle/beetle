@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use super::{read_file, write_file, SPIFFS_BASE};
+use super::{read_file, state_path_join, write_file};
 
 const MAX_SESSION_SUMMARY_CHATS: usize = 32;
 
@@ -19,9 +19,7 @@ struct SummaryEntry {
 }
 
 fn full_path() -> PathBuf {
-    let mut p = PathBuf::from(SPIFFS_BASE);
-    p.push(REL_PATH_SESSION_SUMMARIES);
-    p
+    state_path_join(REL_PATH_SESSION_SUMMARIES)
 }
 
 fn truncate_summary(s: &str) -> String {

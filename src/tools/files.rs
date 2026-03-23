@@ -1,81 +1,25 @@
-//! files 工具：在 SPIFFS 根下列出或读取文件；只读，路径禁止 `..`，结果截断至 MAX_TOOL_RESULT_LEN。
-//! files tool: list or read files under SPIFFS root; read-only, path must not contain '..'.
+//! files 工具：在状态根下列出或读取文件；只读，路径禁止 `..`，结果截断至 MAX_TOOL_RESULT_LEN。
+//! files tool: list or read under state root; read-only, no `..' in path.
 
 use crate::error::{Error, Result};
+use crate::platform::state_fs::normalize_state_rel_path;
 use crate::tools::{parse_tool_args, Tool, ToolContext, MAX_TOOL_RESULT_LEN};
 use serde_json::json;
-use std::path::Path;
-
-/// 主机上用于测试的模拟 SPIFFS 根目录。
-#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
-const HOST_SPIFFS_BASE: &str = "./spiffs_data";
-
-fn base_path() -> &'static str {
-    #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
-    {
-        crate::platform::SPIFFS_BASE
-    }
-    #[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
-    {
-        HOST_SPIFFS_BASE
-    }
-}
-
-/// 解析 path 与 mode，返回 (full_path, mode)。path 不得含 `..` 或绝对路径逃逸。
-pub(crate) fn resolve_path(path_arg: &str) -> Result<std::path::PathBuf> {
-    let path_arg = path_arg.trim().trim_start_matches('/');
-    if path_arg.is_empty() {
-        return Ok(Path::new(base_path()).to_path_buf());
-    }
-    if path_arg.contains("..") {
-        return Err(Error::config("tool_files", "path must not contain '..'"));
-    }
-    let base = Path::new(base_path());
-    let full = base.join(path_arg);
-    // 确保拼接后仍在 base 下（防止 join 产生意外绝对路径）。
-    let base_str = base.to_string_lossy();
-    let full_str = full.to_string_lossy();
-    if !full_str.starts_with(base_str.as_ref()) && full_str != base_str {
-        return Err(Error::config("tool_files", "path escapes base"));
-    }
-    Ok(full)
-}
+use std::sync::Arc;
 
 const MAX_LIST_ENTRIES: usize = 256;
+/// read 模式下单文件原始字节上限（UTF-8 校验前），避免超大 Vec。
+const MAX_READ_RAW_BYTES: usize = MAX_TOOL_RESULT_LEN * 2;
 
-#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
-fn read_storage_file(path: &std::path::Path) -> Result<Vec<u8>> {
-    crate::platform::spiffs::read_file(path)
+pub struct FilesTool {
+    state_fs: Arc<dyn crate::platform::StateFs + Send + Sync>,
 }
 
-#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
-fn read_storage_file(path: &std::path::Path) -> Result<Vec<u8>> {
-    std::fs::read(path).map_err(|e| Error::io("tool_files", e))
-}
-
-#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
-fn list_storage_dir(path: &std::path::Path) -> Result<Vec<String>> {
-    crate::platform::spiffs::list_dir(path)
-}
-
-#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
-fn list_storage_dir(path: &std::path::Path) -> Result<Vec<String>> {
-    let mut out = Vec::new();
-    for e in std::fs::read_dir(path).map_err(|e| Error::io("tool_files", e))? {
-        let e = e.map_err(|e| Error::io("tool_files", e))?;
-        let name = e.file_name();
-        if let Some(s) = name.to_str() {
-            let is_dir = e.file_type().map(|t| t.is_dir()).unwrap_or(false);
-            out.push(if is_dir { format!("{}/", s) } else { s.to_string() });
-            if out.len() >= MAX_LIST_ENTRIES {
-                break;
-            }
-        }
+impl FilesTool {
+    pub(crate) fn new(state_fs: Arc<dyn crate::platform::StateFs + Send + Sync>) -> Self {
+        Self { state_fs }
     }
-    Ok(out)
 }
-
-pub struct FilesTool;
 
 impl Tool for FilesTool {
     fn name(&self) -> &str {
@@ -107,10 +51,11 @@ impl Tool for FilesTool {
             .trim()
             .to_lowercase();
 
-        let full = resolve_path(path_arg)?;
+        let rel = normalize_state_rel_path(path_arg)
+            .map_err(|_| Error::config("tool_files", "invalid path"))?;
 
         if mode == "list" {
-            let entries = list_storage_dir(&full)?;
+            let entries = self.state_fs.list_dir(&rel)?;
             let truncated = entries.len() >= MAX_LIST_ENTRIES;
             let out = json!({
                 "mode": "list",
@@ -126,34 +71,41 @@ impl Tool for FilesTool {
             return Err(Error::config("tool_files", "mode must be 'list' or 'read'"));
         }
 
-        let meta = std::fs::metadata(&full).map_err(|e| Error::io("tool_files", e))?;
-        if !meta.is_file() {
-            return Err(Error::config("tool_files", "path is not a file"));
+        match self.state_fs.read(&rel)? {
+            Some(raw) => {
+                if raw.len() > MAX_READ_RAW_BYTES {
+                    return Err(Error::config("tool_files", "file too large"));
+                }
+                let content = std::str::from_utf8(&raw)
+                    .map_err(|_| Error::config("tool_files", "file is not valid UTF-8"))?
+                    .to_string();
+                let (content, truncated) = if content.len() > MAX_TOOL_RESULT_LEN {
+                    let mut c = content
+                        .chars()
+                        .take(MAX_TOOL_RESULT_LEN)
+                        .collect::<String>();
+                    c.push('…');
+                    (c, true)
+                } else {
+                    (content, false)
+                };
+                let out = json!({
+                    "mode": "read",
+                    "path": path_arg,
+                    "content": content,
+                    "truncated": truncated
+                });
+                serde_json::to_string(&out).map_err(|e| Error::config("tool_files", e.to_string()))
+            }
+            None => {
+                match self.state_fs.list_dir(&rel) {
+                    Ok(_) => Err(Error::config(
+                        "tool_files",
+                        "path is a directory, use list mode",
+                    )),
+                    Err(e) => Err(e),
+                }
+            }
         }
-        let len = meta.len();
-        if len > (MAX_TOOL_RESULT_LEN as u64).saturating_mul(2) {
-            return Err(Error::config("tool_files", "file too large"));
-        }
-        let raw = read_storage_file(&full)?;
-        let content = std::str::from_utf8(&raw)
-            .map_err(|_| Error::config("tool_files", "file is not valid UTF-8"))?
-            .to_string();
-        let (content, truncated) = if content.len() > MAX_TOOL_RESULT_LEN {
-            let mut c = content
-                .chars()
-                .take(MAX_TOOL_RESULT_LEN)
-                .collect::<String>();
-            c.push('…');
-            (c, true)
-        } else {
-            (content, false)
-        };
-        let out = json!({
-            "mode": "read",
-            "path": path_arg,
-            "content": content,
-            "truncated": truncated
-        });
-        serde_json::to_string(&out).map_err(|e| Error::config("tool_files", e.to_string()))
     }
 }

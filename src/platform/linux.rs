@@ -1,12 +1,9 @@
-//! ESP32 平台的 Platform 实现。仅在此目标编译。
-//! ESP32 implementation of Platform trait.
+//! Linux / host 的 `Platform` 实现：与 ESP 相同存储布局（`state_mount_path`），HTTP 由桩客户端提供。
+//! Linux/host Platform: same on-disk layout as ESP; HTTP via stub client.
 
-#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 use crate::platform::abstraction::{Platform, StateFs};
-#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 use crate::platform::{
     display_driver::DisplayState,
-    fetch_url::fetch_url_with_client,
     heartbeat_file::read_heartbeat_file,
     spiffs::{
         spiffs_usage, SpiffsImportantMessageStore, SpiffsMemoryStore, SpiffsPendingRetryStore,
@@ -15,7 +12,6 @@ use crate::platform::{
     },
     NvsConfigStore,
 };
-#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 use crate::{
     config::AppConfig,
     display::{DisplayCommand, DisplayConfig},
@@ -24,12 +20,10 @@ use crate::{
         SessionSummaryStore, TaskContinuationStore,
     },
 };
-#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 use std::sync::{Arc, Mutex};
 
-#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
-/// ESP32 平台实现。
-pub struct Esp32Platform {
+/// Linux / host 平台实现（musl 等 CI 与本地 `cargo build`）。
+pub struct LinuxPlatform {
     state_fs: Arc<dyn StateFs + Send + Sync>,
     config_store: Arc<NvsConfigStore>,
     skill_storage: Arc<SpiffsSkillStorage>,
@@ -45,11 +39,10 @@ pub struct Esp32Platform {
     display_state: Mutex<Option<DisplayState>>,
 }
 
-#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
-impl Esp32Platform {
+impl LinuxPlatform {
     pub fn new() -> Self {
         let state_fs: Arc<dyn StateFs + Send + Sync> =
-            Arc::new(crate::platform::state_fs::Esp32StateFs);
+            Arc::new(crate::platform::state_fs::LinuxStateFs::default());
         Self {
             state_fs,
             config_store: Arc::new(NvsConfigStore),
@@ -68,27 +61,18 @@ impl Esp32Platform {
     }
 }
 
-#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
-impl Default for Esp32Platform {
+impl Default for LinuxPlatform {
     fn default() -> Self {
         Self::new()
     }
 }
 
-#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
-impl Platform for Esp32Platform {
+impl Platform for LinuxPlatform {
     fn state_fs(&self) -> Arc<dyn StateFs + Send + Sync> {
         Arc::clone(&self.state_fs)
     }
 
     fn init(&self) -> crate::error::Result<()> {
-        esp_idf_svc::sys::link_patches();
-        esp_idf_svc::log::EspLogger::initialize_default();
-        // 屏蔽 HTTP 服务器每个 URI 注册的 Info 日志，减少刷屏（0.52+ 使用 EspIdfLogFilter）
-        let _ = esp_idf_svc::log::EspIdfLogFilter::new().set_target_level(
-            "esp_idf_svc::http::server",
-            log::LevelFilter::Warn,
-        );
         self.init_nvs()?;
         self.init_spiffs()?;
         Ok(())
@@ -122,12 +106,10 @@ impl Platform for Esp32Platform {
     }
 
     fn wifi_scan(&self) -> Option<Arc<dyn crate::platform::WifiScan + Send + Sync>> {
-        let opt: Option<Arc<dyn crate::platform::WifiScan + Send + Sync>> = self
-            .wifi_scan_handle
+        self.wifi_scan_handle
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .clone();
-        opt
+            .clone()
     }
 
     fn wifi_sta_ip(&self) -> Option<String> {
@@ -191,23 +173,19 @@ impl Platform for Esp32Platform {
         read_heartbeat_file()
     }
 
-    fn fetch_url_to_bytes(&self, url: &str, max_len: usize) -> crate::error::Result<Vec<u8>> {
-        let config = AppConfig::load(self.config_store.as_ref(), None);
-        let mut client = self.create_http_client(&config)?;
-        fetch_url_with_client(client.as_mut(), url, max_len)
+    fn fetch_url_to_bytes(&self, _url: &str, _max_len: usize) -> crate::error::Result<Vec<u8>> {
+        Err(crate::error::Error::config(
+            "fetch_url",
+            "HTTP client unavailable on Linux host stub",
+        ))
     }
 
     fn request_restart(&self) {
-        unsafe { esp_idf_svc::sys::esp_restart() };
+        log::warn!("request_restart: no-op on Linux host");
     }
 
     fn init_sntp(&self) {
         crate::platform::sntp::init_sntp();
-    }
-
-    #[cfg(feature = "ota")]
-    fn ota_from_url(&self, url: &str) -> crate::error::Result<()> {
-        crate::ota::ota_update_from_url(url)
     }
 
     fn init_display(&self, config: &DisplayConfig) -> crate::error::Result<()> {
@@ -268,7 +246,12 @@ impl Platform for Esp32Platform {
         }
     }
 
-    fn fade_display_backlight(&self, from: u8, to: u8, duration_ms: u32) -> crate::error::Result<()> {
+    fn fade_display_backlight(
+        &self,
+        from: u8,
+        to: u8,
+        duration_ms: u32,
+    ) -> crate::error::Result<()> {
         let guard = self.display_state.lock().unwrap_or_else(|e| e.into_inner());
         match guard.as_ref() {
             Some(state) => state.fade_brightness(from, to, duration_ms),

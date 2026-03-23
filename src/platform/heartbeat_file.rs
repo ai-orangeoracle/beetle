@@ -3,14 +3,13 @@
 
 use crate::error::Result;
 use crate::memory::REL_PATH_HEARTBEAT;
-use std::path::PathBuf;
 
 const MAX_HEARTBEAT_LEN: usize = 8192;
 
 /// 读取 HEARTBEAT.md 内容。路径 = SPIFFS_BASE + REL_PATH_HEARTBEAT。
 /// 文件不存在或读失败返回空字符串；内容超过 8KB 截断。
 pub fn read_heartbeat_file() -> Result<String> {
-    let mut path = PathBuf::from(crate::platform::spiffs::SPIFFS_BASE);
+    let mut path = crate::platform::state_root::state_mount_path();
     path.push(REL_PATH_HEARTBEAT);
     let buf = match crate::platform::spiffs::read_file(&path) {
         Ok(b) => b,

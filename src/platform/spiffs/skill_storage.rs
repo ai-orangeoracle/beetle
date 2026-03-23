@@ -5,15 +5,13 @@ use crate::error::Result;
 use crate::platform::abstraction::SkillStorage;
 use std::path::PathBuf;
 
-use super::{list_dir, read_file, remove_file, write_file, SPIFFS_BASE};
+use super::{list_dir, read_file, remove_file, state_path_join, write_file};
 
 const SKILLS_SUBDIR: &str = "skills";
 const MAX_SKILL_COUNT: usize = 64;
 
 fn skills_dir() -> PathBuf {
-    let mut p = PathBuf::from(SPIFFS_BASE);
-    p.push(SKILLS_SUBDIR);
-    p
+    state_path_join(SKILLS_SUBDIR)
 }
 
 /// SPIFFS 上的 skills 目录存储；list_names 返回不含 .md 的名称。

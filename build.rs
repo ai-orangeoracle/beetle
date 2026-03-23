@@ -64,7 +64,11 @@ fn minify_content(content: &str, strip_line_comment: bool, strip_block_comment: 
 }
 
 fn main() {
-    embuild::espidf::sysenv::output();
+    let target = std::env::var("TARGET").unwrap_or_default();
+    let is_esp = target.contains("esp") || target.contains("xtensa") || target.contains("riscv32");
+    if is_esp {
+        embuild::espidf::sysenv::output();
+    }
 
     let out_dir = std::path::PathBuf::from(std::env::var("OUT_DIR").unwrap());
     let manifest = std::path::PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
@@ -94,8 +98,6 @@ fn main() {
 
     // 为看门狗 API 选择提供 esp_idf_version_major：IDF 4.x 用 esp_task_wdt_feed，5.x 用 esp_task_wdt_reset。
     // 从 IDF_PATH/version.txt 解析；未设置 IDF_PATH 时默认 5（常见于 espup 等）。
-    let target = std::env::var("TARGET").unwrap_or_default();
-    let is_esp = target.contains("esp") || target.contains("xtensa") || target.contains("riscv32");
     if is_esp {
         let idf_path = std::env::var("IDF_PATH").ok();
         let version_path = idf_path

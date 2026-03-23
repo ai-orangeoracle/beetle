@@ -4,26 +4,41 @@
 //! ESP32: no graceful shutdown; process runs until power off.
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 use beetle::channels::connect_esp_wss;
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 use beetle::config;
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 use beetle::memory::{MemoryStore, SessionStore};
-#[cfg(feature = "feishu")]
+#[cfg(all(
+    feature = "feishu",
+    any(target_arch = "xtensa", target_arch = "riscv32")
+))]
 use beetle::run_feishu_ws_loop;
 use beetle::Platform;
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 use beetle::PlatformHttpClient;
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 use beetle::{
     parse_allowed_chat_ids, run_agent_loop, run_dispatch, send_chat_action, AppConfig,
     DisplayChannelStatus, DisplayCommand, DisplayPressureLevel, DisplaySystemState, Esp32Platform,
     MessageBus, DEFAULT_CAPACITY,
 };
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+use beetle::LinuxPlatform;
 
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+use std::sync::Mutex;
 
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 const TAG: &str = "beetle";
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// 从 orchestrator snapshot 的 internal 堆空闲字节数估算已用百分比。
 /// ESP32-S3 internal DRAM 约 390KB；取 400KB 作为近似总量。非 ESP 返回 0。
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 fn heap_used_percent(snapshot: &beetle::orchestrator::ResourceSnapshot) -> u8 {
     const INTERNAL_TOTAL_APPROX: u32 = 400 * 1024;
     let free = snapshot.heap_free_internal;
@@ -35,11 +50,13 @@ fn heap_used_percent(snapshot: &beetle::orchestrator::ResourceSnapshot) -> u8 {
 }
 
 /// 启动自检：存储可读（memory 或 soul 至少其一成功）。失败返回 false，调用方应 log 并 return。
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 fn startup_self_check(memory_store: &dyn MemoryStore) -> bool {
     memory_store.get_memory().is_ok() || memory_store.get_soul().is_ok()
 }
 
 /// 首次启动或空存储：当 get_memory 与 get_soul 均失败时写入占位数据，使后续自检可过、业务可进（如引导配置）。
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 fn ensure_storage_ready(memory_store: &dyn MemoryStore) {
     let need_defaults = memory_store.get_memory().is_err() && memory_store.get_soul().is_err();
     if !need_defaults {
@@ -58,14 +75,17 @@ fn ensure_storage_ready(memory_store: &dyn MemoryStore) {
 }
 
 /// HTTP 工厂：与 `Platform::create_http_client` 一致（含代理），供流式编辑等独立连接使用。
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 type HttpFactory = Box<dyn Fn() -> beetle::Result<Box<dyn PlatformHttpClient>> + Send + Sync>;
 
 /// Telegram 流式编辑器：LLM 流式输出期间，按需创建独立 HTTP 连接发送/编辑消息。
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 struct TelegramStreamEditor {
     token: String,
     create_http: HttpFactory,
 }
 
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 impl beetle::StreamEditor for TelegramStreamEditor {
     fn send_initial(&self, chat_id: &str, content: &str) -> beetle::Result<Option<String>> {
         let mut http = (self.create_http)()?;
@@ -78,12 +98,14 @@ impl beetle::StreamEditor for TelegramStreamEditor {
 }
 
 /// 飞书流式编辑器：按需获取 tenant_access_token 并发送/编辑消息。
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 struct FeishuStreamEditor {
     app_id: String,
     app_secret: String,
     create_http: HttpFactory,
 }
 
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 impl beetle::StreamEditor for FeishuStreamEditor {
     fn send_initial(&self, chat_id: &str, content: &str) -> beetle::Result<Option<String>> {
         let mut http = (self.create_http)()?;
@@ -104,6 +126,7 @@ impl beetle::StreamEditor for FeishuStreamEditor {
 }
 
 /// F2: 根据当前状态计算下一轮显示刷新间隔（秒）。
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 fn compute_refresh_secs(
     state: DisplaySystemState,
     backlight_off: bool,
@@ -126,6 +149,20 @@ fn compute_refresh_secs(
     }
 }
 
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+fn main() {
+    let platform: Arc<dyn Platform> = Arc::new(LinuxPlatform::new());
+    if let Err(e) = platform.init() {
+        eprintln!("[beetle] platform init failed: {}", e);
+        std::process::exit(1);
+    }
+    println!(
+        "[beetle] Linux host build OK (v{})",
+        env!("CARGO_PKG_VERSION")
+    );
+}
+
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 fn main() {
     let platform: Arc<dyn Platform> = Arc::new(Esp32Platform::new());
     if let Err(e) = platform.init() {
@@ -254,6 +291,7 @@ fn main() {
 }
 
 /// 启动编排：存储与总线 → 自检 → 后台任务与通道 → agent 循环与 flush。与 main 解耦便于单文件内可读性。
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_connected: bool) {
     let config_store = platform.config_store();
     let skill_storage = platform.skill_storage();

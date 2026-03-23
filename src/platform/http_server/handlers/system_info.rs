@@ -54,10 +54,10 @@ fn days_to_ymd(days: u64) -> (u32, u32, u32) {
     }
     let (mo, day) = if m >= 12 {
         let dec_start = acc - mon_days[11];
-        (12u32, ((d - dec_start + 1) as u32).min(mon_days[11]))
+        (12u32, ((d - dec_start + 1) as u32).min(mon_days[11] as u32))
     } else {
         let day_raw = (d - acc + 1) as u32;
-        (m as u32 + 1, day_raw.min(mon_days[m]))
+        (m as u32 + 1, day_raw.min(mon_days[m] as u32))
     };
     (y, mo, day)
 }

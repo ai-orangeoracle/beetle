@@ -3,14 +3,24 @@
 //! ESP-IDF VFS/SPIFFS 多线程并发会引发 fd 错用或死锁，故所有通过本模块的 SPIFFS 访问在 ESP 下由 SPIFFS_MUTEX 串行化。
 
 use crate::error::{Error, Result};
+use crate::platform::state_root::state_mount_path;
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 use std::ffi::CString;
 use std::io::{Read, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 use std::sync::{Mutex, OnceLock};
 
-/// SPIFFS 挂载点。
-pub const SPIFFS_BASE: &str = "/spiffs";
+/// 兼容旧名：状态根路径字符串。ESP 上为 `/spiffs`；host 上为 `state_mount_path()` 的运行时值。
+/// Legacy name for state root path string.
+pub fn spiffs_base_string() -> String {
+    state_mount_path().to_string_lossy().into_owned()
+}
+
+/// 与 `state_mount_path().join(rel)` 相同；供各 `Spiffs*` 存储拼接路径。
+pub(crate) fn state_path_join(rel: impl AsRef<Path>) -> PathBuf {
+    state_mount_path().join(rel.as_ref())
+}
 
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 static SPIFFS_MUTEX: OnceLock<Mutex<()>> = OnceLock::new();
@@ -27,41 +37,62 @@ fn lock_spiffs() -> std::sync::MutexGuard<'static, ()> {
 /// 与 `StateFs` 写入上界一致；业务经 `state_fs` 或本模块写入须遵守。
 pub(crate) const MAX_WRITE_SIZE: usize = 256 * 1024;
 
-/// 挂载 SPIFFS。partition_label=None 表示默认 "storage"；format_if_mount_failed=true。
+/// 挂载 SPIFFS（ESP）或创建状态根目录（host）。partition_label=None 表示默认 "storage"；format_if_mount_failed=true。
 pub fn init_spiffs() -> Result<()> {
-    let base = CString::new(SPIFFS_BASE).map_err(|e| Error::config("spiffs", e.to_string()))?;
-    let conf = esp_idf_svc::sys::esp_vfs_spiffs_conf_t {
-        base_path: base.as_ptr(),
-        partition_label: std::ptr::null(),
-        max_files: 10,
-        format_if_mount_failed: true,
-    };
-    let err = unsafe { esp_idf_svc::sys::esp_vfs_spiffs_register(&conf) };
-    if err != 0 {
-        return Err(Error::esp("spiffs_register", err));
+    #[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+    {
+        let root = state_mount_path();
+        std::fs::create_dir_all(&root).map_err(|e| Error::io("spiffs_init", e))?;
+        log::info!("[platform::spiffs] host state root ready: {:?}", root);
+        return Ok(());
     }
-    let mut total: usize = 0;
-    let mut used: usize = 0;
-    unsafe { esp_idf_svc::sys::esp_spiffs_info(std::ptr::null(), &mut total, &mut used) };
-    log::info!(
-        "[platform::spiffs] mounted base={} total={} used={}",
-        SPIFFS_BASE,
-        total,
-        used
-    );
-    Ok(())
+    #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+    {
+        let root = state_mount_path();
+        let base_str = root
+            .to_str()
+            .ok_or_else(|| Error::config("spiffs", "invalid state mount path"))?;
+        let base = CString::new(base_str).map_err(|e| Error::config("spiffs", e.to_string()))?;
+        let conf = esp_idf_svc::sys::esp_vfs_spiffs_conf_t {
+            base_path: base.as_ptr(),
+            partition_label: std::ptr::null(),
+            max_files: 10,
+            format_if_mount_failed: true,
+        };
+        let err = unsafe { esp_idf_svc::sys::esp_vfs_spiffs_register(&conf) };
+        if err != 0 {
+            return Err(Error::esp("spiffs_register", err));
+        }
+        let mut total: usize = 0;
+        let mut used: usize = 0;
+        unsafe { esp_idf_svc::sys::esp_spiffs_info(std::ptr::null(), &mut total, &mut used) };
+        log::info!(
+            "[platform::spiffs] mounted base={} total={} used={}",
+            base_str,
+            total,
+            used
+        );
+        Ok(())
+    }
 }
 
-/// 返回 SPIFFS 总字节数与已用字节数；用于启动自检或运维。失败返回 None（如未挂载）。
+/// 返回 SPIFFS 总字节数与已用字节数；用于启动自检或运维。失败返回 None（如未挂载）。host 返回 None。
 pub fn spiffs_usage() -> Option<(usize, usize)> {
     #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
-    let _guard = lock_spiffs();
-    let mut total: usize = 0;
-    let mut used: usize = 0;
-    let ret = unsafe { esp_idf_svc::sys::esp_spiffs_info(std::ptr::null(), &mut total, &mut used) };
-    if ret == 0 {
-        Some((total, used))
-    } else {
+    {
+        let _guard = lock_spiffs();
+        let mut total: usize = 0;
+        let mut used: usize = 0;
+        let ret =
+            unsafe { esp_idf_svc::sys::esp_spiffs_info(std::ptr::null(), &mut total, &mut used) };
+        if ret == 0 {
+            Some((total, used))
+        } else {
+            None
+        }
+    }
+    #[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+    {
         None
     }
 }

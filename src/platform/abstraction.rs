@@ -16,7 +16,7 @@ use std::sync::Arc;
 pub trait StateFs: Send + Sync {
     /// 读取文件，不存在返回 `Ok(None)`。
     fn read(&self, rel_path: &str) -> crate::error::Result<Option<Vec<u8>>>;
-    /// 写入文件；单文件大小上界由实现保证（ESP 与 `spiffs::MAX_WRITE_SIZE` 一致）。
+    /// 写入文件；实现须先创建父目录再写入。单文件大小上界由实现保证（与 `spiffs::MAX_WRITE_SIZE` 一致）。
     fn write(&self, rel_path: &str, data: &[u8]) -> crate::error::Result<()>;
     /// 删除文件，不存在时 `Ok(())`。
     fn remove(&self, rel_path: &str) -> crate::error::Result<()>;
@@ -202,19 +202,19 @@ pub trait Platform: Send + Sync {
         Ok(crate::platform::board_info::board_info_json_string())
     }
 
-    /// 读 SPIFFS 配置文件（相对路径如 config/llm.json）。不存在或非 ESP 返回 Ok(None)。默认 no-op 返回 Ok(None)。
-    fn read_config_file(&self, _rel_path: &str) -> Result<Option<Vec<u8>>> {
-        Ok(None)
+    /// 读状态根配置文件（相对路径如 `config/llm.json`）。不存在返回 `Ok(None)`。经 `state_fs` 唯一路径。
+    fn read_config_file(&self, rel_path: &str) -> Result<Option<Vec<u8>>> {
+        self.state_fs().read(rel_path)
     }
 
-    /// 写 SPIFFS 配置文件。非 ESP 返回 Ok(()) no-op。默认 no-op。
-    fn write_config_file(&self, _rel_path: &str, _data: &[u8]) -> Result<()> {
-        Ok(())
+    /// 写状态根配置文件。经 `state_fs` 唯一路径。
+    fn write_config_file(&self, rel_path: &str, data: &[u8]) -> Result<()> {
+        self.state_fs().write(rel_path, data)
     }
 
-    /// 删除 SPIFFS 上的配置文件（相对路径如 config/skills_meta.json）。用于 config reset 时清理。默认 no-op。
-    fn remove_config_file(&self, _rel_path: &str) -> Result<()> {
-        Ok(())
+    /// 删除状态根配置文件。不存在时 `Ok(())`。经 `state_fs`。
+    fn remove_config_file(&self, rel_path: &str) -> Result<()> {
+        self.state_fs().remove(rel_path)
     }
 
     /// 请求设备重启。ESP 实现调用 esp_restart()；host 默认 no-op。

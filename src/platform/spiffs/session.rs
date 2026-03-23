@@ -9,7 +9,9 @@ use crate::memory::{
 use serde_json;
 use std::path::PathBuf;
 
-use super::{list_dir, read_file, write_file, SPIFFS_BASE};
+use crate::platform::state_root::state_mount_path;
+
+use super::{list_dir, read_file, write_file};
 
 const TAG: &str = "platform::spiffs::session";
 
@@ -41,7 +43,7 @@ fn session_path(chat_id: &str) -> Result<(PathBuf, bool)> {
             "chat_id contains invalid chars",
         ));
     }
-    let mut p = PathBuf::from(SPIFFS_BASE);
+    let mut p = state_mount_path();
     p.push(REL_PATH_SESSIONS_DIR);
     let (filename, write_header) = if chat_id.len() <= MAX_CHAT_ID_FILENAME_LEN {
         (format!("{}{}", chat_id, SESSION_FILE_EXT), false)
@@ -210,7 +212,7 @@ impl SessionStore for SpiffsSessionStore {
     }
 
     fn list_chat_ids(&self) -> Result<Vec<String>> {
-        let mut p = PathBuf::from(SPIFFS_BASE);
+        let mut p = state_mount_path();
         p.push(REL_PATH_SESSIONS_DIR);
         let names = match list_dir(&p) {
             Ok(n) => n,
@@ -255,7 +257,7 @@ impl SessionStore for SpiffsSessionStore {
     }
 
     fn gc_stale(&self, max_age_secs: u64) -> Result<usize> {
-        let mut p = PathBuf::from(SPIFFS_BASE);
+        let mut p = state_mount_path();
         p.push(REL_PATH_SESSIONS_DIR);
         let names = match list_dir(&p) {
             Ok(n) => n,

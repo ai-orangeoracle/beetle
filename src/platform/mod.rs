@@ -3,11 +3,14 @@
 
 pub mod abstraction;
 pub mod state_fs;
+pub mod state_root;
 pub mod board_info;
 pub mod csrf;
 pub mod display_driver;
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 pub mod esp32;
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+pub mod linux;
 pub mod fetch_url;
 pub mod hardware_drivers;
 pub mod heap;
@@ -22,7 +25,6 @@ pub mod sntp;
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 pub mod softap_ip;
 pub mod spiffs;
-#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 pub mod task_wdt;
 pub mod time;
 pub mod wifi;
@@ -32,6 +34,8 @@ pub use abstraction::{
 };
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 pub use esp32::Esp32Platform;
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+pub use linux::LinuxPlatform;
 pub use fetch_url::fetch_url_with_client;
 pub use heartbeat_file::read_heartbeat_file;
 pub use http_client::EspHttpClient;
@@ -42,9 +46,10 @@ pub use nvs::{
 pub use response_body::ResponseBody;
 pub use sntp::init_sntp;
 pub use spiffs::{
-    default_skill_storage_arc, init_spiffs, spiffs_usage, SpiffsMemoryStore, SpiffsSessionStore,
-    SpiffsSkillMetaStore, SpiffsSkillStorage, SPIFFS_BASE,
+    default_skill_storage_arc, init_spiffs, spiffs_base_string, spiffs_usage, SpiffsMemoryStore,
+    SpiffsSessionStore, SpiffsSkillMetaStore, SpiffsSkillStorage,
 };
+pub use state_root::state_mount_path;
 pub use wifi::{
     connect as connect_wifi, is_wifi_sta_connected, wait_for_network_ready, WifiApEntry, WifiScan,
     WifiScanHandle,

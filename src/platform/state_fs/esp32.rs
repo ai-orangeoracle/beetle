@@ -3,29 +3,20 @@
 
 use crate::error::{Error, Result};
 use crate::platform::abstraction::StateFs;
-use crate::platform::spiffs::{self, SPIFFS_BASE, MAX_WRITE_SIZE};
-use std::path::{Path, PathBuf};
+use crate::platform::state_root::state_mount_path;
+use crate::platform::spiffs::{self, MAX_WRITE_SIZE};
+use std::path::PathBuf;
 
 /// 零大小类型；SPIFFS 串行化在 `spiffs::*` 内完成。
 #[derive(Debug, Default)]
 pub struct Esp32StateFs;
 
-fn validate_rel(rel_path: &str) -> Result<()> {
-    if rel_path.contains("..") {
-        return Err(Error::config("state_fs", "invalid path"));
-    }
-    if Path::new(rel_path).is_absolute() || rel_path.starts_with('/') {
-        return Err(Error::config("state_fs", "invalid path"));
-    }
-    Ok(())
-}
-
 fn abs_path(rel_path: &str) -> Result<PathBuf> {
-    validate_rel(rel_path)?;
-    Ok(PathBuf::from(SPIFFS_BASE).join(rel_path))
+    let rel = super::normalize_state_rel_path(rel_path)?;
+    Ok(state_mount_path().join(rel))
 }
 
-fn map_read_result(r: Result<Vec<u8>, Error>) -> Result<Option<Vec<u8>>> {
+fn map_read_result(r: std::result::Result<Vec<u8>, Error>) -> Result<Option<Vec<u8>>> {
     match r {
         Ok(b) => Ok(Some(b)),
         Err(e) => match &e {
@@ -45,14 +36,15 @@ impl StateFs for Esp32StateFs {
         if data.len() > MAX_WRITE_SIZE {
             return Err(Error::config(
                 "state_fs",
-                format!(
-                    "write size {} exceeds limit {}",
-                    data.len(),
-                    MAX_WRITE_SIZE
-                ),
+                format!("write size {} exceeds limit {}", data.len(), MAX_WRITE_SIZE),
             ));
         }
         let path = abs_path(rel_path)?;
+        if let Some(parent) = path.parent() {
+            if !parent.as_os_str().is_empty() {
+                std::fs::create_dir_all(parent).map_err(|e| Error::io("state_fs", e))?;
+            }
+        }
         spiffs::write_file(&path, data)
     }
 
