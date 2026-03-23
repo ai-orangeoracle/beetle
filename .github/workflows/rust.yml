@@ -22,7 +22,7 @@ jobs:
         run: bash scripts/check_platform_isolation.sh
 
   linux-musl-check:
-    name: Linux musl check (Step 1)
+    name: Linux musl check (Step 1–2)
     runs-on: ubuntu-latest
     env:
       RUSTUP_TOOLCHAIN: stable
@@ -37,6 +37,15 @@ jobs:
         run: |
           cargo check --target armv7-unknown-linux-musleabihf
           cargo check --target riscv64gc-unknown-linux-musl
+      - name: Assert no esp-idf-svc / embedded-svc in Linux dependency tree
+        run: |
+          for t in armv7-unknown-linux-musleabihf riscv64gc-unknown-linux-musl; do
+            if cargo tree -p beetle --target "$t" | grep -E 'esp-idf-svc|embedded-svc' | grep -q .; then
+              echo "FAIL: forbidden crates in tree for $t" >&2
+              cargo tree -p beetle --target "$t" | grep -E 'esp-idf-svc|embedded-svc' >&2
+              exit 1
+            fi
+          done
 
   build:
     name: Build
