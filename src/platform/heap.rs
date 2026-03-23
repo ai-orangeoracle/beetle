@@ -41,17 +41,6 @@ pub fn heap_largest_free_block_internal() -> usize {
     usize::MAX
 }
 
-/// 返回当前总空闲堆字节数。仅 ESP 目标有效；非 ESP 返回 usize::MAX。
-#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
-pub fn heap_free_total() -> usize {
-    unsafe { esp_idf_svc::sys::esp_get_free_heap_size() as usize }
-}
-
-#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
-pub fn heap_free_total() -> usize {
-    usize::MAX
-}
-
 /// 返回内部堆历史最小空闲字节数。仅 ESP 目标有效；非 ESP 返回 usize::MAX。
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 pub fn heap_min_free_internal() -> usize {

@@ -3,7 +3,6 @@
 
 use crate::error::Result;
 use crate::memory::REL_PATH_HEARTBEAT;
-
 const MAX_HEARTBEAT_LEN: usize = 8192;
 
 /// 读取 HEARTBEAT.md 内容。路径 = SPIFFS_BASE + REL_PATH_HEARTBEAT。
