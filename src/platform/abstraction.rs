@@ -11,6 +11,23 @@ use crate::memory::{
 use crate::platform::ResponseBody;
 use std::sync::Arc;
 
+/// 状态根目录下的受控文件访问（相对路径）。ESP 委托 SPIFFS + 互斥；Linux 由 `LinuxPlatform` 实现。
+/// Controlled file access under the platform state root (relative paths).
+pub trait StateFs: Send + Sync {
+    /// 读取文件，不存在返回 `Ok(None)`。
+    fn read(&self, rel_path: &str) -> crate::error::Result<Option<Vec<u8>>>;
+    /// 写入文件；单文件大小上界由实现保证（ESP 与 `spiffs::MAX_WRITE_SIZE` 一致）。
+    fn write(&self, rel_path: &str, data: &[u8]) -> crate::error::Result<()>;
+    /// 删除文件，不存在时 `Ok(())`。
+    fn remove(&self, rel_path: &str) -> crate::error::Result<()>;
+    /// 列出一层目录下的文件名（不递归子目录）。
+    fn list_dir(&self, rel_path: &str) -> crate::error::Result<Vec<String>>;
+    /// 文件是否存在。
+    fn exists(&self, rel_path: &str) -> crate::error::Result<bool> {
+        Ok(self.read(rel_path)?.is_some())
+    }
+}
+
 /// 配置键值存储抽象（如 NVS）。用于 config、pairing、skills 的 NVS 部分。
 pub trait ConfigStore: Send + Sync {
     fn read_string(&self, key: &str) -> Result<Option<String>>;
@@ -147,6 +164,9 @@ impl PlatformHttpClient for Box<dyn PlatformHttpClient + '_> {
 
 /// 平台能力聚合。main 只依赖当前平台的 Platform 实现。Send + Sync 以便跨线程传入 run_http_server。
 pub trait Platform: Send + Sync {
+    /// 状态文件系统抽象（SPIFFS 根或 Linux 状态目录）。业务域经此访问，禁止直引 `platform::spiffs`。
+    fn state_fs(&self) -> Arc<dyn StateFs + Send + Sync>;
+
     /// 平台初始化（link_patches、日志、NVS、SPIFFS 等）。main 在构造后首先调用。
     fn init(&self) -> Result<()> {
         Ok(())

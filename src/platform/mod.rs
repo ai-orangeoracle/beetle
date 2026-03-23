@@ -2,6 +2,7 @@
 //! Platform: only place that depends on esp-idf-svc/hardware.
 
 pub mod abstraction;
+pub mod state_fs;
 pub mod board_info;
 pub mod csrf;
 pub mod display_driver;
@@ -26,7 +27,9 @@ pub mod task_wdt;
 pub mod time;
 pub mod wifi;
 
-pub use abstraction::{ConfigStore, Platform, PlatformHttpClient, SkillMetaStore, SkillStorage};
+pub use abstraction::{
+    ConfigStore, Platform, PlatformHttpClient, SkillMetaStore, SkillStorage, StateFs,
+};
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 pub use esp32::Esp32Platform;
 pub use fetch_url::fetch_url_with_client;

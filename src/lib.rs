@@ -69,7 +69,7 @@ pub use platform::{
     connect_wifi, init_nvs, init_spiffs, spiffs_usage, Esp32Platform, EspHttpClient,
     SpiffsMemoryStore, SpiffsSessionStore, SPIFFS_BASE,
 };
-pub use platform::{ConfigStore, Platform, SkillStorage};
+pub use platform::{ConfigStore, Platform, SkillStorage, StateFs};
 pub use tools::{
     build_default_registry, CronManageTool, DeviceControlTool,
     FileWriteTool, FilesTool, GetTimeTool, HttpRequestTool, I2cDeviceTool, KvStoreTool,

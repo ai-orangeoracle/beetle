@@ -2,7 +2,7 @@
 //! ESP32 implementation of Platform trait.
 
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
-use crate::platform::abstraction::Platform;
+use crate::platform::abstraction::{Platform, StateFs};
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 use crate::platform::{
     display_driver::DisplayState,
@@ -32,6 +32,7 @@ use std::sync::{Arc, Mutex};
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 /// ESP32 平台实现。
 pub struct Esp32Platform {
+    state_fs: Arc<dyn StateFs + Send + Sync>,
     config_store: Arc<NvsConfigStore>,
     skill_storage: Arc<SpiffsSkillStorage>,
     skill_meta_store: Arc<SpiffsSkillMetaStore>,
@@ -49,7 +50,10 @@ pub struct Esp32Platform {
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 impl Esp32Platform {
     pub fn new() -> Self {
+        let state_fs: Arc<dyn StateFs + Send + Sync> =
+            Arc::new(crate::platform::state_fs::Esp32StateFs);
         Self {
+            state_fs,
             config_store: Arc::new(NvsConfigStore),
             skill_storage: Arc::new(SpiffsSkillStorage),
             skill_meta_store: Arc::new(SpiffsSkillMetaStore),
@@ -75,6 +79,10 @@ impl Default for Esp32Platform {
 
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 impl Platform for Esp32Platform {
+    fn state_fs(&self) -> Arc<dyn StateFs + Send + Sync> {
+        Arc::clone(&self.state_fs)
+    }
+
     fn init(&self) -> crate::error::Result<()> {
         esp_idf_svc::sys::link_patches();
         esp_idf_svc::log::EspLogger::initialize_default();

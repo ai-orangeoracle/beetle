@@ -125,7 +125,7 @@ pub fn build_default_registry(
         Arc::clone(&session_store),
     )));
     registry.register(Box::new(super::BoardInfoTool::new(Arc::clone(&platform))));
-    registry.register(Box::new(super::KvStoreTool));
+    registry.register(Box::new(super::KvStoreTool::new(platform.state_fs())));
     if !config.hardware_devices.is_empty() {
         registry.register(Box::new(super::DeviceControlTool::new(
             config.hardware_devices.clone(),

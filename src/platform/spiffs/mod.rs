@@ -24,7 +24,8 @@ fn lock_spiffs() -> std::sync::MutexGuard<'static, ()> {
 }
 
 /// 单次写入最大字节数，避免写满分区。
-const MAX_WRITE_SIZE: usize = 256 * 1024;
+/// 与 `StateFs` 写入上界一致；业务经 `state_fs` 或本模块写入须遵守。
+pub(crate) const MAX_WRITE_SIZE: usize = 256 * 1024;
 
 /// 挂载 SPIFFS。partition_label=None 表示默认 "storage"；format_if_mount_failed=true。
 pub fn init_spiffs() -> Result<()> {
