@@ -5,6 +5,7 @@ use super::LlmHttpClient;
 use crate::error::Result;
 
 /// ESP 上重试前最小等待（毫秒），给 WSS/TLS 释放 internal 堆的机会，缓解 esp-aes 分配失败。
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 const RETRY_MIN_DELAY_MS_ESP: u64 = 2000;
 
 /// 执行 f 最多 retries 次（含首次）；失败则 sleep(base_ms * 2^attempt)、reset 连接后重试；全部失败返回最后一 Err。

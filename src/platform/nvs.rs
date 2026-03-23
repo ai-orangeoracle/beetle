@@ -13,9 +13,12 @@ use std::collections::HashMap;
 
 use crate::error::{Error, Result};
 
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 const ESP_ERR_NVS_NO_FREE_PAGES: i32 = 0x1102;
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 const ESP_ERR_NVS_NEW_VERSION_FOUND: i32 = 0x1103;
 /// NVS 处于不一致状态（写入中断或分区异常），需 erase 后重新 init。
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 const ESP_ERR_NVS_INVALID_STATE: i32 = 0x1109;
 
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]

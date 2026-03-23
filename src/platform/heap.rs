@@ -27,16 +27,19 @@ pub fn heap_largest_free_block_internal() -> usize {
 }
 
 #[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+#[allow(dead_code)]
 pub fn heap_free_internal() -> usize {
     usize::MAX
 }
 
 #[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+#[allow(dead_code)]
 pub fn heap_free_spiram() -> usize {
     0
 }
 
 #[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+#[allow(dead_code)]
 pub fn heap_largest_free_block_internal() -> usize {
     usize::MAX
 }
@@ -51,6 +54,7 @@ pub fn heap_min_free_internal() -> usize {
 }
 
 #[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+#[allow(dead_code)]
 pub fn heap_min_free_internal() -> usize {
     usize::MAX
 }
@@ -79,9 +83,11 @@ pub unsafe fn free_spiram_buffer(ptr: *mut u8) {
 }
 
 #[cfg(not(target_arch = "xtensa"))]
+#[allow(dead_code)]
 pub fn alloc_spiram_buffer(_size: usize) -> Option<*mut u8> {
     None
 }
 
 #[cfg(not(target_arch = "xtensa"))]
+#[allow(dead_code)]
 pub unsafe fn free_spiram_buffer(_ptr: *mut u8) {}

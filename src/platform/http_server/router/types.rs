@@ -58,6 +58,7 @@ impl IncomingRequest {
 #[derive(Debug)]
 pub struct OutgoingResponse {
     pub status: u16,
+    #[allow(dead_code)]
     pub status_text: &'static str,
     /// 与 `common::CORS_HEADERS` 等一致；空则使用默认 CORS JSON
     pub headers: &'static [(&'static str, &'static str)],
