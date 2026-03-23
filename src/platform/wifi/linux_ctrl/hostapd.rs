@@ -25,6 +25,11 @@ fn pidfile(name: &str) -> PathBuf {
     config_dir().join(format!("{}.pid", name))
 }
 
+/// 与 [`start_ap`] 写入位置一致的 PID 路径，供守护线程检查。
+pub fn daemon_pid_path(name: &str) -> PathBuf {
+    pidfile(name)
+}
+
 pub fn start_ap(iface: &str, ssid: &str, ip: &str) -> Result<()> {
     net::setup_ap_address(iface, &format!("{}/24", ip))?;
 

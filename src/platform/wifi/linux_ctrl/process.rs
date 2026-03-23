@@ -25,6 +25,25 @@ fn is_allowed_bin(bin: &str) -> bool {
     )
 }
 
+/// 读取 PID 文件（十进制）；无效或缺失返回 `None`。
+pub fn read_pid_file(path: &Path) -> Option<u32> {
+    std::fs::read_to_string(path).ok()?.trim().parse().ok()
+}
+
+/// `kill -0` 探测进程是否存在（不发送信号）。
+pub fn is_pid_alive(pid: u32) -> bool {
+    if pid == 0 {
+        return false;
+    }
+    run_checked(
+        "kill",
+        &["-0", &pid.to_string()],
+        Duration::from_millis(400),
+        "wifi_daemon_watch",
+    )
+    .is_ok()
+}
+
 pub fn run_checked(
     bin: &'static str,
     args: &[&str],

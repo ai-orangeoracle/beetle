@@ -18,7 +18,8 @@ fn wpa_conf_path(iface: &str) -> PathBuf {
     conf_dir().join(format!("wpa_supplicant-{}.conf", iface))
 }
 
-fn wpa_pid_path(iface: &str) -> PathBuf {
+/// `wpa_supplicant -P` 写入的 PID 路径（与 [`ensure_daemon`] 一致）。
+pub fn supplicant_pid_path(iface: &str) -> PathBuf {
     conf_dir().join(format!("wpa_supplicant-{}.pid", iface))
 }
 
@@ -44,7 +45,7 @@ pub fn ensure_daemon(iface: &str) -> Result<()> {
             "-i",
             iface,
             "-P",
-            wpa_pid_path(iface).to_string_lossy().as_ref(),
+            supplicant_pid_path(iface).to_string_lossy().as_ref(),
             "-c",
             conf_path.to_string_lossy().as_ref(),
         ],

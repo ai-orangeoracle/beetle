@@ -1,11 +1,15 @@
-//! Linux embedded WiFi implementation (P0).
+//! Linux embedded WiFi implementation (P0 + P1 守护/探测/降级).
 
 use crate::config::AppConfig;
 use crate::constants::{
-    SOFTAP_DEFAULT_IPV4, SOFTAP_FALLBACK_IPV4, WIFI_RETRY_BACKOFF_SECS, WIFI_SCAN_TIMEOUT_SECS,
+    SOFTAP_DEFAULT_IPV4, SOFTAP_FALLBACK_IPV4, WIFI_LINUX_DAEMON_WATCH_INTERVAL_SECS,
+    WIFI_RETRY_BACKOFF_SECS, WIFI_SCAN_TIMEOUT_SECS,
 };
-use crate::error::Result;
-use crate::platform::wifi::linux_ctrl::{capability, hostapd, net, wpa};
+use crate::error::{Error, Result};
+use crate::platform::wifi::linux_ctrl::{
+    capability::{self, PhyCapabilities},
+    hostapd, iw_scan, net, process, wpa,
+};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
@@ -32,13 +36,20 @@ pub trait WifiScan: Send + Sync {
 #[derive(Clone)]
 pub struct WifiScanHandle {
     iface: String,
+    /// 无并发 STA 时不用 `wpa_cli`，改用 `iw dev … scan`。
+    scan_via_iw: bool,
 }
 
 impl WifiScan for WifiScanHandle {
     fn request_scan(&self) -> Result<Vec<WifiApEntry>> {
         let deadline = Instant::now() + Duration::from_secs(WIFI_SCAN_TIMEOUT_SECS);
         loop {
-            match wpa::scan_bounded(&self.iface, deadline) {
+            let r = if self.scan_via_iw {
+                iw_scan::scan_bounded(&self.iface, deadline)
+            } else {
+                wpa::scan_bounded(&self.iface, deadline)
+            };
+            match r {
                 Ok(list) => return Ok(list),
                 Err(e) => {
                     if Instant::now() >= deadline {
@@ -115,18 +126,59 @@ fn migrate_ap_if_subnet_conflict(iface: &str, ap_ip: &str, sta_ip: &Option<Strin
     Ok(())
 }
 
+fn log_phy_caps(caps: &PhyCapabilities) {
+    log::info!(
+        "[{}] phy: ap={} concurrent_sta_ap={} band_2g={} band_5g={}",
+        TAG,
+        caps.supports_ap,
+        caps.supports_sta_ap_concurrent,
+        caps.has_2ghz,
+        caps.has_5ghz
+    );
+}
+
 pub fn connect(config: &AppConfig) -> Result<Option<WifiScanHandle>> {
     net::ensure_root_or_cap_net_admin()?;
     let iface = capability::detect_wifi_iface()?;
     set_iface(&iface);
+
+    let caps = capability::probe_phy(&iface)?;
+    log_phy_caps(&caps);
+    if !caps.supports_ap {
+        return Err(Error::config(
+            "wifi_capability_check",
+            "nl80211 does not report AP mode; check driver / iw phy",
+        ));
+    }
+
     let ap_ip = choose_ap_ip(&iface);
     hostapd::stop_ap(&iface);
     hostapd::start_ap(&iface, SOFTAP_SSID, ap_ip)?;
     clear_sta_state();
 
+    let ap_ip_owned = ap_ip.to_string();
+    start_daemon_watch_thread(iface.clone(), ap_ip_owned);
+
     if config.wifi_ssid.trim().is_empty() {
         log::info!("[{}] AP ready (SSID: {})", TAG, SOFTAP_SSID);
-        return Ok(Some(WifiScanHandle { iface }));
+        return Ok(Some(WifiScanHandle {
+            iface,
+            scan_via_iw: false,
+        }));
+    }
+
+    let concurrent = caps.supports_sta_ap_concurrent;
+    if !concurrent {
+        log::warn!(
+            "[{}] phy does not advertise managed+AP concurrent combo; SoftAP only — STA connect skipped (use provisioning UI, then reboot if driver allows STA-only)",
+            TAG
+        );
+        clear_sta_state();
+        start_sta_probe_thread(iface.clone());
+        return Ok(Some(WifiScanHandle {
+            iface,
+            scan_via_iw: true,
+        }));
     }
 
     match wpa::connect_sta(&iface, config.wifi_ssid.trim(), config.wifi_pass.as_str()) {
@@ -162,7 +214,55 @@ pub fn connect(config: &AppConfig) -> Result<Option<WifiScanHandle>> {
         }
     }
     start_sta_probe_thread(iface.clone());
-    Ok(Some(WifiScanHandle { iface }))
+    Ok(Some(WifiScanHandle {
+        iface,
+        scan_via_iw: false,
+    }))
+}
+
+fn start_daemon_watch_thread(iface: String, ap_ip: String) {
+    let res = std::thread::Builder::new()
+        .name("wifi-linux-watch".into())
+        .spawn(move || {
+            let hostapd_pf = hostapd::daemon_pid_path("hostapd");
+            let dnsmasq_pf = hostapd::daemon_pid_path("dnsmasq");
+            let wpa_pf = wpa::supplicant_pid_path(&iface);
+            loop {
+                std::thread::sleep(Duration::from_secs(WIFI_LINUX_DAEMON_WATCH_INTERVAL_SECS));
+                let need_ap = !pid_file_alive(&hostapd_pf) || !pid_file_alive(&dnsmasq_pf);
+                if need_ap {
+                    log::warn!(
+                        "[{}] AP stack pid missing or dead; restarting hostapd+dnsmasq",
+                        TAG
+                    );
+                    hostapd::stop_ap(&iface);
+                    if let Err(e) = hostapd::start_ap(&iface, SOFTAP_SSID, &ap_ip) {
+                        log::error!("[{}] AP stack restart failed: {}", TAG, e);
+                    }
+                    continue;
+                }
+                if wpa_pf.exists() {
+                    if let Some(pid) = process::read_pid_file(wpa_pf.as_path()) {
+                        if !process::is_pid_alive(pid) {
+                            log::warn!("[{}] wpa_supplicant not running; re-ensure", TAG);
+                            if let Err(e) = wpa::ensure_daemon(&iface) {
+                                log::error!("[{}] wpa_supplicant restart failed: {}", TAG, e);
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    if let Err(e) = res {
+        log::error!("[{}] daemon watch thread spawn failed: {}", TAG, e);
+    }
+}
+
+fn pid_file_alive(path: &Path) -> bool {
+    match process::read_pid_file(path) {
+        Some(pid) => process::is_pid_alive(pid),
+        None => false,
+    }
 }
 
 fn start_sta_probe_thread(iface: String) {

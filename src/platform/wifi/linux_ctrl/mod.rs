@@ -2,6 +2,7 @@
 
 pub mod capability;
 pub mod hostapd;
+pub mod iw_scan;
 pub mod net;
 pub mod process;
 pub mod wpa;

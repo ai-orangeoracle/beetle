@@ -144,12 +144,17 @@ pub const SOFTAP_DEFAULT_BASE_URL: &str = "http://192.168.1.4";
 pub const SOFTAP_FALLBACK_IPV4: &str = "172.16.42.1";
 
 // ---------- WiFi（跨平台统一超时/退避） ----------
-/// WiFi 首轮连接判定超时（秒），用于 `connect_wifi` 阻塞窗口。
+/// WiFi 首轮连接判定超时（秒），用于 Linux `wpa` 轮询等 STA 墙钟判定（非 ESP 主线程）。
 pub const WIFI_CONNECT_TIMEOUT_SECS: u64 = 15;
+/// ESP 上 `wifi::connect` **主线程**等待 WiFi 子线程首包 `Ok(())` 的墙钟上限（秒）。
+/// 须 ≥ STA 慢握手场景，与 [`WIFI_CONNECT_TIMEOUT_SECS`] 解耦，避免与 Linux 共用 15s 导致误杀。
+pub const WIFI_ESP_CONNECT_MAIN_WAIT_SECS: u64 = 45;
 /// WiFi 扫描请求等待超时（秒），用于 `wifi_scan.request_scan`。
 pub const WIFI_SCAN_TIMEOUT_SECS: u64 = 15;
 /// WiFi 重连退避序列（秒）：用于 Linux/host 后台重试与状态机。
 pub const WIFI_RETRY_BACKOFF_SECS: [u64; 3] = [5, 10, 20];
+/// Linux 嵌入式：`hostapd` / `dnsmasq` /（可选）`wpa_supplicant` 存活检查周期（秒）。
+pub const WIFI_LINUX_DAEMON_WATCH_INTERVAL_SECS: u64 = 15;
 
 // ---------- network_scan 工具 ----------
 /// WiFi 扫描最小间隔（毫秒）。
