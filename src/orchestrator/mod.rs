@@ -49,11 +49,19 @@ pub fn register_memory_snapshot_provider(f: Arc<dyn Fn() -> MemorySnapshot + Sen
     }
 }
 
-/// 实时取当前平台内存快照（TLS 准入、堆刷新共用）。未注册时 panic（装配错误）。
+/// 实时取当前平台内存快照（TLS 准入、堆刷新共用）。未注册时返回零值（装配错误）。
 pub(crate) fn memory_snapshot_live() -> MemorySnapshot {
-    MEMORY_SNAPSHOT_PROVIDER
-        .get()
-        .expect("memory snapshot provider not registered; call register_memory_snapshot_provider from run_app")()
+    match MEMORY_SNAPSHOT_PROVIDER.get() {
+        Some(provider) => provider(),
+        None => {
+            log::error!("[orchestrator] memory snapshot provider not registered; returning zero snapshot");
+            MemorySnapshot {
+                heap_free_internal: 0,
+                heap_free_spiram: 0,
+                heap_largest_block: 0,
+            }
+        }
+    }
 }
 
 /// 将快照写入 orchestrator 并重算压力等级。

@@ -115,22 +115,21 @@ pub fn run_dispatch(outbound_rx: OutboundRx, sinks: Arc<ChannelSinks>) {
         let mut i = 0;
         while i < cooldown_buffer.len() {
             if !is_channel_in_cooldown(&cooldown_buffer[i].channel) {
-                let buffered = cooldown_buffer
-                    .swap_remove_back(i)
-                    .expect("i < cooldown_buffer.len() checked by while condition");
-                let bc = truncate_content_to_max(&buffered.content, MAX_CONTENT_LEN);
-                if let Some(sink) = sinks.get(&buffered.channel) {
-                    if sink.send(&buffered.chat_id, &bc).is_ok() {
-                        record_channel_ok(&buffered.channel);
-                        metrics::record_dispatch_send(true);
-                    } else {
-                        record_channel_fail(&buffered.channel);
-                        metrics::record_dispatch_send(false);
-                        log::warn!(
-                            "[{}] channel={} cooldown replay failed",
-                            TAG,
-                            buffered.channel
-                        );
+                if let Some(buffered) = cooldown_buffer.swap_remove_back(i) {
+                    let bc = truncate_content_to_max(&buffered.content, MAX_CONTENT_LEN);
+                    if let Some(sink) = sinks.get(&buffered.channel) {
+                        if sink.send(&buffered.chat_id, &bc).is_ok() {
+                            record_channel_ok(&buffered.channel);
+                            metrics::record_dispatch_send(true);
+                        } else {
+                            record_channel_fail(&buffered.channel);
+                            metrics::record_dispatch_send(false);
+                            log::warn!(
+                                "[{}] channel={} cooldown replay failed",
+                                TAG,
+                                buffered.channel
+                            );
+                        }
                     }
                 }
             } else {
