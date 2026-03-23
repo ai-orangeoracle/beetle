@@ -471,6 +471,19 @@ impl crate::platform::PlatformHttpClient for EspHttpClient {
     ) -> Result<(u16, ResponseBody)> {
         self.patch_with_headers(url, headers, body)
     }
+    fn put(
+        &mut self,
+        url: &str,
+        headers: &[(&str, &str)],
+        body: &[u8],
+    ) -> Result<(u16, ResponseBody)> {
+        self.check_proxy_and_watchdog()?;
+        self.do_request_with_body(Method::Put, url, headers, body)
+    }
+    fn delete(&mut self, url: &str, headers: &[(&str, &str)]) -> Result<(u16, ResponseBody)> {
+        self.check_proxy_and_watchdog()?;
+        self.do_request_with_body(Method::Delete, url, headers, &[])
+    }
     fn reset_connection_for_retry(&mut self) {
         let _ = self.replace_connection();
     }

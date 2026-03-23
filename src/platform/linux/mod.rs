@@ -1,6 +1,5 @@
-//! Linux / host 的 `Platform` 实现：与 ESP 相同存储布局（`state_mount_path`），HTTP 由桩客户端提供。
-//! Linux/host Platform: same on-disk layout as ESP; HTTP via stub client.
-// TODO(Linux Step5): when `create_http_client` returns a real `ureq`-backed client (see `src/platform/http_client/mod.rs`), Agent/dispatch/outbound paths in `run_app` enable automatically — cross-ref dev-docs/linux-migration-plan.md Step 5.
+//! Linux / host 的 `Platform` 实现：与 ESP 相同存储布局（`state_mount_path`），HTTP 由 `ureq` 客户端提供。
+//! Linux/host Platform: same on-disk layout as ESP; HTTP via `ureq` client.
 
 use crate::platform::abstraction::{MemorySnapshot, Platform, StateFs};
 use crate::platform::{
@@ -179,11 +178,10 @@ impl Platform for LinuxPlatform {
         read_heartbeat_file()
     }
 
-    fn fetch_url_to_bytes(&self, _url: &str, _max_len: usize) -> crate::error::Result<Vec<u8>> {
-        Err(crate::error::Error::config(
-            "fetch_url",
-            "HTTP client unavailable on Linux host stub",
-        ))
+    fn fetch_url_to_bytes(&self, url: &str, max_len: usize) -> crate::error::Result<Vec<u8>> {
+        let config = AppConfig::load(self.config_store.as_ref(), None);
+        let mut client = self.create_http_client(&config)?;
+        crate::platform::fetch_url::fetch_url_with_client(client.as_mut(), url, max_len)
     }
 
     fn request_restart(&self) {
