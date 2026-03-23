@@ -1,0 +1,18 @@
+{
+  "display": {
+    "backend": "framebuffer",
+    "device": "/dev/fb0",
+    "width": 240,
+    "height": 240,
+    "backlight_path": "/sys/class/backlight/backlight/brightness",
+    "backlight_max": 255
+  },
+  "network": {
+    "mode": "wifi",
+    "interface": "wlan0"
+  },
+  "gpio": {
+    "driver": "sysfs",
+    "chip": "/dev/gpiochip0"
+  }
+}

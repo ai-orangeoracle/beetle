@@ -59,7 +59,7 @@ pub fn init_spiffs() -> Result<()> {
         crate::platform::state_root::init_host_state_root()?;
         let root = state_mount_path();
         log::info!("[platform::spiffs] host state root ready: {:?}", root);
-        return Ok(());
+        Ok(())
     }
     #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
     {

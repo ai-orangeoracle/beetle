@@ -1,0 +1,211 @@
+# Step 8: tagged release — ESP32 + Linux musl binaries, SBOM, SHA256SUMS, build provenance.
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Build only; do not create GitHub Release'
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+  artifact-metadata: write
+
+env:
+  RUST_BACKTRACE: 1
+
+jobs:
+  read-version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: meta
+        run: |
+          V=$(grep '^version' Cargo.toml | head -1 | sed -n 's/^version = "\([^"]*\)".*/\1/p')
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+
+  build-esp:
+    name: Build ESP32-S3 (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: default
+            features: ""
+          - name: cli-ota
+            features: "cli,ota"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Xtensa Rust toolchain
+        uses: esp-rs/xtensa-toolchain@v1.5.2
+        with:
+          default: true
+          targets: xtensa-esp32s3-espidf
+      - name: Cache esp-idf and cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.espressif
+            ~/.cargo/registry
+            target
+          key: esp-release-${{ matrix.name }}-${{ runner.os }}-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
+      - name: Build release
+        run: |
+          if [ -z "${{ matrix.features }}" ]; then
+            cargo build --release --target xtensa-esp32s3-espidf
+          else
+            cargo build --release --target xtensa-esp32s3-espidf --features "${{ matrix.features }}"
+          fi
+      - name: Upload firmware binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: esp32s3-${{ matrix.name }}
+          path: target/xtensa-esp32s3-espidf/release/beetle
+          if-no-files-found: error
+
+  build-linux-musl:
+    name: Build Linux musl (zigbuild)
+    runs-on: ubuntu-latest
+    env:
+      RUSTUP_TOOLCHAIN: stable
+    strategy:
+      matrix:
+        include:
+          - triple: armv7-unknown-linux-musleabihf
+            artifact: linux-armv7
+          - triple: riscv64gc-unknown-linux-musl
+            artifact: linux-riscv64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Zig
+        uses: mlugg/setup-zig@v1
+        with:
+          version: 0.13.0
+      - name: Install target
+        run: rustup target add ${{ matrix.triple }}
+      - name: Install cargo-zigbuild
+        run: cargo install cargo-zigbuild --locked
+      - name: Cargo zigbuild release
+        run: cargo-zigbuild build --release --target ${{ matrix.triple }}
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: target/${{ matrix.triple }}/release/beetle
+          if-no-files-found: error
+
+  release:
+    name: Package and publish
+    needs: [read-version, build-esp, build-linux-musl]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve release version label
+        id: ver
+        run: |
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            echo "label=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "label=v${{ needs.read-version.outputs.version }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Verify tag matches Cargo.toml
+        if: github.ref_type == 'tag'
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          if [ "$TAG" != "${{ needs.read-version.outputs.version }}" ]; then
+            echo "Tag ${GITHUB_REF_NAME} (strip v: $TAG) must equal Cargo.toml version ${{ needs.read-version.outputs.version }}"
+            exit 1
+          fi
+
+      - name: Download ESP artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: esp32s3-default
+          path: _artifacts/esp-default
+
+      - name: Download ESP cli-ota artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: esp32s3-cli-ota
+          path: _artifacts/esp-cli-ota
+
+      - name: Download Linux armv7
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-armv7
+          path: _artifacts/linux-armv7
+
+      - name: Download Linux riscv64
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-riscv64
+          path: _artifacts/linux-riscv64
+
+      - name: chmod +x downloaded binaries
+        run: chmod +x _artifacts/esp-default/beetle _artifacts/esp-cli-ota/beetle _artifacts/linux-armv7/beetle _artifacts/linux-riscv64/beetle
+
+      - name: Rename ESP binaries
+        run: |
+          LABEL="${{ steps.ver.outputs.label }}"
+          mkdir -p _release
+          cp _artifacts/esp-default/beetle "_release/beetle-${LABEL}-esp32s3.bin"
+          cp _artifacts/esp-cli-ota/beetle "_release/beetle-${LABEL}-esp32s3-cli-ota.bin"
+
+      - name: Package Linux tarballs
+        run: |
+          bash scripts/package_linux_release.sh \
+            --version "${{ steps.ver.outputs.label }}" \
+            --armv7 _artifacts/linux-armv7/beetle \
+            --riscv64 _artifacts/linux-riscv64/beetle \
+            --output-dir _release
+
+      - name: Install cargo-cyclonedx
+        run: cargo install cargo-cyclonedx --locked
+
+      - name: Generate CycloneDX SBOM (JSON)
+        run: |
+          LABEL="${{ steps.ver.outputs.label }}"
+          cargo cyclonedx --format json
+          if [ -f beetle.cdx.json ]; then SRC=beetle.cdx.json
+          elif [ -f bom.json ]; then SRC=bom.json
+          else echo "No SBOM output from cargo cyclonedx" >&2; ls -la; exit 1; fi
+          mv "$SRC" "_release/beetle-${LABEL}-cyclonedx.json"
+          ls -la _release
+
+      - name: SHA256SUMS
+        working-directory: _release
+        run: |
+          sha256sum beetle-* > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Attest release artifacts (binaries, tarballs, SBOM; not SHA256SUMS)
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: ${{ github.workspace }}/_release/beetle-*
+
+      - name: Upload release bundle (workflow_dispatch)
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-bundle-${{ steps.ver.outputs.label }}
+          path: _release
+
+      - name: Create GitHub Release
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: _release/*
+          generate_release_notes: true

@@ -96,6 +96,7 @@ fn linux_max_body_bytes(path: &str, method: &str) -> usize {
 }
 
 #[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+#[allow(clippy::too_many_arguments)]
 pub fn run(
     platform: std::sync::Arc<dyn crate::platform::Platform>,
     wifi_connected: bool,

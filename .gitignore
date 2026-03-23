@@ -1,12 +1,17 @@
 # Rust
 /target/
 Cargo.lock
+beetle.cdx.json
+bom.json
 
 # ESP-IDF / embuild
 .embuild/
 
 dev/
-dev-docs/
+# dev-docs: only these paths are tracked; rest stay local
+dev-docs/*
+!dev-docs/linux-migration-plan.md
+!dev-docs/linux-release-rollback.md
 
 # 外置配置前端（configure-ui）
 configure-ui/node_modules/

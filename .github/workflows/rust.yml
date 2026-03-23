@@ -11,6 +11,17 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
+  test-host:
+    name: Test (host / stable)
+    runs-on: ubuntu-latest
+    env:
+      RUSTUP_TOOLCHAIN: stable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Cargo test
+        run: cargo test
+
   platform-isolation:
     name: Platform isolation (§14.2)
     runs-on: ubuntu-latest
@@ -22,21 +33,32 @@ jobs:
         run: bash scripts/check_platform_isolation.sh
 
   linux-musl-check:
-    name: Linux musl check (Step 1–2)
+    # Zig + cargo-zigbuild: ring/rustls need a cross C compiler for musl targets (same strategy as scripts/check_linux_musl.sh fallback).
+    name: Linux musl (check + clippy + dep tree)
     runs-on: ubuntu-latest
     env:
       RUSTUP_TOOLCHAIN: stable
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: Install Zig
+        uses: mlugg/setup-zig@v1
+        with:
+          version: 0.13.0
       - name: Install musl targets
         run: |
           rustup target add armv7-unknown-linux-musleabihf
           rustup target add riscv64gc-unknown-linux-musl
-      - name: Cargo check (musl)
+      - name: Install cargo-zigbuild
+        run: cargo install cargo-zigbuild --locked
+      - name: Cargo check (musl, zigbuild)
         run: |
-          cargo check --target armv7-unknown-linux-musleabihf
-          cargo check --target riscv64gc-unknown-linux-musl
+          cargo-zigbuild check --target armv7-unknown-linux-musleabihf
+          cargo-zigbuild check --target riscv64gc-unknown-linux-musl
+      - name: Cargo check (armv7 musl, no default features)
+        run: cargo-zigbuild check --target armv7-unknown-linux-musleabihf --no-default-features
       - name: Assert no esp-idf-svc / embedded-svc in Linux dependency tree
         run: |
           for t in armv7-unknown-linux-musleabihf riscv64gc-unknown-linux-musl; do
@@ -46,6 +68,10 @@ jobs:
               exit 1
             fi
           done
+      - name: Clippy (musl, zigbuild)
+        run: |
+          cargo-zigbuild clippy --target armv7-unknown-linux-musleabihf -- -D warnings
+          cargo-zigbuild clippy --target riscv64gc-unknown-linux-musl -- -D warnings
 
   build:
     name: Build
@@ -88,13 +114,13 @@ jobs:
   fmt:
     name: Fmt
     runs-on: ubuntu-latest
+    env:
+      RUSTUP_TOOLCHAIN: stable
     steps:
       - uses: actions/checkout@v4
-      - name: Install Rust (esp)
-        uses: esp-rs/xtensa-toolchain@v1.5.2
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          default: true
-          targets: xtensa-esp32s3-espidf
+          components: rustfmt
       - name: Check format
         run: cargo fmt -- --check
 
