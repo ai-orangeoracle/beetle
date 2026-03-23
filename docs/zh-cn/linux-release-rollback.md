@@ -1,46 +1,16 @@
-# Linux 发布目录与回滚
+# Linux 安装与版本（当前状态）
 
 [English](../en-us/linux-release-rollback.md) | **中文**
 
-本文说明在低端 Linux SBC 上部署 **beetle** 的推荐目录布局、版本切换与回滚步骤；权限与目录基线与项目迁移计划中的运维约定一致（不引用内部文档路径）。
+## 面向谁
 
-## 1. 目录约定（推荐）
+普通用户**不必**读本文。当前 Linux 侧没有「一键烧录 / 一条命令装好」的体验；musl 压缩包与目录约定主要给**集成、运维或自己玩板子的人**对齐发布物用。  
+后续会单独做**一键安装**或 **SSH 上直接下载安装**等更顺的方案，届时再更新对外文档。
 
-| 路径 | 用途 |
-|------|------|
-| `/opt/beetle/releases/<version>/` | 某一发布包解压后的内容（含 `beetle`、`beetle.service`、`README.txt` 等） |
-| `/opt/beetle/current` | 指向当前运行版本的**符号链接** |
-| `/var/lib/beetle` 或 `/data/beetle` | 运行时状态与配置（由 `BEETLE_STATE_ROOT` 或默认路径决定，实现见 `src/platform/state_root.rs`） |
+## 若你已经在用手动包
 
-`<version>` 与发布包名一致，例如 `v0.1.0`（与 Git tag、`Cargo.toml` 的 `package.version` 对齐）。
+发布 tarball 里自带 `README.txt`、`beetle.service` 示例。若必须手工部署，常见做法是：解压到 `/opt/beetle/releases/<version>/`，用符号链接 `current` 指向当前要跑的版本，状态目录由 `BEETLE_STATE_ROOT` 或默认路径决定（实现见 `src/platform/state_root.rs`）。细节以包内说明为准；**这不是**推荐给终端用户的最终流程。
 
-## 2. 首次安装
+## 与 CI
 
-1. 校验发布页附带的 `SHA256SUMS`。
-2. 创建目录：`sudo mkdir -p /opt/beetle/releases/vX.Y.Z`。
-3. 将 `beetle-vX.Y.Z-linux-<arch>-musl.tar.gz` 解压到该目录（顶层目录名与压缩包 basename 一致）。
-4. 设置权限：`sudo chmod 755 /opt/beetle/releases/vX.Y.Z/beetle`；配置文件与状态目录建议使用专用用户及 `0600`/`0700` 等权限。
-5. 建立当前版本链接：`sudo ln -sfn /opt/beetle/releases/vX.Y.Z /opt/beetle/current`。
-6. 按需安装 systemd：复制 `beetle.service` 到 `/etc/systemd/system/`，编辑 `User`/`Group`/`ReadWritePaths` 后执行 `systemctl daemon-reload && systemctl enable --now beetle`。
-
-## 3. 升级到新版本
-
-1. 将新版本解压到 `/opt/beetle/releases/<new>`。
-2. 切换链接：`sudo ln -sfn /opt/beetle/releases/<new> /opt/beetle/current`。
-3. 重启服务：`sudo systemctl restart beetle`（或 SysV：`./beetle.init restart`）。
-
-## 4. 回滚到上一版本
-
-1. 确认旧版本目录仍在（例如 `/opt/beetle/releases/v0.1.0`）。
-2. 执行：`sudo ln -sfn /opt/beetle/releases/<previous> /opt/beetle/current`。
-3. `sudo systemctl restart beetle`。
-4. 验收：进程存在；若已启用配置 HTTP API，可请求 `GET http://<listen>/api/health`；日志中无持续错误。
-
-## 5. 故障注入演练（建议发布前做一次）
-
-- 故意将 `current` 指向错误目录，确认失败可观测；恢复软链后服务恢复。
-- `kill -9` 主进程后由 systemd 拉起（若已配置 `Restart=`）。
-
-## 6. 与 CI 的关系
-
-回滚在**设备上**完成；GitHub Actions 发布流水线只产出 tarball、校验和与构建出处证明，不在 CI 内模拟软链。
+GitHub Release 上提供校验和与构建出处证明；设备上的安装与回滚由你在目标机上完成，不在 CI 里模拟。

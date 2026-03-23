@@ -1,9 +1,13 @@
 Beetle Linux bundle (musl)
 ==========================
 
+Audience
+--------
+This tarball is for integrators and manual trials. **End-user one-click / SSH install is not the story yet**—that will follow in a separate product flow. Optional context: docs/en-us/linux-release-rollback.md (or docs/zh-cn/linux-release-rollback.md).
+
 Binary
 ------
-- `beetle`: statically linked (musl). Run from a versioned directory under /opt/beetle/releases/ (see docs/en-us/linux-release-rollback.md or docs/zh-cn/linux-release-rollback.md).
+- `beetle`: statically linked (musl). If you deploy by hand, a common layout is `/opt/beetle/releases/<version>/` plus a `current` symlink; see the markdown above for current status only.
 
 Config API (optional)
 ---------------------

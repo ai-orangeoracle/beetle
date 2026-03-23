@@ -240,7 +240,6 @@ Full key names and validation: `src/config.rs`. Runtime config segments (LLM, ch
 | [Hardware & resources](docs/en-us/hardware.md)                                      | Boards, memory, PSRAM, watchdog, build options, troubleshooting                          |
 | [Hardware device config & LLM-driven control](docs/en-us/hardware-device-config.md) | Milestone design: JSON config–driven device_control tool for GPIO/PWM/ADC/buzzer         |
 | [Architecture](docs/en-us/architecture.md)                                          | Modules, data flow, extension                                                            |
-| [Linux release layout & rollback](docs/en-us/linux-release-rollback.md)             | SBC install paths, symlink `current`, upgrade/rollback (musl bundles)                  |
 
 ---
 
