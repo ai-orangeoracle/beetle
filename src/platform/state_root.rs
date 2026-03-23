@@ -1,13 +1,18 @@
 //! 状态挂载根路径：ESP 固定 `/spiffs`；host/Linux 由 `BEETLE_STATE_ROOT` 或行业默认（`/var/lib/beetle` → `/data/beetle`），在 `init_spiffs` 中解析并缓存。
 //! State mount root: `/spiffs` on ESP; host uses `BEETLE_STATE_ROOT` or FHS defaults, resolved in `init_spiffs`.
 
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
 use crate::error::{Error, Result};
 use std::path::PathBuf;
+
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
 use std::sync::OnceLock;
 
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
 static STATE_ROOT: OnceLock<PathBuf> = OnceLock::new();
 
 /// Host：解析并创建状态根（及 `nvs/`）。幂等；由 `init_spiffs` 调用。失败时返回明确错误（须设置 `BEETLE_STATE_ROOT` 或保证 `/var/lib` 或 `/data` 可写）。
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
 pub(crate) fn init_host_state_root() -> Result<()> {
     if STATE_ROOT.get().is_some() {
         return Ok(());
@@ -21,6 +26,7 @@ pub(crate) fn init_host_state_root() -> Result<()> {
     Ok(())
 }
 
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
 fn resolve_host_state_root() -> Result<PathBuf> {
     if let Ok(s) = std::env::var("BEETLE_STATE_ROOT") {
         let trimmed = s.trim();

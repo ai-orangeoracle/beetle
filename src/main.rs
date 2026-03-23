@@ -400,8 +400,14 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
                 log::warn!("[{}] HTTP config API server error: {}", TAG, e);
             }
         });
+        #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
         log::info!(
             "[{}] HTTP config API server started (SoftAP: 192.168.4.1)",
+            TAG
+        );
+        #[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+        log::info!(
+            "[{}] HTTP config API server started (config API on LAN; BEETLE_CONFIG_HTTP_LISTEN, default 0.0.0.0:80)",
             TAG
         );
     }

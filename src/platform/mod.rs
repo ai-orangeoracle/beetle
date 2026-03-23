@@ -8,6 +8,7 @@ pub mod display_driver;
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 pub mod esp32;
 pub mod fetch_url;
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
 pub(crate) mod fs_atomic;
 pub(crate) mod hardware_drivers;
 pub(crate) mod heap;
