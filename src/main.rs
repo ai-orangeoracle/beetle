@@ -67,7 +67,10 @@ fn ensure_storage_ready(memory_store: &dyn MemoryStore) {
 fn bootstrap_config_and_wifi(platform: &Arc<dyn Platform>) -> (Arc<AppConfig>, bool) {
     let config_store = platform.config_store();
     let config_file_store = config::PlatformConfigFileStore(Arc::clone(platform));
-    let config = Arc::new(AppConfig::load(config_store.as_ref(), Some(&config_file_store)));
+    let config = Arc::new(AppConfig::load(
+        config_store.as_ref(),
+        Some(&config_file_store),
+    ));
     if let Err(e) = config.validate_proxy() {
         log::warn!("[{}] config validate_proxy: {}", TAG, e);
     }
@@ -101,7 +104,8 @@ fn bootstrap_config_and_wifi(platform: &Arc<dyn Platform>) -> (Arc<AppConfig>, b
                 platform.init_sntp();
                 beetle::platform::csrf::init();
                 if platform.display_available() {
-                    let _ = platform.display_command(DisplayCommand::UpdateBootProgress { stage: 2 });
+                    let _ =
+                        platform.display_command(DisplayCommand::UpdateBootProgress { stage: 2 });
                 }
             }
             true
@@ -260,10 +264,9 @@ fn compute_refresh_secs(
 
 #[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
 fn main() {
-    if let Err(_) = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(
-        "info",
-    ))
-    .try_init()
+    if let Err(_) =
+        env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+            .try_init()
     {
         eprintln!("[beetle] env_logger init failed (logging may be incomplete)");
     }

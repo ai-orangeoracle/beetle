@@ -56,10 +56,7 @@ impl Tool for FileWriteTool {
             .get("content")
             .and_then(|x| x.as_str())
             .ok_or_else(|| Error::config("tool_file_write", "missing content"))?;
-        let append = obj
-            .get("append")
-            .and_then(|x| x.as_bool())
-            .unwrap_or(false);
+        let append = obj.get("append").and_then(|x| x.as_bool()).unwrap_or(false);
 
         if content.len() > FILE_WRITE_MAX_CONTENT_LEN {
             return Err(Error::config(

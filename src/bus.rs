@@ -14,9 +14,15 @@ pub use crate::util::{truncate_content_to_max, truncate_to_byte_len};
 /// channel/chat_id 用 Arc<str> 减少 clone 开销。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PcMsg {
-    #[serde(serialize_with = "serialize_arc_str", deserialize_with = "deserialize_arc_str")]
+    #[serde(
+        serialize_with = "serialize_arc_str",
+        deserialize_with = "deserialize_arc_str"
+    )]
     pub channel: Arc<str>,
-    #[serde(serialize_with = "serialize_arc_str", deserialize_with = "deserialize_arc_str")]
+    #[serde(
+        serialize_with = "serialize_arc_str",
+        deserialize_with = "deserialize_arc_str"
+    )]
     pub chat_id: Arc<str>,
     pub content: String,
     /// 是否来自群组（group/supergroup）；用于 system 注入与 SILENT 约定。

@@ -226,9 +226,7 @@ fn validate_cron_expr(expr: &str) -> Result<()> {
 
 /// Load persisted cron tasks from SPIFFS (for use by cron loop).
 /// Returns empty vec on any error.
-pub fn load_persisted_cron_tasks(
-    store: &dyn MemoryStore,
-) -> Vec<CronTask> {
+pub fn load_persisted_cron_tasks(store: &dyn MemoryStore) -> Vec<CronTask> {
     match store.get_daily_note(CRON_TASKS_REL_PATH) {
         Ok(s) if !s.is_empty() => serde_json::from_str(&s).unwrap_or_default(),
         _ => Vec::new(),

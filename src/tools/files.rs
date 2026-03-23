@@ -97,15 +97,13 @@ impl Tool for FilesTool {
                 });
                 serde_json::to_string(&out).map_err(|e| Error::config("tool_files", e.to_string()))
             }
-            None => {
-                match self.state_fs.list_dir(&rel) {
-                    Ok(_) => Err(Error::config(
-                        "tool_files",
-                        "path is a directory, use list mode",
-                    )),
-                    Err(e) => Err(e),
-                }
-            }
+            None => match self.state_fs.list_dir(&rel) {
+                Ok(_) => Err(Error::config(
+                    "tool_files",
+                    "path is a directory, use list mode",
+                )),
+                Err(e) => Err(e),
+            },
         }
     }
 }

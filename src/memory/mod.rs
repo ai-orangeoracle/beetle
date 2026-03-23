@@ -98,9 +98,7 @@ impl EmotionSignalStore for MemoryEmotionSignalStore {
         self.0
             .lock()
             .map_err(|e| crate::error::Error::Other {
-                source: Box::new(std::io::Error::other(
-                    e.to_string(),
-                )),
+                source: Box::new(std::io::Error::other(e.to_string())),
                 stage: "emotion_signal_set",
             })?
             .insert(chat_id.to_string(), signal.to_string());
@@ -112,9 +110,7 @@ impl EmotionSignalStore for MemoryEmotionSignalStore {
             .0
             .lock()
             .map_err(|e: std::sync::PoisonError<_>| crate::error::Error::Other {
-                source: Box::new(std::io::Error::other(
-                    e.to_string(),
-                )),
+                source: Box::new(std::io::Error::other(e.to_string())),
                 stage: "emotion_signal_get",
             })?
             .remove(chat_id))

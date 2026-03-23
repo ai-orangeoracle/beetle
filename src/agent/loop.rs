@@ -5,9 +5,8 @@ use crate::agent::context::build_context;
 use crate::bus::{InboundTx, OutboundTx, PcMsg, MAX_CONTENT_LEN};
 use crate::constants::{
     AGENT_MARKER_MARK_IMPORTANT, AGENT_MARKER_SIGNAL_COMFORT, AGENT_MARKER_STOP,
-    AGENT_RETRY_BASE_MS, AGENT_RETRY_MAX_MS, INBOUND_RECV_TIMEOUT_SECS,
-    MAX_DEFER_RETRIES, MAX_TOOL_RESULTS_USER_MESSAGE_LEN,
-    TASK_CONTINUATION_CONTINUE_THRESHOLD_LEN,
+    AGENT_RETRY_BASE_MS, AGENT_RETRY_MAX_MS, INBOUND_RECV_TIMEOUT_SECS, MAX_DEFER_RETRIES,
+    MAX_TOOL_RESULTS_USER_MESSAGE_LEN, TASK_CONTINUATION_CONTINUE_THRESHOLD_LEN,
 };
 use crate::error::Result;
 use crate::llm::{LlmClient, LlmHttpClient, Message, StopReason, ToolSpec};
@@ -273,7 +272,8 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
                         let should_log = low_mem_defer_log
                             .as_ref()
                             .map(|(id, t)| {
-                                id.as_ref() != chat_id.as_ref() || t.elapsed() >= LOW_MEM_DEFER_LOG_INTERVAL
+                                id.as_ref() != chat_id.as_ref()
+                                    || t.elapsed() >= LOW_MEM_DEFER_LOG_INTERVAL
                             })
                             .unwrap_or(true);
                         if should_log {
@@ -301,7 +301,9 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
                 let now = Instant::now();
                 let should_log = low_mem_defer_log
                     .as_ref()
-                    .map(|(id, t)| id.as_ref() != reason || t.elapsed() >= LOW_MEM_DEFER_LOG_INTERVAL)
+                    .map(|(id, t)| {
+                        id.as_ref() != reason || t.elapsed() >= LOW_MEM_DEFER_LOG_INTERVAL
+                    })
                     .unwrap_or(true);
                 if should_log {
                     log::warn!("[agent] inbound rejected: {}", reason);
@@ -483,7 +485,9 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
         }
 
         // SILENT 或 cron 空回复不写 session，直接跳过。
-        if reply_content.trim() == "SILENT" || (msg.channel.as_ref() == "cron" && reply_content.is_empty()) {
+        if reply_content.trim() == "SILENT"
+            || (msg.channel.as_ref() == "cron" && reply_content.is_empty())
+        {
             llm_failure_count.remove(&msg_key);
             defer_tracker.remove(&msg_key);
             continue;

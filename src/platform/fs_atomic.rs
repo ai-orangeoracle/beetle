@@ -14,15 +14,8 @@ pub fn atomic_write(path: &Path, data: &[u8]) -> Result<()> {
         .filter(|p| !p.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."));
     std::fs::create_dir_all(parent).map_err(|e| Error::io("atomic_write", e))?;
-    let fname = path
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or("file");
-    let tmp = parent.join(format!(
-        ".{}.tmp.{}",
-        fname,
-        std::process::id()
-    ));
+    let fname = path.file_name().and_then(|s| s.to_str()).unwrap_or("file");
+    let tmp = parent.join(format!(".{}.tmp.{}", fname, std::process::id()));
     let write_result = (|| -> std::result::Result<(), std::io::Error> {
         let mut f = OpenOptions::new()
             .create(true)

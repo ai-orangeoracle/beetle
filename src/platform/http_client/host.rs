@@ -79,11 +79,7 @@ fn read_response_body_from_reader<R: Read>(mut reader: R) -> Result<ResponseBody
         }
         let remain = max_len.saturating_sub(out.len());
         if remain == 0 {
-            log::warn!(
-                "[{}] response body truncated at {} bytes",
-                TAG,
-                max_len
-            );
+            log::warn!("[{}] response body truncated at {} bytes", TAG, max_len);
             drain_reader(&mut reader);
             break;
         }
@@ -126,9 +122,8 @@ impl EspHttpClient {
         if trimmed.is_empty() {
             return Self::new_optional_proxy(None, Priority::Normal);
         }
-        parse_proxy_url_to_host_port(trimmed).ok_or_else(|| {
-            Error::config("http_client_new", "invalid proxy_url")
-        })?;
+        parse_proxy_url_to_host_port(trimmed)
+            .ok_or_else(|| Error::config("http_client_new", "invalid proxy_url"))?;
         let normalized = normalize_proxy_for_ureq(trimmed);
         Self::new_optional_proxy(Some(normalized), Priority::Normal)
     }

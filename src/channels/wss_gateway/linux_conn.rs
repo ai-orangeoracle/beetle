@@ -13,14 +13,13 @@ use std::sync::{mpsc, Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
-use crate::channels::wss_gateway::connection::{WssConnection, WssEvent};
+use crate::channels::wss_gateway::connection::{
+    WssConnection, WssEvent, MAX_WSS_SEND_PAYLOAD_BYTES,
+};
 use crate::error::{Error, Result};
 use tungstenite::stream::MaybeTlsStream;
 use tungstenite::{client::connect, protocol::Message, WebSocket};
 
-/// 与 `esp_conn` 的 `DEFAULT_BUFFER_SIZE` / `MAX_SEND_PAYLOAD` 对齐。
-const DEFAULT_BUFFER_SIZE: usize = 4096;
-const MAX_SEND_PAYLOAD: usize = DEFAULT_BUFFER_SIZE - 32;
 /// 与 `esp_conn` 一致。
 const WSS_TLS_ADMISSION_TIMEOUT_SECS: u64 = 10;
 /// 与 `wss_gateway/loop.rs` 中 `WDT_RECV_CHUNK_SECS` 一致。
@@ -94,7 +93,21 @@ fn spawn_reader_thread(
                         log::warn!("[wss_linux] event channel full, dropping text frame");
                     }
                 }
-                Ok(Message::Ping(_)) | Ok(Message::Pong(_)) => {}
+                Ok(Message::Ping(payload)) => {
+                    // RFC 6455：必须回复 Pong（与 ESP 侧 IDF 客户端 ping/pong 行为对齐）。
+                    let mut g = match ws.lock() {
+                        Ok(g) => g,
+                        Err(e) => {
+                            log::warn!("[wss_linux] ws mutex poisoned (ping): {}", e);
+                            let _ = tx.try_send(WssEvent::Disconnected);
+                            return;
+                        }
+                    };
+                    if let Err(e) = g.send(Message::Pong(payload)) {
+                        log::debug!("[wss_linux] pong reply failed: {}", e);
+                    }
+                }
+                Ok(Message::Pong(_)) => {}
                 Ok(Message::Close(_)) => {
                     let _ = tx.try_send(WssEvent::Closed);
                     break;
@@ -162,14 +175,14 @@ impl Drop for LinuxWssConnection {
 
 impl WssConnection for LinuxWssConnection {
     fn send_binary(&mut self, data: &[u8]) -> Result<()> {
-        if data.len() > MAX_SEND_PAYLOAD {
+        if data.len() > MAX_WSS_SEND_PAYLOAD_BYTES {
             return Err(Error::Other {
                 source: Box::new(std::io::Error::new(
                     ErrorKind::InvalidInput,
                     format!(
                         "wss payload too large: {} > {}",
                         data.len(),
-                        MAX_SEND_PAYLOAD
+                        MAX_WSS_SEND_PAYLOAD_BYTES
                     ),
                 )),
                 stage: "wss_linux_send",

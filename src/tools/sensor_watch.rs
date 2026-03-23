@@ -64,8 +64,7 @@ impl SensorWatchTool {
     fn save_watches(&self, watches: &[SensorWatch]) -> Result<()> {
         let data = serde_json::to_string_pretty(watches)
             .map_err(|e| Error::config("tool_sensor_watch", e.to_string()))?;
-        self.store
-            .write_daily_note(SENSOR_WATCHES_REL_PATH, &data)
+        self.store.write_daily_note(SENSOR_WATCHES_REL_PATH, &data)
     }
 
     fn is_valid_sensor_device(&self, device_id: &str) -> bool {
@@ -172,10 +171,7 @@ impl Tool for SensorWatchTool {
                 if alert_message.len() > SENSOR_WATCH_MAX_ALERT_LEN {
                     return Err(Error::config(
                         "tool_sensor_watch",
-                        format!(
-                            "alert_message exceeds {} bytes",
-                            SENSOR_WATCH_MAX_ALERT_LEN
-                        ),
+                        format!("alert_message exceeds {} bytes", SENSOR_WATCH_MAX_ALERT_LEN),
                     ));
                 }
 
@@ -296,10 +292,7 @@ impl Tool for SensorWatchTool {
                     if msg.len() > SENSOR_WATCH_MAX_ALERT_LEN {
                         return Err(Error::config(
                             "tool_sensor_watch",
-                            format!(
-                                "alert_message exceeds {} bytes",
-                                SENSOR_WATCH_MAX_ALERT_LEN
-                            ),
+                            format!("alert_message exceeds {} bytes", SENSOR_WATCH_MAX_ALERT_LEN),
                         ));
                     }
                     watch.alert_message = msg.to_string();
@@ -420,11 +413,7 @@ pub(crate) fn check_sensor_watches(
                     }
                 }
                 Err(e) => {
-                    log::warn!(
-                        "[sensor_watch] PcMsg::new for {} failed: {}",
-                        watch.id,
-                        e
-                    );
+                    log::warn!("[sensor_watch] PcMsg::new for {} failed: {}", watch.id, e);
                 }
             }
         }
@@ -446,39 +435,26 @@ fn read_sensor_value(
     devices: &[DeviceEntry],
 ) -> Result<f64> {
     let dev = devices.iter().find(|d| d.id == device_id).ok_or_else(|| {
-        Error::config(
-            "sensor_watch",
-            format!("unknown device_id '{}'", device_id),
-        )
+        Error::config("sensor_watch", format!("unknown device_id '{}'", device_id))
     })?;
     let empty = json!({});
     match dev.device_type.as_str() {
         "gpio_in" => {
             let s = platform.drive_gpio_in(&dev.pins, &empty, &dev.options)?;
-            let v: Value = serde_json::from_str(&s).map_err(|e| {
-                Error::config("sensor_watch", format!("gpio_in JSON: {}", e))
-            })?;
+            let v: Value = serde_json::from_str(&s)
+                .map_err(|e| Error::config("sensor_watch", format!("gpio_in JSON: {}", e)))?;
             let n = v
                 .get("value")
                 .and_then(|x| x.as_f64())
-                .or_else(|| {
-                    v.get("value")
-                        .and_then(|x| x.as_i64())
-                        .map(|i| i as f64)
-                })
-                .or_else(|| {
-                    v.get("value")
-                        .and_then(|x| x.as_u64())
-                        .map(|u| u as f64)
-                })
+                .or_else(|| v.get("value").and_then(|x| x.as_i64()).map(|i| i as f64))
+                .or_else(|| v.get("value").and_then(|x| x.as_u64()).map(|u| u as f64))
                 .unwrap_or(0.0);
             Ok(n)
         }
         "adc_in" => {
             let s = platform.drive_adc_in(&dev.pins, &empty, &dev.options)?;
-            let v: Value = serde_json::from_str(&s).map_err(|e| {
-                Error::config("sensor_watch", format!("adc_in JSON: {}", e))
-            })?;
+            let v: Value = serde_json::from_str(&s)
+                .map_err(|e| Error::config("sensor_watch", format!("adc_in JSON: {}", e)))?;
             let raw = v
                 .get("raw")
                 .and_then(|x| x.as_f64())
@@ -488,10 +464,7 @@ fn read_sensor_value(
         }
         _ => Err(Error::config(
             "sensor_watch",
-            format!(
-                "device '{}' is not gpio_in or adc_in",
-                device_id
-            ),
+            format!("device '{}' is not gpio_in or adc_in", device_id),
         )),
     }
 }

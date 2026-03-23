@@ -68,9 +68,7 @@ impl Tool for ModelConfigTool {
                 let existing = self
                     .platform
                     .read_config_file(LLM_CONFIG_PATH)?
-                    .and_then(|d| {
-                        serde_json::from_slice::<serde_json::Value>(&d).ok()
-                    })
+                    .and_then(|d| serde_json::from_slice::<serde_json::Value>(&d).ok())
                     .unwrap_or_else(|| json!({}));
 
                 let mut config = if let Some(obj) = existing.as_object() {

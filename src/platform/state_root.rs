@@ -67,7 +67,9 @@ pub fn state_mount_path() -> PathBuf {
     {
         STATE_ROOT
             .get()
-            .expect("host: state root not initialized; init_spiffs must run before state_mount_path")
+            .expect(
+                "host: state root not initialized; init_spiffs must run before state_mount_path",
+            )
             .clone()
     }
 }

@@ -73,8 +73,8 @@ fn load_pc_cfg_map() -> Result<HashMap<String, String>> {
 
 #[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
 fn save_pc_cfg_map(map: &HashMap<String, String>) -> Result<()> {
-    let v = serde_json::to_vec_pretty(map)
-        .map_err(|e| Error::config("nvs_pc_cfg", e.to_string()))?;
+    let v =
+        serde_json::to_vec_pretty(map).map_err(|e| Error::config("nvs_pc_cfg", e.to_string()))?;
     if v.len() > crate::platform::spiffs::MAX_WRITE_SIZE {
         return Err(Error::config(
             "nvs_pc_cfg",

@@ -14,8 +14,8 @@ pub mod agent;
 pub mod bus;
 pub mod channels;
 pub mod config;
-pub mod doctor;
 pub mod display;
+pub mod doctor;
 pub mod error;
 pub mod llm;
 pub mod memory;
@@ -56,9 +56,9 @@ pub use config::{
     I2cBusConfig, I2cDeviceEntry, LlmSource, PinConfig,
 };
 pub use display::{
-    default_disabled_display_config, validate_display_config_core, DisplayBus, DisplayChannelStatus,
-    DisplayColorOrder, DisplayCommand, DisplayConfig, DisplayDriver, DisplayPressureLevel,
-    DisplaySystemState,
+    default_disabled_display_config, validate_display_config_core, DisplayBus,
+    DisplayChannelStatus, DisplayColorOrder, DisplayCommand, DisplayConfig, DisplayDriver,
+    DisplayPressureLevel, DisplaySystemState,
 };
 pub use error::{Error, Result};
 pub use llm::{
@@ -67,21 +67,20 @@ pub use llm::{
 };
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 pub use platform::{
-    connect_wifi, init_nvs, init_spiffs, spiffs_base_string, spiffs_usage, Esp32Platform,
-    EspHttpClient, SpiffsMemoryStore, SpiffsSessionStore, state_mount_path,
+    connect_wifi, init_nvs, init_spiffs, spiffs_base_string, spiffs_usage, state_mount_path,
+    Esp32Platform, EspHttpClient, SpiffsMemoryStore, SpiffsSessionStore,
 };
 #[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
 pub use platform::{
-    connect_wifi, init_nvs, init_spiffs, spiffs_base_string, spiffs_usage, LinuxPlatform,
-    EspHttpClient, SpiffsMemoryStore, SpiffsSessionStore, state_mount_path,
+    connect_wifi, init_nvs, init_spiffs, spiffs_base_string, spiffs_usage, state_mount_path,
+    EspHttpClient, LinuxPlatform, SpiffsMemoryStore, SpiffsSessionStore,
 };
 pub use platform::{ConfigStore, MemorySnapshot, Platform, SkillStorage, StateFs};
 pub use tools::{
-    build_default_registry, CronManageTool, DeviceControlTool,
-    FileWriteTool, FilesTool, GetTimeTool, HttpRequestTool, I2cDeviceTool, KvStoreTool,
-    MemoryManageTool, ModelConfigTool, NetworkScanTool, ProxyConfigTool, RemindAtTool,
-    SensorWatchTool, SessionManageTool, SystemControlTool, Tool, ToolContext, ToolRegistry,
-    UpdateSessionSummaryTool, WebSearchTool,
+    build_default_registry, CronManageTool, DeviceControlTool, FileWriteTool, FilesTool,
+    GetTimeTool, HttpRequestTool, I2cDeviceTool, KvStoreTool, MemoryManageTool, ModelConfigTool,
+    NetworkScanTool, ProxyConfigTool, RemindAtTool, SensorWatchTool, SessionManageTool,
+    SystemControlTool, Tool, ToolContext, ToolRegistry, UpdateSessionSummaryTool, WebSearchTool,
 };
 
 /// 任何 PlatformHttpClient 均可作为 LlmHttpClient、ToolContext、ChannelHttpClient 使用。

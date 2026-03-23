@@ -78,9 +78,7 @@ pub fn request_http_permit(
         match tls_permit.try_lock() {
             Ok(guard) => break guard,
             Err(std::sync::TryLockError::Poisoned(e)) => {
-                log::warn!(
-                    "[orchestrator::permit] TLS permit mutex was poisoned, recovering"
-                );
+                log::warn!("[orchestrator::permit] TLS permit mutex was poisoned, recovering");
                 tls_permit.clear_poison();
                 break e.into_inner();
             }

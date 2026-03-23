@@ -155,7 +155,11 @@ fn build_request_body(
     let req = AnthropicRequestRef {
         model,
         max_tokens,
-        system: if system.is_empty() { None } else { Some(system) },
+        system: if system.is_empty() {
+            None
+        } else {
+            Some(system)
+        },
         messages: messages
             .iter()
             .map(|m| AnthropicRequestMessageRef {
