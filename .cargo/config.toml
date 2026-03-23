@@ -21,3 +21,6 @@ rustflags = ["-A", "unnecessary_transmutes"]
 
 [unstable]
 build-std = ["std", "panic_abort"]
+
+[target.x86_64-unknown-linux-musl]
+linker = "x86_64-linux-musl-gcc"
