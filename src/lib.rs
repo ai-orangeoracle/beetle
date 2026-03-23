@@ -39,6 +39,7 @@ pub use agent::{
     DEFAULT_MESSAGES_MAX_LEN, DEFAULT_SYSTEM_MAX_LEN, SESSION_RECENT_N,
 };
 pub use bus::{MessageBus, PcMsg, DEFAULT_CAPACITY, MAX_CONTENT_LEN};
+pub use channels::connect_wss;
 #[cfg(feature = "feishu")]
 pub use channels::run_feishu_ws_loop;
 pub use channels::run_qq_ws_loop;

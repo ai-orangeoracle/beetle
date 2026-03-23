@@ -2,14 +2,10 @@
 //! Firmware version is embedded for OTA and ops.
 //! Startup order: NVS → SPIFFS → config → WiFi → memory/session stores → MessageBus → self-check → cron/heartbeat/sinks/dispatch/CLI → agent_loop.
 //! ESP32: no graceful shutdown; process runs until power off.
-#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
-use beetle::channels::connect_esp_wss;
+use beetle::channels::connect_wss;
 use beetle::config;
 use beetle::memory::{MemoryStore, SessionStore};
-#[cfg(all(
-    feature = "feishu",
-    any(target_arch = "xtensa", target_arch = "riscv32")
-))]
+#[cfg(feature = "feishu")]
 use beetle::run_feishu_ws_loop;
 #[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
 use beetle::LinuxPlatform;
@@ -730,10 +726,7 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
         }
     );
 
-    #[cfg(all(
-        feature = "feishu",
-        any(target_arch = "xtensa", target_arch = "riscv32")
-    ))]
+    #[cfg(feature = "feishu")]
     if let Some(ref c) = channel_rx_set.feishu {
         let tx = inbound_tx.clone();
         let id = c.app_id.clone();
@@ -748,22 +741,18 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
                 allowed,
                 tx,
                 move || pf.create_http_client(cfg.as_ref()),
-                connect_esp_wss,
+                connect_wss,
             )
         });
         log::info!("[{}] Feishu WS loop started", TAG);
     } else if enabled_channel == "feishu" {
-        #[cfg(all(
-            feature = "feishu",
-            any(target_arch = "xtensa", target_arch = "riscv32")
-        ))]
+        #[cfg(feature = "feishu")]
         log::warn!(
             "[{}] Feishu WS not started: app_id or app_secret empty (check channels config)",
             TAG
         );
     }
 
-    #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
     if enabled_channel == "qq_channel" {
         if let Some(ref c) = channel_rx_set.qq_channel {
             if !c.app_id.trim().is_empty() && !c.app_secret.trim().is_empty() {
@@ -780,7 +769,7 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
                         qq_tx,
                         qq_cache_ws,
                         move || pf.create_http_client(cfg.as_ref()),
-                        connect_esp_wss,
+                        connect_wss,
                     )
                 });
                 log::info!("[{}] QQ WS loop started", TAG);
@@ -955,7 +944,7 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
         }
     } else {
         log::warn!(
-            "[{}] HTTP client not available (create_http_client failed): dispatch, agent, and outbound sender threads were not started. Expected on Linux until Step 5 (ureq); see dev-docs/linux-migration-plan.md.",
+            "[{}] HTTP client not available (create_http_client failed): dispatch, agent, Telegram poll, and outbound sender threads were not started. On Linux, ensure ureq/rustls stack and network; see dev-docs/linux-migration-plan.md.",
             TAG
         );
     }

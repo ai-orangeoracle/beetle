@@ -46,6 +46,8 @@ esp-idf-svc = "0.52"
 [target.'cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))'.dependencies]
 env_logger = "0.11"
 ureq = { version = "2.12", default-features = false, features = ["tls", "gzip", "socks-proxy"] }
+# Linux WSS（飞书/QQ 长连接）：同步客户端，rustls + webpki 根；禁止 default-features 以免拉 tokio。
+tungstenite = { version = "0.24", default-features = false, features = ["handshake", "rustls-tls-webpki-roots"] }
 
 [features]
 default = ["config_api", "feishu"]

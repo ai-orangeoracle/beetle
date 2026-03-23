@@ -39,8 +39,11 @@ pub use telegram::{
 };
 pub use websocket::{WebSocketSink, MAX_WS_CONNECTIONS, MAX_WS_MESSAGE_LEN};
 pub use wecom::{flush_wecom_sends, run_wecom_sender_loop};
+pub use wss_gateway::connect_wss;
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 pub use wss_gateway::{connect_esp_wss, EspWssConnection};
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+pub use wss_gateway::{connect_linux_wss, LinuxWssConnection};
 
 /// 占位 sink：打日志并返回 Ok，供 8.1 验收。
 pub struct LogSink {
