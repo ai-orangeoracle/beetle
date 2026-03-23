@@ -134,10 +134,7 @@ pub fn restart_requested_from_uri(uri: &str) -> bool {
     let query = uri.find('?').map(|i| &uri[i + 1..]).unwrap_or("");
     for pair in query.split('&') {
         let mut it = pair.splitn(2, '=');
-        if it
-            .next()
-            .is_some_and(|k| k.eq_ignore_ascii_case("restart"))
-        {
+        if it.next().is_some_and(|k| k.eq_ignore_ascii_case("restart")) {
             return it.next().is_some_and(|v| v.trim() == "1");
         }
     }

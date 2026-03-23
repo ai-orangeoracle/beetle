@@ -105,7 +105,11 @@ pub fn post_display(ctx: &HandlerContext, body: &str) -> Result<ApiResponse, std
         ctx.config_store.as_ref(),
         Some(ctx.config_file_store.as_ref()),
     );
-    match config::save_display_segment(ctx.config_file_store.as_ref(), &current.hardware_devices, body) {
+    match config::save_display_segment(
+        ctx.config_file_store.as_ref(),
+        &current.hardware_devices,
+        body,
+    ) {
         Ok(()) => Ok(ApiResponse::ok_200_json(
             r#"{"ok":true,"restart_required":true}"#,
         )),

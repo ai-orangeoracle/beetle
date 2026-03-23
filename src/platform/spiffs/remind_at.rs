@@ -118,8 +118,8 @@ impl RemindAtStore for SpiffsRemindAtStore {
         if buf.len() <= 2 {
             return Ok(Vec::new());
         }
-        let list: Vec<RemindEntry> =
-            serde_json::from_slice(&buf).map_err(|e| Error::config("remind_at_list", e.to_string()))?;
+        let list: Vec<RemindEntry> = serde_json::from_slice(&buf)
+            .map_err(|e| Error::config("remind_at_list", e.to_string()))?;
         let mut out = Vec::new();
         for e in list {
             if e.channel == channel && e.chat_id == chat_id && e.at_unix_secs >= now_unix_secs {

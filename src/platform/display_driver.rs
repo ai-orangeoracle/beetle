@@ -464,7 +464,10 @@ impl DisplayState {
                 };
                 let ret = ledc_timer_config(&timer_cfg);
                 if ret != ESP_OK {
-                    log::warn!("[display] LEDC timer init failed ({}), fallback to GPIO BL", ret);
+                    log::warn!(
+                        "[display] LEDC timer init failed ({}), fallback to GPIO BL",
+                        ret
+                    );
                     return;
                 }
                 let ch_cfg = ledc_channel_config_t {
@@ -478,12 +481,18 @@ impl DisplayState {
                 };
                 let ret = ledc_channel_config(&ch_cfg);
                 if ret != ESP_OK {
-                    log::warn!("[display] LEDC channel init failed ({}), fallback to GPIO BL", ret);
+                    log::warn!(
+                        "[display] LEDC channel init failed ({}), fallback to GPIO BL",
+                        ret
+                    );
                     return;
                 }
             }
             self.bl_ledc_initialized = true;
-            log::info!("[display] LEDC PWM backlight initialized (ch{}, 5kHz, 13-bit)", BL_LEDC_CHANNEL);
+            log::info!(
+                "[display] LEDC PWM backlight initialized (ch{}, 5kHz, 13-bit)",
+                BL_LEDC_CHANNEL
+            );
         }
     }
 
@@ -594,7 +603,13 @@ impl DisplayState {
                 }
                 DisplayCommand::UpdateBootProgress { stage } => {
                     let bg = DISPLAY_BG;
-                    render_boot_progress(backend, *stage, self.config.width, self.config.height, bg);
+                    render_boot_progress(
+                        backend,
+                        *stage,
+                        self.config.width,
+                        self.config.height,
+                        bg,
+                    );
                     let layout = LAYOUT;
                     let footer_h = self.config.height.saturating_sub(layout.footer_top);
                     backend.flush_rows(
@@ -1180,11 +1195,7 @@ fn render_dashboard<D: DrawTarget<Color = Rgb565>>(target: &mut D, p: &Dashboard
             let dot_style = PrimitiveStyle::with_fill(dot_color);
             let dot_y = body_cy;
             let spacing = body_r * 35 / 100;
-            let sizes: [u32; 3] = if p.busy_phase {
-                [3, 4, 5]
-            } else {
-                [2, 3, 2]
-            };
+            let sizes: [u32; 3] = if p.busy_phase { [3, 4, 5] } else { [2, 3, 2] };
             for (i, &r) in sizes.iter().enumerate() {
                 let dx = (i as i32 - 1) * spacing;
                 let _ = Circle::new(Point::new(cx + dx - r as i32, dot_y - r as i32), r * 2)
@@ -1278,15 +1289,27 @@ fn format_subtitle_with_uptime<'a>(ip: &'a str, secs: u64, buf: &'a mut [u8; 30]
         if days > 0 {
             // "Xd Yh"
             pos = write_u64_to_buf(days, buf, pos);
-            if pos < buf.len() { buf[pos] = b'd'; pos += 1; }
+            if pos < buf.len() {
+                buf[pos] = b'd';
+                pos += 1;
+            }
             pos = write_u64_to_buf(hours, buf, pos);
-            if pos < buf.len() { buf[pos] = b'h'; pos += 1; }
+            if pos < buf.len() {
+                buf[pos] = b'h';
+                pos += 1;
+            }
         } else {
             // "Xh Ym"
             pos = write_u64_to_buf(hours, buf, pos);
-            if pos < buf.len() { buf[pos] = b'h'; pos += 1; }
+            if pos < buf.len() {
+                buf[pos] = b'h';
+                pos += 1;
+            }
             pos = write_u64_to_buf(mins, buf, pos);
-            if pos < buf.len() { buf[pos] = b'm'; pos += 1; }
+            if pos < buf.len() {
+                buf[pos] = b'm';
+                pos += 1;
+            }
         }
     }
 
@@ -1515,12 +1538,9 @@ fn render_footer<D: DrawTarget<Color = Rgb565>>(
     // F7: 错误闪烁 — error_flash=true 时反色渲染压力标签（彩色背景 + 白字）
     if error_flash {
         let text_w = pressure_text.len() as u32 * 6 + 4; // FONT_6X13 + padding
-        let _ = Rectangle::new(
-            Point::new(6, footer_y),
-            Size::new(text_w, 14),
-        )
-        .into_styled(PrimitiveStyle::with_fill(pressure_color))
-        .draw(target);
+        let _ = Rectangle::new(Point::new(6, footer_y), Size::new(text_w, 14))
+            .into_styled(PrimitiveStyle::with_fill(pressure_color))
+            .draw(target);
         let flash_style = MonoTextStyle::new(&FONT_6X13, Rgb565::WHITE);
         let _ = Text::new(pressure_text, Point::new(8, footer_y + 11), flash_style).draw(target);
     } else {
@@ -1624,39 +1644,58 @@ fn render_boot_progress<D: DrawTarget<Color = Rgb565>>(
 
 /// Format message stats line: "In:NNN Out:NNN L:X.Xs HH:MM" (no heap alloc).
 /// F6: 含 LLM 延迟显示。
-fn format_msg_stats(msg_in: u32, msg_out: u32, epoch_secs: u32, llm_ms: u32, buf: &mut [u8; 40]) -> &str {
+fn format_msg_stats(
+    msg_in: u32,
+    msg_out: u32,
+    epoch_secs: u32,
+    llm_ms: u32,
+    buf: &mut [u8; 40],
+) -> &str {
     let mut pos = 0;
     let len = buf.len();
 
     macro_rules! put {
         ($b:expr) => {
-            if pos < len { buf[pos] = $b; pos += 1; }
+            if pos < len {
+                buf[pos] = $b;
+                pos += 1;
+            }
         };
     }
 
     // "In:"
-    put!(b'I'); put!(b'n'); put!(b':');
+    put!(b'I');
+    put!(b'n');
+    put!(b':');
     pos = write_u32_to_buf(msg_in, buf, pos);
 
     put!(b' ');
 
     // "Out:"
-    put!(b'O'); put!(b'u'); put!(b't'); put!(b':');
+    put!(b'O');
+    put!(b'u');
+    put!(b't');
+    put!(b':');
     pos = write_u32_to_buf(msg_out, buf, pos);
 
     // F6: " L:X.Xs" or " L:XXXms" (only if llm_ms > 0)
     if llm_ms > 0 {
-        put!(b' '); put!(b'L'); put!(b':');
+        put!(b' ');
+        put!(b'L');
+        put!(b':');
         if llm_ms >= 1000 {
             // Show as seconds with 1 decimal: "1.2s"
             let secs = llm_ms / 1000;
             let tenths = (llm_ms % 1000) / 100;
             pos = write_u32_to_buf(secs, buf, pos);
-            put!(b'.'); put!(b'0' + tenths as u8); put!(b's');
+            put!(b'.');
+            put!(b'0' + tenths as u8);
+            put!(b's');
         } else {
             // Show as milliseconds: "XXXms"
             pos = write_u32_to_buf(llm_ms, buf, pos);
-            put!(b'm'); put!(b's');
+            put!(b'm');
+            put!(b's');
         }
     }
 
@@ -1664,7 +1703,11 @@ fn format_msg_stats(msg_in: u32, msg_out: u32, epoch_secs: u32, llm_ms: u32, buf
     put!(b' ');
 
     if epoch_secs == 0 {
-        put!(b'-'); put!(b'-'); put!(b':'); put!(b'-'); put!(b'-');
+        put!(b'-');
+        put!(b'-');
+        put!(b':');
+        put!(b'-');
+        put!(b'-');
     } else {
         // ESP32: use esp_idf_svc::sys::localtime_r for timezone-aware conversion (SNTP).
         #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
@@ -1675,9 +1718,11 @@ fn format_msg_stats(msg_in: u32, msg_out: u32, epoch_secs: u32, llm_ms: u32, buf
             unsafe { localtime_r(&time_val, &mut tm) };
             let h = (tm.tm_hour as u8).min(23);
             let m = (tm.tm_min as u8).min(59);
-            put!(b'0' + h / 10); put!(b'0' + h % 10);
+            put!(b'0' + h / 10);
+            put!(b'0' + h % 10);
             put!(b':');
-            put!(b'0' + m / 10); put!(b'0' + m % 10);
+            put!(b'0' + m / 10);
+            put!(b'0' + m % 10);
         }
         #[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
         {
@@ -1685,9 +1730,11 @@ fn format_msg_stats(msg_in: u32, msg_out: u32, epoch_secs: u32, llm_ms: u32, buf
             let secs_of_day = epoch_secs % 86400;
             let h = ((secs_of_day / 3600) % 24) as u8;
             let m = ((secs_of_day % 3600) / 60) as u8;
-            put!(b'0' + h / 10); put!(b'0' + h % 10);
+            put!(b'0' + h / 10);
+            put!(b'0' + h % 10);
             put!(b':');
-            put!(b'0' + m / 10); put!(b'0' + m % 10);
+            put!(b'0' + m / 10);
+            put!(b'0' + m % 10);
         }
     }
 

@@ -22,6 +22,10 @@
 - **配置显式下传**：通过参数传递 `AppConfig`，禁止全局可变静态保存配置或密钥。
 - **通过通信共享**：任务间用 channel 传递 `PcMsg`，避免不必要的 `Arc<Mutex<T>>`；队列与缓冲区有固定容量与背压约定。
 
+### 平台隔离门禁（合并前） / Platform isolation gate
+
+- 须满足 [dev-docs/platform-isolation-plan.md](dev-docs/platform-isolation-plan.md) **§14.2**（业务域不得直引 `platform::spiffs` / `heap` / `hardware_drivers`，不得 `use crate::platform::*`）。合并前运行 `./scripts/check_platform_isolation.sh`（需安装 [ripgrep](https://github.com/BurntSushi/ripgrep) `rg`）；CI job `platform-isolation` 强制执行。可选：在本仓库执行 `git config core.hooksPath .githooks`，使提交前运行与 CI 相同检查。
+
 ## 安全
 
 - 密钥与敏感字段**永不**打印、不写 SPIFFS 调试文件；配置加载后做必填与长度校验；启动期可调用 `config.validate_for_channels()` 校验当前 enabled_channel 对应凭证。
@@ -42,7 +46,7 @@
 ### 后台线程与资源
 
 - **禁止重复线程**：同一职责（如显示刷新）只允许一个后台线程。若需要不同频率执行不同逻辑，在单一线程内用计数器区分，不得为此多开线程。ESP32 每个线程占 ~4KB 栈，资源宝贵。
-- **禁止虚假度量**：显示、日志、API 返回的度量值（heap、CPU、温度等）必须来自真实数据源（如 `orchestrator::snapshot()`、`platform::heap`）。禁止用固定映射或占位值冒充真实度量；暂时不可用的度量应传 0 或在 UI 标注 N/A。
+- **禁止虚假度量**：显示、日志、API 返回的度量值（heap、CPU、温度等）必须来自真实数据源：对外口径以 `orchestrator::snapshot()` / `format_resource_baseline_line()` 等为权威；堆与内存维度由 `Platform::memory_snapshot()`（经 `run_app` 注册的 `register_memory_snapshot_provider` 闭包注入编排路径）与真实实现支撑。**禁止**业务域以直读 `platform::heap` 作为观测口径。禁止用固定映射或占位值冒充真实度量；暂时不可用的度量应传 0 或在 UI 标注 N/A。
 
 ### 嵌入式字节序
 
@@ -86,7 +90,7 @@
 - **WiFi**：`connect_wifi(config: &AppConfig) -> Result<()>`。调用前对 config 做 `validate_for_wifi()`；连接超时 15s；错误 stage 为 `wifi_connect`。
 - **HTTP 客户端**：由 **main 构造一次**，LLM、工具、通道均**注入**同一 `EspHttpClient`，不在各处再 `EspHttpClient::new()`。直连用 `new()`，走 proxy 用 `new_with_config(&config)`。响应体上限 512KB，请求超时 30s。**例外**：`StreamEditor` 实现和 sender 线程需自行创建独立 HTTP 连接（主连接被 LLM 流占用或运行在独立线程）。
 - **Error stage**：网络/HTTP 错误带 stage（`wifi_connect`、`http_client_new`、`http_get_request`、`http_get_submit`、`proxy_connect`）；不新增未使用 Error 变体。
-- **platform 边界**：platform 是唯一依赖 esp-idf-svc 的模块；核心域（llm、agent、tools、channels）不直接依赖 platform，通过 main 注入的客户端或 trait 使用。硬件驱动（GPIO/LEDC/ADC/buzzer）位于 `platform/hardware_drivers.rs`，tools 通过 `crate::platform::hardware_drivers` 调用。`lib.rs` 中 ESP 专有类型的 re-export 均有 `#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]` 守卫。
+- **platform 边界**：platform 是唯一依赖 esp-idf-svc 的模块；核心域（llm、agent、tools、channels）不直接依赖 platform，通过 main 注入的客户端或 trait 使用。GPIO/PWM/ADC/Buzzer 等硬件能力仅通过 **`Platform` trait**（如 `drive_gpio_out`、`drive_adc_in` 等）暴露，由 `Esp32Platform` / `LinuxPlatform` 委托 `platform/hardware_drivers`；业务域（含 `tools`）**禁止** `use crate::platform::hardware_drivers`（见 §14.2 门禁脚本）。`lib.rs` 中 ESP 专有类型的 re-export 均有 `#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]` 守卫。
 
 ### LLM
 

@@ -3,6 +3,7 @@
 //! 同时检查持久化 cron 任务并在到期时注入消息。
 
 use crate::bus::{InboundTx, PcMsg};
+use crate::config::DeviceEntry;
 use crate::memory::MemoryStore;
 use std::sync::Arc;
 use std::time::Duration;
@@ -20,6 +21,7 @@ pub fn run_cron_loop(
     inbound_tx: InboundTx,
     interval_secs: u64,
     memory_store: Option<Arc<dyn MemoryStore + Send + Sync>>,
+    sensor_watch: Option<(Arc<dyn crate::platform::Platform>, Vec<DeviceEntry>)>,
 ) {
     crate::util::spawn_guarded("cron", move || {
         let interval = Duration::from_secs(interval_secs);
@@ -50,8 +52,14 @@ pub fn run_cron_loop(
             // 2. Check persisted cron tasks
             if let Some(ref store) = memory_store {
                 fire_persisted_tasks(store.as_ref(), &inbound_tx);
-                // 3. Check sensor watches
-                crate::tools::sensor_watch::check_sensor_watches(store.as_ref(), &inbound_tx);
+                if let Some((ref plat, ref devs)) = sensor_watch.as_ref() {
+                    crate::tools::sensor_watch::check_sensor_watches(
+                        store.as_ref(),
+                        &inbound_tx,
+                        plat.as_ref(),
+                        devs.as_slice(),
+                    );
+                }
             }
         }
     });

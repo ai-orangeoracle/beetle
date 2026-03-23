@@ -80,7 +80,7 @@ pub fn run_command(ctx: &CliContext, line: &str) -> String {
         "memory_write" => cmd_memory_write(ctx, args),
         "session_list" => cmd_session_list(ctx),
         "session_clear" => cmd_session_clear(ctx, args),
-        "heap_info" => cmd_heap_info(),
+        "heap_info" => cmd_heap_info(ctx),
         "restart" => cmd_restart(ctx),
         "health" => cmd_health(ctx),
         "config_show" => cmd_config_show(ctx),
@@ -169,13 +169,12 @@ fn cmd_session_clear(ctx: &CliContext, args: Vec<&str>) -> String {
     }
 }
 
-fn cmd_heap_info() -> String {
-    let internal = crate::platform::heap::heap_free_internal();
-    let spiram = crate::platform::heap::heap_free_spiram();
-    let total = crate::platform::heap::heap_free_total();
+fn cmd_heap_info(ctx: &CliContext) -> String {
+    let s = ctx.platform.memory_snapshot();
+    let total = s.heap_free_internal.saturating_add(s.heap_free_spiram);
     format!(
         "Internal free: {} bytes\nPSRAM free:    {} bytes\nTotal free:    {} bytes\n",
-        internal, spiram, total
+        s.heap_free_internal, s.heap_free_spiram, total
     )
 }
 

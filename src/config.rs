@@ -2,11 +2,11 @@
 //! NVS 仅存 6 个小键；LLM/通道存 SPIFFS，由 ConfigFileStore 读写。
 //! Build-time / env config with validation; secrets never logged or written to SPIFFS.
 
-use crate::error::{Error, Result};
 use crate::display::{
     default_disabled_display_config, validate_display_config_core, DisplayConfig,
     DISPLAY_CONFIG_VERSION,
 };
+use crate::error::{Error, Result};
 use crate::platform::ConfigStore;
 use serde::{Deserialize, Serialize};
 
@@ -1383,7 +1383,8 @@ pub fn save_display_segment(
         seg.version = DISPLAY_CONFIG_VERSION;
     }
     validate_display_segment(&seg, hardware_devices)?;
-    let json = serde_json::to_string(&seg).map_err(|e| Error::config("serialize", e.to_string()))?;
+    let json =
+        serde_json::to_string(&seg).map_err(|e| Error::config("serialize", e.to_string()))?;
     writer.write_config_file("config/display.json", json.as_bytes())?;
     Ok(())
 }

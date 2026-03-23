@@ -13,6 +13,8 @@ use beetle::memory::{MemoryStore, SessionStore};
     any(target_arch = "xtensa", target_arch = "riscv32")
 ))]
 use beetle::run_feishu_ws_loop;
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+use beetle::LinuxPlatform;
 use beetle::Platform;
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 use beetle::PlatformHttpClient;
@@ -22,8 +24,6 @@ use beetle::{
     DisplayChannelStatus, DisplayCommand, DisplayPressureLevel, DisplaySystemState, Esp32Platform,
     MessageBus, DEFAULT_CAPACITY,
 };
-#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
-use beetle::LinuxPlatform;
 
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 use std::collections::HashMap;
@@ -293,6 +293,10 @@ fn main() {
 /// 启动编排：存储与总线 → 自检 → 后台任务与通道 → agent 循环与 flush。与 main 解耦便于单文件内可读性。
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_connected: bool) {
+    beetle::orchestrator::register_memory_snapshot_provider(Arc::new({
+        let p = Arc::clone(&platform);
+        move || p.memory_snapshot()
+    }));
     let config_store = platform.config_store();
     let skill_storage = platform.skill_storage();
     let skill_meta_store = platform.skill_meta_store();
@@ -398,6 +402,7 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
         inbound_tx.clone(),
         beetle::cron::DEFAULT_CRON_INTERVAL_SECS,
         Some(Arc::clone(&memory_store)),
+        Some((Arc::clone(&platform), config.hardware_devices.clone())),
     );
     beetle::heartbeat::run_heartbeat_loop_with_tasks(
         VERSION,
@@ -407,6 +412,7 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
         Arc::clone(&inbound_depth),
         Arc::clone(&outbound_depth),
         Arc::clone(&session_store),
+        Arc::clone(&platform),
     );
 
     if platform.display_available() {
@@ -562,10 +568,9 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
                     // Detect any dirty region change as "activity".
                     let state_changed = last_state != Some(state);
                     let ip_changed = last_ip.as_str() != ip.as_str();
-                    let channels_changed = channels
-                        .iter()
-                        .enumerate()
-                        .any(|(i, ch)| last_channels[i] != (ch.enabled, ch.healthy, ch.consecutive_failures));
+                    let channels_changed = channels.iter().enumerate().any(|(i, ch)| {
+                        last_channels[i] != (ch.enabled, ch.healthy, ch.consecutive_failures)
+                    });
                     let pressure_changed = last_pressure.as_ref() != Some(&pressure);
                     let heap_changed = last_heap.abs_diff(heap_percent) >= 2;
                     let msg_changed = msg_in != last_msg_in || msg_out != last_msg_out;
@@ -643,7 +648,8 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
                         last_llm_ms = llm_ms;
 
                         // F2: 计算下一轮刷新间隔
-                        refresh_secs = compute_refresh_secs(state, backlight_off, &last_activity_at);
+                        refresh_secs =
+                            compute_refresh_secs(state, backlight_off, &last_activity_at);
                         continue;
                     }
 
@@ -663,7 +669,8 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
                         }
                     }
                     // 2% hysteresis on heap to avoid progress bar flicker
-                    if pressure_changed || heap_changed || msg_changed || llm_changed || show_flash {
+                    if pressure_changed || heap_changed || msg_changed || llm_changed || show_flash
+                    {
                         let _ = display_platform.display_command(DisplayCommand::UpdatePressure {
                             level: pressure.clone(),
                             heap_percent,

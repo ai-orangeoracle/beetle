@@ -129,6 +129,7 @@ pub fn build_default_registry(
     if !config.hardware_devices.is_empty() {
         registry.register(Box::new(super::DeviceControlTool::new(
             config.hardware_devices.clone(),
+            Arc::clone(&platform),
         )));
     }
     // --- New tools ---

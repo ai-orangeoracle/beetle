@@ -1,7 +1,7 @@
 //! Linux / host 的 `Platform` 实现：与 ESP 相同存储布局（`state_mount_path`），HTTP 由桩客户端提供。
 //! Linux/host Platform: same on-disk layout as ESP; HTTP via stub client.
 
-use crate::platform::abstraction::{Platform, StateFs};
+use crate::platform::abstraction::{MemorySnapshot, Platform, StateFs};
 use crate::platform::{
     display_driver::DisplayState,
     heartbeat_file::read_heartbeat_file,
@@ -70,6 +70,10 @@ impl Default for LinuxPlatform {
 impl Platform for LinuxPlatform {
     fn state_fs(&self) -> Arc<dyn StateFs + Send + Sync> {
         Arc::clone(&self.state_fs)
+    }
+
+    fn memory_snapshot(&self) -> MemorySnapshot {
+        crate::platform::memory_linux::linux_memory_snapshot()
     }
 
     fn init(&self) -> crate::error::Result<()> {
@@ -257,6 +261,57 @@ impl Platform for LinuxPlatform {
             Some(state) => state.fade_brightness(from, to, duration_ms),
             None => Ok(()),
         }
+    }
+
+    fn drive_gpio_out(
+        &self,
+        pins: &crate::config::PinConfig,
+        params: &serde_json::Value,
+    ) -> crate::error::Result<String> {
+        crate::platform::hardware_drivers::drive_gpio_out(pins, params)
+    }
+
+    fn drive_gpio_in(
+        &self,
+        pins: &crate::config::PinConfig,
+        params: &serde_json::Value,
+        options: &serde_json::Value,
+    ) -> crate::error::Result<String> {
+        crate::platform::hardware_drivers::drive_gpio_in(pins, params, options)
+    }
+
+    fn drive_pwm_out(
+        &self,
+        pins: &crate::config::PinConfig,
+        params: &serde_json::Value,
+        options: &serde_json::Value,
+        ledc_channel: u8,
+        ledc_timer_index: u8,
+    ) -> crate::error::Result<String> {
+        crate::platform::hardware_drivers::drive_pwm_out(
+            pins,
+            params,
+            options,
+            ledc_channel,
+            ledc_timer_index,
+        )
+    }
+
+    fn drive_adc_in(
+        &self,
+        pins: &crate::config::PinConfig,
+        params: &serde_json::Value,
+        options: &serde_json::Value,
+    ) -> crate::error::Result<String> {
+        crate::platform::hardware_drivers::drive_adc_in(pins, params, options)
+    }
+
+    fn drive_buzzer(
+        &self,
+        pins: &crate::config::PinConfig,
+        params: &serde_json::Value,
+    ) -> crate::error::Result<String> {
+        crate::platform::hardware_drivers::drive_buzzer(pins, params)
     }
 
     fn i2c_read(&self, addr: u8, register: u8, len: usize) -> crate::error::Result<Vec<u8>> {

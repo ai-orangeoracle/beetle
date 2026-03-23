@@ -3,8 +3,8 @@
 
 use crate::error::{Error, Result};
 use crate::platform::abstraction::StateFs;
-use crate::platform::state_root::state_mount_path;
 use crate::platform::spiffs::{self, MAX_WRITE_SIZE};
+use crate::platform::state_root::state_mount_path;
 use std::path::PathBuf;
 
 /// 零大小类型；SPIFFS 串行化在 `spiffs::*` 内完成。

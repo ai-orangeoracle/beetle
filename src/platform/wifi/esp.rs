@@ -91,9 +91,7 @@ impl WifiScan for WifiScanHandle {
     fn request_scan(&self) -> Result<Vec<WifiApEntry>> {
         let _ = self.req_tx.send(());
         let guard = self.resp_rx.lock().map_err(|e| Error::Other {
-            source: Box::new(std::io::Error::other(
-                e.to_string(),
-            )),
+            source: Box::new(std::io::Error::other(e.to_string())),
             stage: "wifi_scan_lock",
         })?;
         match guard.recv_timeout(SCAN_RESP_TIMEOUT) {

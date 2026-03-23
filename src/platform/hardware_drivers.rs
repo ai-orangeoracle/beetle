@@ -144,8 +144,7 @@ pub fn drive_pwm_out(
 ) -> Result<String> {
     use esp_idf_svc::sys::{
         ledc_channel_config, ledc_channel_config_t, ledc_intr_type_t_LEDC_INTR_DISABLE,
-        ledc_mode_t_LEDC_LOW_SPEED_MODE, ledc_set_duty,
-        ledc_timer_bit_t_LEDC_TIMER_13_BIT,
+        ledc_mode_t_LEDC_LOW_SPEED_MODE, ledc_set_duty, ledc_timer_bit_t_LEDC_TIMER_13_BIT,
         ledc_timer_config, ledc_timer_config_t, ledc_update_duty, ESP_OK,
     };
 
@@ -523,10 +522,9 @@ pub fn drive_buzzer(pins: &PinConfig, params: &Value) -> Result<String> {
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 pub fn drive_i2c_read(addr: u8, register: u8, len: usize) -> Result<Vec<u8>> {
     use esp_idf_svc::sys::{
-        i2c_cmd_handle_t, i2c_cmd_link_create, i2c_cmd_link_delete,
-        i2c_master_cmd_begin, i2c_master_read, i2c_master_start, i2c_master_stop,
-        i2c_master_write_byte, i2c_ack_type_t_I2C_MASTER_ACK,
-        i2c_ack_type_t_I2C_MASTER_LAST_NACK, ESP_OK,
+        i2c_ack_type_t_I2C_MASTER_ACK, i2c_ack_type_t_I2C_MASTER_LAST_NACK, i2c_cmd_handle_t,
+        i2c_cmd_link_create, i2c_cmd_link_delete, i2c_master_cmd_begin, i2c_master_read,
+        i2c_master_start, i2c_master_stop, i2c_master_write_byte, ESP_OK,
     };
 
     let mut buf = vec![0u8; len];
@@ -576,9 +574,8 @@ pub fn drive_i2c_read(addr: u8, register: u8, len: usize) -> Result<Vec<u8>> {
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 pub fn drive_i2c_write(addr: u8, register: u8, data: &[u8]) -> Result<()> {
     use esp_idf_svc::sys::{
-        i2c_cmd_handle_t, i2c_cmd_link_create, i2c_cmd_link_delete,
-        i2c_master_cmd_begin, i2c_master_start, i2c_master_stop,
-        i2c_master_write, i2c_master_write_byte, ESP_OK,
+        i2c_cmd_handle_t, i2c_cmd_link_create, i2c_cmd_link_delete, i2c_master_cmd_begin,
+        i2c_master_start, i2c_master_stop, i2c_master_write, i2c_master_write_byte, ESP_OK,
     };
 
     unsafe {

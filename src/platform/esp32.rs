@@ -2,7 +2,7 @@
 //! ESP32 implementation of Platform trait.
 
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
-use crate::platform::abstraction::{Platform, StateFs};
+use crate::platform::abstraction::{MemorySnapshot, Platform, StateFs};
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 use crate::platform::{
     display_driver::DisplayState,
@@ -81,14 +81,23 @@ impl Platform for Esp32Platform {
         Arc::clone(&self.state_fs)
     }
 
+    fn memory_snapshot(&self) -> MemorySnapshot {
+        use crate::platform::heap::{
+            heap_free_internal, heap_free_spiram, heap_largest_free_block_internal,
+        };
+        MemorySnapshot {
+            heap_free_internal: heap_free_internal() as u32,
+            heap_free_spiram: heap_free_spiram() as u32,
+            heap_largest_block: heap_largest_free_block_internal() as u32,
+        }
+    }
+
     fn init(&self) -> crate::error::Result<()> {
         esp_idf_svc::sys::link_patches();
         esp_idf_svc::log::EspLogger::initialize_default();
         // 屏蔽 HTTP 服务器每个 URI 注册的 Info 日志，减少刷屏（0.52+ 使用 EspIdfLogFilter）
-        let _ = esp_idf_svc::log::EspIdfLogFilter::new().set_target_level(
-            "esp_idf_svc::http::server",
-            log::LevelFilter::Warn,
-        );
+        let _ = esp_idf_svc::log::EspIdfLogFilter::new()
+            .set_target_level("esp_idf_svc::http::server", log::LevelFilter::Warn);
         self.init_nvs()?;
         self.init_spiffs()?;
         Ok(())
@@ -268,12 +277,68 @@ impl Platform for Esp32Platform {
         }
     }
 
-    fn fade_display_backlight(&self, from: u8, to: u8, duration_ms: u32) -> crate::error::Result<()> {
+    fn fade_display_backlight(
+        &self,
+        from: u8,
+        to: u8,
+        duration_ms: u32,
+    ) -> crate::error::Result<()> {
         let guard = self.display_state.lock().unwrap_or_else(|e| e.into_inner());
         match guard.as_ref() {
             Some(state) => state.fade_brightness(from, to, duration_ms),
             None => Ok(()),
         }
+    }
+
+    fn drive_gpio_out(
+        &self,
+        pins: &crate::config::PinConfig,
+        params: &serde_json::Value,
+    ) -> crate::error::Result<String> {
+        crate::platform::hardware_drivers::drive_gpio_out(pins, params)
+    }
+
+    fn drive_gpio_in(
+        &self,
+        pins: &crate::config::PinConfig,
+        params: &serde_json::Value,
+        options: &serde_json::Value,
+    ) -> crate::error::Result<String> {
+        crate::platform::hardware_drivers::drive_gpio_in(pins, params, options)
+    }
+
+    fn drive_pwm_out(
+        &self,
+        pins: &crate::config::PinConfig,
+        params: &serde_json::Value,
+        options: &serde_json::Value,
+        ledc_channel: u8,
+        ledc_timer_index: u8,
+    ) -> crate::error::Result<String> {
+        crate::platform::hardware_drivers::drive_pwm_out(
+            pins,
+            params,
+            options,
+            ledc_channel,
+            ledc_timer_index,
+        )
+    }
+
+    fn drive_adc_in(
+        &self,
+        pins: &crate::config::PinConfig,
+        params: &serde_json::Value,
+        options: &serde_json::Value,
+    ) -> crate::error::Result<String> {
+        crate::platform::hardware_drivers::drive_adc_in(pins, params, options)
+    }
+
+    fn drive_buzzer(
+        &self,
+        pins: &crate::config::PinConfig,
+        params: &serde_json::Value,
+    ) -> crate::error::Result<String> {
+        crate::platform::hardware_drivers::drive_buzzer(pins, params)
     }
 
     fn i2c_read(&self, addr: u8, register: u8, len: usize) -> crate::error::Result<Vec<u8>> {

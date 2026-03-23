@@ -85,13 +85,27 @@ macro_rules! require_pairing_code {
 /// 验证 CSRF token,失败返回 403。
 macro_rules! require_csrf {
     ($req:expr) => {{
-        let token = $req.header("X-CSRF-Token").or_else(|| $req.header("x-csrf-token"));
+        let token = $req
+            .header("X-CSRF-Token")
+            .or_else(|| $req.header("x-csrf-token"));
         if let Some(t) = token {
             if !crate::platform::csrf::verify_token(t) {
-                return write_response!($req, 403, "Forbidden", CORS_HEADERS, br#"{"error":"invalid CSRF token"}"#);
+                return write_response!(
+                    $req,
+                    403,
+                    "Forbidden",
+                    CORS_HEADERS,
+                    br#"{"error":"invalid CSRF token"}"#
+                );
             }
         } else {
-            return write_response!($req, 403, "Forbidden", CORS_HEADERS, br#"{"error":"CSRF token required"}"#);
+            return write_response!(
+                $req,
+                403,
+                "Forbidden",
+                CORS_HEADERS,
+                br#"{"error":"CSRF token required"}"#
+            );
         }
     }};
 }
@@ -543,7 +557,8 @@ pub fn run(
             require_pairing_code!(req, store_display_post);
             require_csrf!(req);
             let body = read_body_utf8!(req, POST_BODY_MAX_LEN, store_display_post);
-            let r = handlers::config::post_display(ctx_display_post.as_ref(), &body).map_err(to_io)?;
+            let r =
+                handlers::config::post_display(ctx_display_post.as_ref(), &body).map_err(to_io)?;
             let should_restart = r.status == 200 && common::restart_requested_from_uri(req.uri());
             write_api_resp!(req, r)?;
             if should_restart {
@@ -773,10 +788,7 @@ pub fn run(
                 let query = uri.find('?').map(|i| &uri[i + 1..]).unwrap_or("");
                 for pair in query.split('&') {
                     let mut it = pair.splitn(2, '=');
-                    if it
-                        .next()
-                        .is_some_and(|k| k.eq_ignore_ascii_case("chat_id"))
-                    {
+                    if it.next().is_some_and(|k| k.eq_ignore_ascii_case("chat_id")) {
                         return it.next().filter(|s| !s.is_empty()).map(String::from);
                     }
                 }
@@ -817,10 +829,7 @@ pub fn run(
                 let mut found = None;
                 for pair in query.split('&') {
                     let mut it = pair.splitn(2, '=');
-                    if it
-                        .next()
-                        .is_some_and(|k| k.eq_ignore_ascii_case("chat_id"))
-                    {
+                    if it.next().is_some_and(|k| k.eq_ignore_ascii_case("chat_id")) {
                         found = it.next().filter(|s| !s.is_empty()).map(String::from);
                         break;
                     }

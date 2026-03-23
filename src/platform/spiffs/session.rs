@@ -280,11 +280,10 @@ impl SessionStore for SpiffsSessionStore {
                 },
                 Err(_) => false,
             };
-            if stale
-                && super::remove_file(&p).is_ok() {
-                    removed += 1;
-                    log::info!("[{}] gc: removed stale session file {:?}", TAG, name);
-                }
+            if stale && super::remove_file(&p).is_ok() {
+                removed += 1;
+                log::info!("[{}] gc: removed stale session file {:?}", TAG, name);
+            }
             p.pop();
         }
         if removed > 0 {

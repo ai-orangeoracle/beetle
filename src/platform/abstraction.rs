@@ -1,7 +1,7 @@
 //! 平台抽象 trait：ConfigStore、SkillStorage、PlatformHttpClient、Platform。
 //! 核心域与 main 仅依赖这些 trait，便于后续支持多种硬件。
 
-use crate::config::AppConfig;
+use crate::config::{AppConfig, PinConfig};
 use crate::display::{DisplayCommand, DisplayConfig};
 use crate::error::Result;
 use crate::memory::{
@@ -9,6 +9,7 @@ use crate::memory::{
     SessionSummaryStore, TaskContinuationStore,
 };
 use crate::platform::ResponseBody;
+use serde_json::Value;
 use std::sync::Arc;
 
 /// 状态根目录下的受控文件访问（相对路径）。ESP 委托 SPIFFS + 互斥；Linux 由 `LinuxPlatform` 实现。
@@ -26,6 +27,18 @@ pub trait StateFs: Send + Sync {
     fn exists(&self, rel_path: &str) -> crate::error::Result<bool> {
         Ok(self.read(rel_path)?.is_some())
     }
+}
+
+/// 平台内存快照，语义与 orchestrator 堆原子字段对齐（跨平台可比）。
+/// Platform memory snapshot aligned with orchestrator heap atomics (cross-platform comparable).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MemorySnapshot {
+    /// 内部堆空闲字节（ESP: internal heap；Linux: 主内存可用量，通常为 `MemAvailable`）。
+    pub heap_free_internal: u32,
+    /// 外部堆空闲字节（ESP: SPIRAM；Linux: 0 或 swap 等扩展字段保留为 0）。
+    pub heap_free_spiram: u32,
+    /// 最大连续可分配块（ESP: largest free block；Linux: `u32::MAX` 表示无碎片维度）。
+    pub heap_largest_block: u32,
 }
 
 /// 配置键值存储抽象（如 NVS）。用于 config、pairing、skills 的 NVS 部分。
@@ -90,11 +103,7 @@ pub trait PlatformHttpClient {
         self.post(url, headers, body)
     }
     /// HTTP DELETE; default implementation falls back to GET.
-    fn delete(
-        &mut self,
-        url: &str,
-        headers: &[(&str, &str)],
-    ) -> Result<(u16, ResponseBody)> {
+    fn delete(&mut self, url: &str, headers: &[(&str, &str)]) -> Result<(u16, ResponseBody)> {
         self.get(url, headers)
     }
     /// SSE 流式 POST：发送请求后逐块回调 on_chunk，不将响应体读入内存。
@@ -153,11 +162,7 @@ impl PlatformHttpClient for Box<dyn PlatformHttpClient + '_> {
     ) -> Result<(u16, ResponseBody)> {
         (**self).put(url, headers, body)
     }
-    fn delete(
-        &mut self,
-        url: &str,
-        headers: &[(&str, &str)],
-    ) -> Result<(u16, ResponseBody)> {
+    fn delete(&mut self, url: &str, headers: &[(&str, &str)]) -> Result<(u16, ResponseBody)> {
         (**self).delete(url, headers)
     }
 }
@@ -166,6 +171,9 @@ impl PlatformHttpClient for Box<dyn PlatformHttpClient + '_> {
 pub trait Platform: Send + Sync {
     /// 状态文件系统抽象（SPIFFS 根或 Linux 状态目录）。业务域经此访问，禁止直引 `platform::spiffs`。
     fn state_fs(&self) -> Arc<dyn StateFs + Send + Sync>;
+
+    /// 当前内存快照；须来自真实数据源（ESP: `heap`；Linux: `/proc/meminfo`），禁止占位常量。
+    fn memory_snapshot(&self) -> MemorySnapshot;
 
     /// 平台初始化（link_patches、日志、NVS、SPIFFS 等）。main 在构造后首先调用。
     fn init(&self) -> Result<()> {
@@ -289,6 +297,58 @@ pub trait Platform: Send + Sync {
         Err(crate::error::Error::config(
             "i2c_write",
             "I2C not supported on this platform",
+        ))
+    }
+
+    /// GPIO 输出；语义同 `hardware_drivers::drive_gpio_out`。
+    fn drive_gpio_out(&self, _pins: &PinConfig, _params: &Value) -> Result<String> {
+        Err(crate::error::Error::config(
+            "drive_gpio_out",
+            "GPIO output not supported on this platform",
+        ))
+    }
+
+    /// GPIO 输入读取；语义同 `hardware_drivers::drive_gpio_in`。
+    fn drive_gpio_in(
+        &self,
+        _pins: &PinConfig,
+        _params: &Value,
+        _options: &Value,
+    ) -> Result<String> {
+        Err(crate::error::Error::config(
+            "drive_gpio_in",
+            "GPIO input not supported on this platform",
+        ))
+    }
+
+    /// PWM 输出；语义同 `hardware_drivers::drive_pwm_out`。
+    fn drive_pwm_out(
+        &self,
+        _pins: &PinConfig,
+        _params: &Value,
+        _options: &Value,
+        _ledc_channel: u8,
+        _ledc_timer_index: u8,
+    ) -> Result<String> {
+        Err(crate::error::Error::config(
+            "drive_pwm_out",
+            "PWM output not supported on this platform",
+        ))
+    }
+
+    /// ADC 采样；语义同 `hardware_drivers::drive_adc_in`。
+    fn drive_adc_in(&self, _pins: &PinConfig, _params: &Value, _options: &Value) -> Result<String> {
+        Err(crate::error::Error::config(
+            "drive_adc_in",
+            "ADC not supported on this platform",
+        ))
+    }
+
+    /// 蜂鸣器；语义同 `hardware_drivers::drive_buzzer`。
+    fn drive_buzzer(&self, _pins: &PinConfig, _params: &Value) -> Result<String> {
+        Err(crate::error::Error::config(
+            "drive_buzzer",
+            "Buzzer not supported on this platform",
         ))
     }
 }

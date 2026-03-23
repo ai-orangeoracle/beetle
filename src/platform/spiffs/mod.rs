@@ -140,7 +140,8 @@ pub fn write_file(path: impl AsRef<Path>, data: &[u8]) -> Result<()> {
         .ok_or_else(|| Error::config("spiffs_write", "invalid path"))?;
 
     let mut f = std::fs::File::create(path_str).map_err(|e| Error::io("spiffs_write", e))?;
-    f.write_all(data).map_err(|e| Error::io("spiffs_write", e))?;
+    f.write_all(data)
+        .map_err(|e| Error::io("spiffs_write", e))?;
     Ok(())
 }
 

@@ -105,11 +105,7 @@ impl crate::platform::PlatformHttpClient for EspHttpClient {
     ) -> Result<(u16, ResponseBody)> {
         Err(Error::config("http_put_request", "host http stub"))
     }
-    fn delete(
-        &mut self,
-        _url: &str,
-        _headers: &[(&str, &str)],
-    ) -> Result<(u16, ResponseBody)> {
+    fn delete(&mut self, _url: &str, _headers: &[(&str, &str)]) -> Result<(u16, ResponseBody)> {
         Err(Error::config("http_delete_request", "host http stub"))
     }
     fn reset_connection_for_retry(&mut self) {

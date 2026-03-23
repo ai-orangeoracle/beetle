@@ -74,7 +74,7 @@ pub use platform::{
     connect_wifi, init_nvs, init_spiffs, spiffs_base_string, spiffs_usage, LinuxPlatform,
     EspHttpClient, SpiffsMemoryStore, SpiffsSessionStore, state_mount_path,
 };
-pub use platform::{ConfigStore, Platform, SkillStorage, StateFs};
+pub use platform::{ConfigStore, MemorySnapshot, Platform, SkillStorage, StateFs};
 pub use tools::{
     build_default_registry, CronManageTool, DeviceControlTool,
     FileWriteTool, FilesTool, GetTimeTool, HttpRequestTool, I2cDeviceTool, KvStoreTool,

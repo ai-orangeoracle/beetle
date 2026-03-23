@@ -2,21 +2,21 @@
 //! Platform: only place that depends on esp-idf-svc/hardware.
 
 pub mod abstraction;
-pub mod state_fs;
-pub mod state_root;
 pub mod board_info;
 pub mod csrf;
 pub mod display_driver;
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 pub mod esp32;
-#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
-pub mod linux;
 pub mod fetch_url;
-pub mod hardware_drivers;
-pub mod heap;
+pub(crate) mod hardware_drivers;
+pub(crate) mod heap;
 pub mod heartbeat_file;
 pub mod http_client;
 pub mod http_server;
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+pub mod linux;
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+pub mod memory_linux;
 pub mod nvs;
 pub mod pairing;
 pub mod response;
@@ -24,21 +24,24 @@ pub mod response_body;
 pub mod sntp;
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 pub mod softap_ip;
-pub mod spiffs;
+pub(crate) mod spiffs;
+pub mod state_fs;
+pub mod state_root;
 pub mod task_wdt;
 pub mod time;
 pub mod wifi;
 
 pub use abstraction::{
-    ConfigStore, Platform, PlatformHttpClient, SkillMetaStore, SkillStorage, StateFs,
+    ConfigStore, MemorySnapshot, Platform, PlatformHttpClient, SkillMetaStore, SkillStorage,
+    StateFs,
 };
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 pub use esp32::Esp32Platform;
-#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
-pub use linux::LinuxPlatform;
 pub use fetch_url::fetch_url_with_client;
 pub use heartbeat_file::read_heartbeat_file;
 pub use http_client::EspHttpClient;
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+pub use linux::LinuxPlatform;
 pub use nvs::{
     default_config_store, default_config_store_arc, erase_namespace, init_nvs, read_string,
     write_string, NvsConfigStore,

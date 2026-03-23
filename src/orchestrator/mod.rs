@@ -11,8 +11,9 @@ pub mod pressure;
 pub mod state;
 
 use crate::error::Result;
+use crate::platform::MemorySnapshot;
 use std::sync::atomic::AtomicU32;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 pub use admission::{AdmissionDecision, LlmDecision, ToolDecision};
@@ -31,6 +32,42 @@ static LAST_REFRESH_SECS: AtomicU32 = AtomicU32::new(0);
 /// refresh_heap_if_stale 使用的启动时刻基准。
 static REFRESH_START: OnceLock<std::time::Instant> = OnceLock::new();
 
+/// 装配期注入：`Platform::memory_snapshot` 闭包，由 `run_app` 注册一次。
+/// Injected at assembly: `Platform::memory_snapshot` closure, registered once from `run_app`.
+static MEMORY_SNAPSHOT_PROVIDER: OnceLock<Arc<dyn Fn() -> MemorySnapshot + Send + Sync>> =
+    OnceLock::new();
+
+/// 注册内存快照来源（幂等：仅首次成功）。须在首次调用 [`update_heap_state`] 之前调用。
+/// Register memory snapshot source (first call wins). Must run before first [`update_heap_state`].
+pub fn register_memory_snapshot_provider(f: Arc<dyn Fn() -> MemorySnapshot + Send + Sync>) {
+    if MEMORY_SNAPSHOT_PROVIDER.set(f).is_err() {
+        log::error!("[orchestrator] register_memory_snapshot_provider: already registered");
+        debug_assert!(
+            false,
+            "memory snapshot provider must be registered at most once"
+        );
+    }
+}
+
+/// 实时取当前平台内存快照（TLS 准入、堆刷新共用）。未注册时 panic（装配错误）。
+pub(crate) fn memory_snapshot_live() -> MemorySnapshot {
+    MEMORY_SNAPSHOT_PROVIDER
+        .get()
+        .expect("memory snapshot provider not registered; call register_memory_snapshot_provider from run_app")()
+}
+
+/// 将快照写入 orchestrator 并重算压力等级。
+pub(crate) fn apply_memory_snapshot(snap: MemorySnapshot) {
+    use std::sync::atomic::Ordering;
+    STATE.update_heap(
+        snap.heap_free_internal,
+        snap.heap_free_spiram,
+        snap.heap_largest_block,
+    );
+    let level = pressure::compute_pressure(&STATE);
+    STATE.pressure_level.store(level as u8, Ordering::Relaxed);
+}
+
 /// main 启动时调用一次，初始化 orchestrator（幂等）。
 /// Called once by main at startup (idempotent).
 pub fn init() {
@@ -45,28 +82,8 @@ pub fn init() {
 
 /// 更新堆状态并重算压力等级。由 heartbeat 定期调用。
 /// Update heap state and recompute pressure level. Called periodically by heartbeat.
-#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 pub fn update_heap_state() {
-    use crate::platform::heap::{
-        heap_free_internal, heap_free_spiram, heap_largest_free_block_internal,
-    };
-    use std::sync::atomic::Ordering;
-
-    let internal = heap_free_internal() as u32;
-    let spiram = heap_free_spiram() as u32;
-    let largest = heap_largest_free_block_internal() as u32;
-    STATE.update_heap(internal, spiram, largest);
-    let level = pressure::compute_pressure(&STATE);
-    STATE.pressure_level.store(level as u8, Ordering::Relaxed);
-}
-
-#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
-pub fn update_heap_state() {
-    use std::sync::atomic::Ordering;
-    STATE.update_heap(u32::MAX, 0, u32::MAX);
-    STATE
-        .pressure_level
-        .store(PressureLevel::Normal as u8, Ordering::Relaxed);
+    apply_memory_snapshot(memory_snapshot_live());
 }
 
 /// 若距上次刷新 ≥2s 则重新采样堆状态并返回最新压力等级，否则返回缓存值。
@@ -192,17 +209,12 @@ pub fn log_baseline() {
     use crate::constants::{
         TLS_ADMISSION_MIN_INTERNAL_BYTES, TLS_ADMISSION_MIN_LARGEST_BLOCK_BYTES,
     };
-    use crate::platform::heap::{
-        heap_free_internal, heap_free_spiram, heap_largest_free_block_internal,
-    };
-    let free = heap_free_internal();
-    let largest = heap_largest_free_block_internal();
-    let spiram = heap_free_spiram();
+    let snap = memory_snapshot_live();
     log::info!(
         "[orchestrator] TLS admission baseline: internal_free={} largest_block={} spiram_free={} min_internal={} min_largest={}",
-        free,
-        largest,
-        spiram,
+        snap.heap_free_internal,
+        snap.heap_largest_block,
+        snap.heap_free_spiram,
         TLS_ADMISSION_MIN_INTERNAL_BYTES,
         TLS_ADMISSION_MIN_LARGEST_BLOCK_BYTES
     );
