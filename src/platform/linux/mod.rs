@@ -1,7 +1,6 @@
 //! Linux / host 的 `Platform` 实现：与 ESP 相同存储布局（`state_mount_path`），HTTP 由桩客户端提供。
 //! Linux/host Platform: same on-disk layout as ESP; HTTP via stub client.
 // TODO(Linux Step5): when `create_http_client` returns a real `ureq`-backed client (see `src/platform/http_client/mod.rs`), Agent/dispatch/outbound paths in `run_app` enable automatically — cross-ref dev-docs/linux-migration-plan.md Step 5.
-// TODO(Linux Step4): persistence parity under `StateFs` / file-backed config where needed; see same doc Step 4.
 
 use crate::platform::abstraction::{MemorySnapshot, Platform, StateFs};
 use crate::platform::{
@@ -79,8 +78,9 @@ impl Platform for LinuxPlatform {
     }
 
     fn init(&self) -> crate::error::Result<()> {
-        self.init_nvs()?;
+        // Host 须先创建状态根，`nvs/pc_cfg.json` 依赖 `state_mount_path`。
         self.init_spiffs()?;
+        self.init_nvs()?;
         Ok(())
     }
 

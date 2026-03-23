@@ -1,6 +1,6 @@
 //! HTTP(S) 客户端：ESP 用 esp-idf-svc；host 为桩实现。
 //! HTTP(S) client: esp-idf-svc on ESP; stub on host.
-// TODO(Linux Step5): replace host stub with `ureq` + `UreqHttpClient`; then `Platform::create_http_client` succeeds on Linux and `run_app` starts dispatch/agent/outbound (see `platform/linux/mod.rs` TODO, dev-docs/linux-migration-plan.md Step 5).
+// TODO(Linux Step5): replace host stub with `ureq` + `UreqHttpClient`; then `Platform::create_http_client` succeeds on Linux and `run_app` starts dispatch/agent/outbound (see dev-docs/linux-migration-plan.md Step 5).
 
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 mod esp;
