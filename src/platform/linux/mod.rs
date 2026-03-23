@@ -105,8 +105,20 @@ impl Platform for LinuxPlatform {
                     .unwrap_or_else(|e| e.into_inner()) = Some(arc_dyn);
                 Ok(())
             }
-            Ok(None) => Ok(()),
-            Err(e) => Err(e),
+            Ok(None) => {
+                *self
+                    .wifi_scan_handle
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner()) = None;
+                Ok(())
+            }
+            Err(e) => {
+                *self
+                    .wifi_scan_handle
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner()) = None;
+                Err(e)
+            }
         }
     }
 

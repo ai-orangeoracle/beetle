@@ -183,7 +183,7 @@ pub trait Platform: Send + Sync {
     fn init_spiffs(&self) -> Result<()>;
     fn config_store(&self) -> Arc<dyn ConfigStore + Send + Sync>;
     fn connect_wifi(&self, config: &AppConfig) -> Result<()>;
-    /// WiFi 扫描句柄（仅 ESP32 在 connect_wifi 成功后为 Some）；用于 GET /api/wifi/scan。
+    /// WiFi 扫描句柄（SoftAP 就绪且底层已注册扫描时为 Some；STA 失败时仍应保留以便配网）；用于 GET /api/wifi/scan。
     fn wifi_scan(&self) -> Option<Arc<dyn crate::platform::WifiScan + Send + Sync>> {
         None
     }

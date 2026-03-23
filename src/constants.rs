@@ -133,6 +133,24 @@ pub const FILE_WRITE_MAX_CONTENT_LEN: usize = 16 * 1024;
 /// daily_note 工具：list 操作最大返回条数。
 pub const DAILY_NOTE_MAX_LIST: usize = 30;
 
+// ---------- SoftAP（设备热点）固定地址 ----------
+/// SoftAP 网关 IPv4（点分十进制）；与 `platform::softap_ip`、文档、`configure-ui` 一致。
+/// Fixed SoftAP gateway IPv4; must match firmware, docs, and config UI.
+pub const SOFTAP_DEFAULT_IPV4: &str = "192.168.1.4";
+/// 浏览器访问设备配置页的默认基址（HTTP，端口 80）。
+/// Default base URL for the on-device config UI (HTTP port 80).
+pub const SOFTAP_DEFAULT_BASE_URL: &str = "http://192.168.1.4";
+/// 当 STA 已占用 `192.168.1.0/24` 时，SoftAP 避让使用的备用网关（与文档 §10.3 一致）。
+pub const SOFTAP_FALLBACK_IPV4: &str = "172.16.42.1";
+
+// ---------- WiFi（跨平台统一超时/退避） ----------
+/// WiFi 首轮连接判定超时（秒），用于 `connect_wifi` 阻塞窗口。
+pub const WIFI_CONNECT_TIMEOUT_SECS: u64 = 15;
+/// WiFi 扫描请求等待超时（秒），用于 `wifi_scan.request_scan`。
+pub const WIFI_SCAN_TIMEOUT_SECS: u64 = 15;
+/// WiFi 重连退避序列（秒）：用于 Linux/host 后台重试与状态机。
+pub const WIFI_RETRY_BACKOFF_SECS: [u64; 3] = [5, 10, 20];
+
 // ---------- network_scan 工具 ----------
 /// WiFi 扫描最小间隔（毫秒）。
 pub const NETWORK_SCAN_MIN_INTERVAL_MS: u64 = 2000;

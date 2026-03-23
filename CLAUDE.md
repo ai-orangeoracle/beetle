@@ -87,7 +87,7 @@
 
 ### 网络与 HTTP
 
-- **WiFi**：`connect_wifi(config: &AppConfig) -> Result<()>`。调用前对 config 做 `validate_for_wifi()`；连接超时 15s；错误 stage 为 `wifi_connect`。
+- **WiFi**：`connect_wifi(config: &AppConfig) -> Result<()>`。调用前对 config 做 `validate_for_wifi()`；STA 握手墙钟超时见 `constants::WIFI_CONNECT_TIMEOUT_SECS`；错误 stage 为 `wifi_connect`。**P0 语义（ESP 与 Linux 嵌入式一致）**：只要 **SoftAP 已起且 `wifi_scan()` 可用**，`connect_wifi` 应返回 **`Ok(())`**；用户配置的 **STA 密码错误或暂时连不上** 时 **不得** 因 STA 失败而让整次 `connect_wifi` 失败（否则配网页/扫描不可用、设备等同失联）。STA 是否真正在线由 **`is_wifi_sta_connected()`** / 健康接口等反映，不得与「热点+HTTP 可访问」混为一谈。仅在 **AP/驱动无法启动** 等致命错误时返回 `Err`。
 - **HTTP 客户端**：由 **main 构造一次**，LLM、工具、通道均**注入**同一 `EspHttpClient`，不在各处再 `EspHttpClient::new()`。直连用 `new()`，走 proxy 用 `new_with_config(&config)`。响应体上限 512KB，请求超时 30s。**例外**：`StreamEditor` 实现和 sender 线程需自行创建独立 HTTP 连接（主连接被 LLM 流占用或运行在独立线程）。
 - **Error stage**：网络/HTTP 错误带 stage（`wifi_connect`、`http_client_new`、`http_get_request`、`http_get_submit`、`proxy_connect`）；不新增未使用 Error 变体。
 - **platform 边界**：platform 是唯一依赖 esp-idf-svc 的模块；核心域（llm、agent、tools、channels）不直接依赖 platform，通过 main 注入的客户端或 trait 使用。GPIO/PWM/ADC/Buzzer 等硬件能力仅通过 **`Platform` trait**（如 `drive_gpio_out`、`drive_adc_in` 等）暴露，由 `Esp32Platform` / `LinuxPlatform` 委托 `platform/hardware_drivers`；业务域（含 `tools`）**禁止** `use crate::platform::hardware_drivers`（见 §14.2 门禁脚本）。`lib.rs` 中 ESP 专有类型的 re-export 均有 `#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]` 守卫。
