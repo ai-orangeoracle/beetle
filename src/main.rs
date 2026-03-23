@@ -4,9 +4,7 @@
 //! ESP32: no graceful shutdown; process runs until power off.
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 use beetle::channels::connect_esp_wss;
-#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 use beetle::config;
-#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 use beetle::memory::{MemoryStore, SessionStore};
 #[cfg(all(
     feature = "feishu",
@@ -16,24 +14,21 @@ use beetle::run_feishu_ws_loop;
 #[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
 use beetle::LinuxPlatform;
 use beetle::Platform;
-#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 use beetle::PlatformHttpClient;
+use beetle::{
+    parse_allowed_chat_ids, run_agent_loop, run_dispatch, send_chat_action, AppConfig, MessageBus,
+    DEFAULT_CAPACITY,
+};
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 use beetle::{
-    parse_allowed_chat_ids, run_agent_loop, run_dispatch, send_chat_action, AppConfig,
     DisplayChannelStatus, DisplayCommand, DisplayPressureLevel, DisplaySystemState, Esp32Platform,
-    MessageBus, DEFAULT_CAPACITY,
 };
 
-#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 use std::collections::HashMap;
 use std::sync::Arc;
-#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 use std::sync::Mutex;
 
-#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 const TAG: &str = "beetle";
-#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// 从 orchestrator snapshot 的 internal 堆空闲字节数估算已用百分比。
@@ -50,13 +45,11 @@ fn heap_used_percent(snapshot: &beetle::orchestrator::ResourceSnapshot) -> u8 {
 }
 
 /// 启动自检：存储可读（memory 或 soul 至少其一成功）。失败返回 false，调用方应 log 并 return。
-#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 fn startup_self_check(memory_store: &dyn MemoryStore) -> bool {
     memory_store.get_memory().is_ok() || memory_store.get_soul().is_ok()
 }
 
 /// 首次启动或空存储：当 get_memory 与 get_soul 均失败时写入占位数据，使后续自检可过、业务可进（如引导配置）。
-#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 fn ensure_storage_ready(memory_store: &dyn MemoryStore) {
     let need_defaults = memory_store.get_memory().is_err() && memory_store.get_soul().is_err();
     if !need_defaults {
@@ -74,111 +67,11 @@ fn ensure_storage_ready(memory_store: &dyn MemoryStore) {
     }
 }
 
-/// HTTP 工厂：与 `Platform::create_http_client` 一致（含代理），供流式编辑等独立连接使用。
-#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
-type HttpFactory = Box<dyn Fn() -> beetle::Result<Box<dyn PlatformHttpClient>> + Send + Sync>;
-
-/// Telegram 流式编辑器：LLM 流式输出期间，按需创建独立 HTTP 连接发送/编辑消息。
-#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
-struct TelegramStreamEditor {
-    token: String,
-    create_http: HttpFactory,
-}
-
-#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
-impl beetle::StreamEditor for TelegramStreamEditor {
-    fn send_initial(&self, chat_id: &str, content: &str) -> beetle::Result<Option<String>> {
-        let mut http = (self.create_http)()?;
-        beetle::tg_send_and_get_id(&mut http, &self.token, chat_id, content)
-    }
-    fn edit(&self, chat_id: &str, message_id: &str, content: &str) -> beetle::Result<()> {
-        let mut http = (self.create_http)()?;
-        beetle::tg_edit_message_text(&mut http, &self.token, chat_id, message_id, content)
-    }
-}
-
-/// 飞书流式编辑器：按需获取 tenant_access_token 并发送/编辑消息。
-#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
-struct FeishuStreamEditor {
-    app_id: String,
-    app_secret: String,
-    create_http: HttpFactory,
-}
-
-#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
-impl beetle::StreamEditor for FeishuStreamEditor {
-    fn send_initial(&self, chat_id: &str, content: &str) -> beetle::Result<Option<String>> {
-        let mut http = (self.create_http)()?;
-        let token = beetle::feishu_acquire_token(&mut http, &self.app_id, &self.app_secret)
-            .ok_or_else(|| {
-                beetle::Error::config("feishu_stream", "failed to acquire tenant_token")
-            })?;
-        beetle::feishu_send_and_get_id(&mut http, &token, chat_id, content)
-    }
-    fn edit(&self, _chat_id: &str, message_id: &str, content: &str) -> beetle::Result<()> {
-        let mut http = (self.create_http)()?;
-        let token = beetle::feishu_acquire_token(&mut http, &self.app_id, &self.app_secret)
-            .ok_or_else(|| {
-                beetle::Error::config("feishu_stream", "failed to acquire tenant_token")
-            })?;
-        beetle::feishu_edit_message(&mut http, &token, message_id, content)
-    }
-}
-
-/// F2: 根据当前状态计算下一轮显示刷新间隔（秒）。
-#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
-fn compute_refresh_secs(
-    state: DisplaySystemState,
-    backlight_off: bool,
-    last_activity_at: &std::time::Instant,
-) -> u64 {
-    use beetle::constants::*;
-    if backlight_off {
-        return DISPLAY_REFRESH_SLEEP_SECS;
-    }
-    match state {
-        DisplaySystemState::Busy => DISPLAY_REFRESH_BUSY_SECS,
-        DisplaySystemState::Idle | DisplaySystemState::NoWifi => {
-            if last_activity_at.elapsed().as_secs() >= DISPLAY_IDLE_LONG_THRESHOLD_SECS {
-                DISPLAY_REFRESH_IDLE_LONG_SECS
-            } else {
-                DISPLAY_REFRESH_IDLE_SECS
-            }
-        }
-        _ => DISPLAY_REFRESH_IDLE_SECS,
-    }
-}
-
-#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
-fn main() {
-    let platform: Arc<dyn Platform> = Arc::new(LinuxPlatform::new());
-    if let Err(e) = platform.init() {
-        eprintln!("[beetle] platform init failed: {}", e);
-        std::process::exit(1);
-    }
-    println!(
-        "[beetle] Linux host build OK (v{})",
-        env!("CARGO_PKG_VERSION")
-    );
-}
-
-#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
-fn main() {
-    let platform: Arc<dyn Platform> = Arc::new(Esp32Platform::new());
-    if let Err(e) = platform.init() {
-        // init 失败时日志可能未初始化，尝试 eprintln 兜底
-        eprintln!("[{}] platform init failed: {}", TAG, e);
-        log::error!("[{}] platform init failed: {}", TAG, e);
-        return;
-    }
-    log::info!("========================================");
-    log::info!("  甲壳虫 beetle v{}", VERSION);
-    log::info!("========================================");
-
+/// 共享：加载配置、校验、WiFi 连接；ESP 侧含启动进度条与 display 初始化（与 Linux 同路径，无重复 main 逻辑）。
+fn bootstrap_config_and_wifi(platform: &Arc<dyn Platform>) -> (Arc<AppConfig>, bool) {
     let config_store = platform.config_store();
-    let config_file_store = config::PlatformConfigFileStore(Arc::clone(&platform));
-
-    let config = AppConfig::load(config_store.as_ref(), Some(&config_file_store));
+    let config_file_store = config::PlatformConfigFileStore(Arc::clone(platform));
+    let config = Arc::new(AppConfig::load(config_store.as_ref(), Some(&config_file_store)));
     if let Err(e) = config.validate_proxy() {
         log::warn!("[{}] config validate_proxy: {}", TAG, e);
     }
@@ -197,22 +90,23 @@ fn main() {
             log::warn!("[{}] config validate_for_wifi: {}", TAG, e);
         }
     }
-    // F8: 启动进度条 stage=1（WiFi 前发送）
+    #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
     if platform.display_available() {
         let _ = platform.display_command(DisplayCommand::UpdateBootProgress { stage: 1 });
     }
-    let wifi_connected = match platform.connect_wifi(&config) {
+    let wifi_connected = match platform.connect_wifi(config.as_ref()) {
         Ok(()) => {
             log::info!(
                 "[{}] WiFi ready (SoftAP up, STA connected if configured)",
                 TAG
             );
-            platform.init_sntp();
-            // 初始化 CSRF token
-            beetle::platform::csrf::init();
-            // F8: 启动进度条 stage=2（SNTP 后）
-            if platform.display_available() {
-                let _ = platform.display_command(DisplayCommand::UpdateBootProgress { stage: 2 });
+            #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+            {
+                platform.init_sntp();
+                beetle::platform::csrf::init();
+                if platform.display_available() {
+                    let _ = platform.display_command(DisplayCommand::UpdateBootProgress { stage: 2 });
+                }
             }
             true
         }
@@ -222,13 +116,24 @@ fn main() {
         }
     };
 
+    #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+    esp_boot_display_after_wifi(platform, &config, wifi_connected);
+
+    (config, wifi_connected)
+}
+
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+fn esp_boot_display_after_wifi(
+    platform: &Arc<dyn Platform>,
+    config: &Arc<AppConfig>,
+    wifi_connected: bool,
+) {
     if let Some(display_cfg) = config.display.as_ref() {
         if display_cfg.enabled {
             if let Err(e) = platform.init_display(display_cfg) {
                 log::warn!("[{}] display init failed (degraded): {}", TAG, e);
             } else {
                 log::info!("[{}] display initialized", TAG);
-                // F8: 启动进度条 stage=0（WiFi 前）
                 let _ = platform.display_command(DisplayCommand::UpdateBootProgress { stage: 0 });
                 let _ = platform.display_command(DisplayCommand::RefreshDashboard {
                     state: DisplaySystemState::Booting,
@@ -280,18 +185,122 @@ fn main() {
         }
     }
     if wifi_connected && platform.display_available() {
-        // F8: 启动进度条 stage=1（WiFi 后，已在上方 connect_wifi 成功时发送 stage=2）
         let ip = platform
             .wifi_sta_ip()
             .unwrap_or_else(|| "192.168.4.1".to_string());
         let _ = platform.display_command(DisplayCommand::UpdateIp { ip });
     }
+}
 
-    run_app(platform, Arc::new(config), wifi_connected);
+/// HTTP 工厂：与 `Platform::create_http_client` 一致（含代理），供流式编辑等独立连接使用。
+type HttpFactory = Box<dyn Fn() -> beetle::Result<Box<dyn PlatformHttpClient>> + Send + Sync>;
+
+/// Telegram 流式编辑器：LLM 流式输出期间，按需创建独立 HTTP 连接发送/编辑消息。
+struct TelegramStreamEditor {
+    token: String,
+    create_http: HttpFactory,
+}
+
+impl beetle::StreamEditor for TelegramStreamEditor {
+    fn send_initial(&self, chat_id: &str, content: &str) -> beetle::Result<Option<String>> {
+        let mut http = (self.create_http)()?;
+        beetle::tg_send_and_get_id(&mut http, &self.token, chat_id, content)
+    }
+    fn edit(&self, chat_id: &str, message_id: &str, content: &str) -> beetle::Result<()> {
+        let mut http = (self.create_http)()?;
+        beetle::tg_edit_message_text(&mut http, &self.token, chat_id, message_id, content)
+    }
+}
+
+/// 飞书流式编辑器：按需获取 tenant_access_token 并发送/编辑消息。
+struct FeishuStreamEditor {
+    app_id: String,
+    app_secret: String,
+    create_http: HttpFactory,
+}
+
+impl beetle::StreamEditor for FeishuStreamEditor {
+    fn send_initial(&self, chat_id: &str, content: &str) -> beetle::Result<Option<String>> {
+        let mut http = (self.create_http)()?;
+        let token = beetle::feishu_acquire_token(&mut http, &self.app_id, &self.app_secret)
+            .ok_or_else(|| {
+                beetle::Error::config("feishu_stream", "failed to acquire tenant_token")
+            })?;
+        beetle::feishu_send_and_get_id(&mut http, &token, chat_id, content)
+    }
+    fn edit(&self, _chat_id: &str, message_id: &str, content: &str) -> beetle::Result<()> {
+        let mut http = (self.create_http)()?;
+        let token = beetle::feishu_acquire_token(&mut http, &self.app_id, &self.app_secret)
+            .ok_or_else(|| {
+                beetle::Error::config("feishu_stream", "failed to acquire tenant_token")
+            })?;
+        beetle::feishu_edit_message(&mut http, &token, message_id, content)
+    }
+}
+
+/// F2: 根据当前状态计算下一轮显示刷新间隔（秒）。
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+fn compute_refresh_secs(
+    state: DisplaySystemState,
+    backlight_off: bool,
+    last_activity_at: &std::time::Instant,
+) -> u64 {
+    use beetle::constants::*;
+    if backlight_off {
+        return DISPLAY_REFRESH_SLEEP_SECS;
+    }
+    match state {
+        DisplaySystemState::Busy => DISPLAY_REFRESH_BUSY_SECS,
+        DisplaySystemState::Idle | DisplaySystemState::NoWifi => {
+            if last_activity_at.elapsed().as_secs() >= DISPLAY_IDLE_LONG_THRESHOLD_SECS {
+                DISPLAY_REFRESH_IDLE_LONG_SECS
+            } else {
+                DISPLAY_REFRESH_IDLE_SECS
+            }
+        }
+        _ => DISPLAY_REFRESH_IDLE_SECS,
+    }
+}
+
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+fn main() {
+    if let Err(_) = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(
+        "info",
+    ))
+    .try_init()
+    {
+        eprintln!("[beetle] env_logger init failed (logging may be incomplete)");
+    }
+    let platform: Arc<dyn Platform> = Arc::new(LinuxPlatform::new());
+    if let Err(e) = platform.init() {
+        eprintln!("[{}] platform init failed: {}", TAG, e);
+        std::process::exit(1);
+    }
+    log::info!("========================================");
+    log::info!("  甲壳虫 beetle v{}", VERSION);
+    log::info!("========================================");
+    let (config, wifi_connected) = bootstrap_config_and_wifi(&platform);
+    run_app(platform, config, wifi_connected);
+}
+
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+fn main() {
+    let platform: Arc<dyn Platform> = Arc::new(Esp32Platform::new());
+    if let Err(e) = platform.init() {
+        // init 失败时日志可能未初始化，尝试 eprintln 兜底
+        eprintln!("[{}] platform init failed: {}", TAG, e);
+        log::error!("[{}] platform init failed: {}", TAG, e);
+        return;
+    }
+    log::info!("========================================");
+    log::info!("  甲壳虫 beetle v{}", VERSION);
+    log::info!("========================================");
+
+    let (config, wifi_connected) = bootstrap_config_and_wifi(&platform);
+    run_app(platform, config, wifi_connected);
 }
 
 /// 启动编排：存储与总线 → 自检 → 后台任务与通道 → agent 循环与 flush。与 main 解耦便于单文件内可读性。
-#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_connected: bool) {
     beetle::orchestrator::register_memory_snapshot_provider(Arc::new({
         let p = Arc::clone(&platform);
@@ -415,6 +424,11 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
         Arc::clone(&platform),
     );
 
+    // 出站前等待 STA + 编排器初始化：须在 `create_http_client` 成功判定之前，以便 Linux 在 HTTP 桩返回 Err 时仍能 init orchestrator。
+    beetle::platform::wait_for_network_ready();
+    beetle::orchestrator::init();
+
+    #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
     if platform.display_available() {
         let display_platform = Arc::clone(&platform);
         let display_config = Arc::clone(&config);
@@ -699,6 +713,7 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
     let (sinks, mut channel_rx_set) =
         beetle::channels::build_channel_sinks(config.as_ref(), &qq_msg_id_cache);
     // F8: 启动进度条 stage=3（channel sinks 后）
+    #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
     if platform.display_available() {
         let _ = platform.display_command(DisplayCommand::UpdateBootProgress { stage: 3 });
     }
@@ -777,9 +792,6 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
     if let Ok(mut http_client) = platform.create_http_client(config.as_ref()) {
         #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
         beetle::platform::task_wdt::register_current_task_to_task_wdt();
-        // 总控唯一入口：出站网络未就绪时不启动 WSS/通道/Agent 等对外请求，阻塞直到 STA 就绪（轮询+喂狗）
-        beetle::platform::wait_for_network_ready();
-        beetle::orchestrator::init();
         let outbound_rx_for_dispatch = outbound_rx;
         let sinks_clone = Arc::clone(&sinks);
         beetle::util::spawn_guarded("dispatch", move || {
@@ -922,6 +934,7 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
         beetle::channels::spawn_sender_threads(&mut channel_rx_set, &config.tg_token, create_http);
 
         // F8: 启动进度条 stage=4（agent 前）
+        #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
         if platform.display_available() {
             let _ = platform.display_command(DisplayCommand::UpdateBootProgress { stage: 4 });
         }
@@ -941,7 +954,10 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
             beetle::state::set_last_error(&e);
         }
     } else {
-        log::warn!("[{}] create_http_client failed, agent not started", TAG);
+        log::warn!(
+            "[{}] HTTP client not available (create_http_client failed): dispatch, agent, and outbound sender threads were not started. Expected on Linux until Step 5 (ureq); see dev-docs/linux-migration-plan.md.",
+            TAG
+        );
     }
 
     loop {
