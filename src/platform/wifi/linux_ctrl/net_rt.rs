@@ -14,17 +14,12 @@ use tokio::runtime::Runtime;
 
 static RTNETLINK_RUNTIME: OnceLock<Runtime> = OnceLock::new();
 
-fn rtnetlink_runtime() -> Result<&'static Runtime> {
-    RTNETLINK_RUNTIME.get_or_try_init(|| {
-        // `Runtime::new()` 需 `rt-multi-thread`；嵌入式用 current_thread 即可驱动 rtnetlink + spawn(connection)。
-        // `Runtime::new()` needs `rt-multi-thread`; current_thread is enough for rtnetlink + spawn(connection).
+fn rtnetlink_runtime() -> &'static Runtime {
+    RTNETLINK_RUNTIME.get_or_init(|| {
         tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
-            .map_err(|e| Error::Other {
-                source: Box::new(e),
-                stage: "rtnetlink_runtime_init",
-            })
+            .expect("rtnetlink: tokio runtime init")
     })
 }
 
@@ -38,7 +33,7 @@ fn map_rt_stage(e: rtnetlink::Error, stage: &'static str) -> Error {
 /// 与 `ip -4 -o addr show dev <iface>` 首条 IPv4 语义对齐：按 netlink 返回顺序取首个可用 IPv4。
 /// Aligns with the first IPv4 line from `ip -4 -o addr show dev <iface>`.
 pub fn read_sta_ip(iface: &str) -> Result<Option<String>> {
-    rtnetlink_runtime()?.block_on(read_sta_ip_async(iface))
+    rtnetlink_runtime().block_on(read_sta_ip_async(iface))
 }
 
 async fn read_sta_ip_async(iface: &str) -> Result<Option<String>> {
@@ -74,7 +69,7 @@ async fn read_sta_ip_async(iface: &str) -> Result<Option<String>> {
 /// 等价于 `ip addr flush dev` + `ip addr add CIDR dev` + `ip link set dev up`（IPv4 AP 段）。
 /// Equivalent to `ip addr flush dev` + `ip addr add CIDR dev` + `ip link set dev up` for IPv4 AP.
 pub fn setup_ap_address(iface: &str, cidr: &str) -> Result<()> {
-    rtnetlink_runtime()?.block_on(setup_ap_address_async(iface, cidr))
+    rtnetlink_runtime().block_on(setup_ap_address_async(iface, cidr))
 }
 
 async fn setup_ap_address_async(iface: &str, cidr: &str) -> Result<()> {
