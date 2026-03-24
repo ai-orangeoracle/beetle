@@ -234,6 +234,7 @@ Full key names and validation: `src/config.rs`. Runtime config segments (LLM, ch
 
 | Doc                                                                                 | Description                                                                              |
 | ----------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| [Linux deployment](docs/en-us/deploy-linux.md)                                      | Install binary on embedded Linux, bundled WiFi tools, with/without systemd               |
 | [Configuration](docs/en-us/configuration.md)                                        | Provisioning, config page, common config                                                 |
 | [Config API contract](docs/en-us/config-api.md)                                     | HTTP API: pairing, config segments, health, OTA, webhook                                 |
 | [Agent tools](docs/en-us/tools.md)                                                  | User-facing guide: what tools the Agent can use (get_time, web_search, board_info, etc.) |

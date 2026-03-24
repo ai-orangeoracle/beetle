@@ -252,6 +252,7 @@ cargo build --release
 
 | 文档                                                                | 说明                                                                |
 | ------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| [Linux 部署（deploy-linux.sh）](docs/zh-cn/deploy-linux.md)         | 嵌入式 Linux 上安装二进制、随带 WiFi 工具、有/无 systemd |
 | [配置与使用](docs/zh-cn/configuration.md)                           | 怎么配网、用配置页、常用配置项                                              |
 | [配置 API 契约](docs/zh-cn/config-api.md)                           | HTTP API：配对、配置分段、健康检查、OTA、webhook                        |
 | [Agent 工具说明](docs/zh-cn/tools.md)                               | Agent 能用哪些工具（get_time、web_search、board_info 等） |

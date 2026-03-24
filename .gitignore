@@ -31,3 +31,11 @@ configure-ui/dist/
 # intent-trainer
 intent-trainer/.venv/
 intent-trainer/model/
+
+# Optional bundled WiFi binaries (large; may ship via release tarball only)
+packaging/linux/embed-deps/armv7/*
+!packaging/linux/embed-deps/armv7/.gitkeep
+packaging/linux/embed-deps/aarch64/*
+!packaging/linux/embed-deps/aarch64/.gitkeep
+packaging/linux/embed-deps/x86_64/*
+!packaging/linux/embed-deps/x86_64/.gitkeep

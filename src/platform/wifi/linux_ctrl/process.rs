@@ -10,6 +10,7 @@ use std::{
     path::Path,
 };
 
+use std::ffi::OsString;
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
 /// Minimal command output used by WiFi controllers.
@@ -23,6 +24,20 @@ fn is_allowed_bin(bin: &str) -> bool {
         bin,
         "ip" | "iw" | "wpa_cli" | "wpa_supplicant" | "hostapd" | "dnsmasq" | "kill"
     )
+}
+
+/// Prefer tools shipped under `/opt/beetle/bin` (e.g. deploy script + bundled static
+/// `iw`/`hostapd`/`dnsmasq` on distros without opkg). Fall back to `PATH`.
+/// `kill` always uses the system resolver (never a bundled copy).
+fn resolve_tool_executable(bin: &'static str) -> OsString {
+    if bin == "kill" {
+        return OsString::from(bin);
+    }
+    let bundled = Path::new("/opt/beetle/bin").join(bin);
+    if bundled.is_file() {
+        return bundled.into_os_string();
+    }
+    OsString::from(bin)
 }
 
 /// 读取 PID 文件（十进制）；无效或缺失返回 `None`。
@@ -62,7 +77,8 @@ pub fn run_checked(
         }
     }
 
-    let mut child = Command::new(bin)
+    let exe = resolve_tool_executable(bin);
+    let mut child = Command::new(&exe)
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -86,13 +102,20 @@ pub fn run_checked(
             }
             return Err(Error::config(
                 stage,
-                format!("{} failed: {}", bin, stderr.trim()),
+                format!(
+                    "{} failed: {}",
+                    exe.to_string_lossy(),
+                    stderr.trim()
+                ),
             ));
         }
         if start.elapsed() > timeout {
             let _ = child.kill();
             let _ = child.wait();
-            return Err(Error::config(stage, format!("{} timeout", bin)));
+            return Err(Error::config(
+                stage,
+                format!("{} timeout", exe.to_string_lossy()),
+            ));
         }
         thread::sleep(Duration::from_millis(50));
     }

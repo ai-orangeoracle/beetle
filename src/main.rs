@@ -104,7 +104,6 @@ fn bootstrap_config_and_wifi(platform: &Arc<dyn Platform>) -> (Arc<AppConfig>, b
             #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
             {
                 platform.init_sntp();
-                beetle::platform::csrf::init();
                 if platform.display_available() {
                     let _ =
                         platform.display_command(DisplayCommand::UpdateBootProgress { stage: 2 });
@@ -117,6 +116,9 @@ fn bootstrap_config_and_wifi(platform: &Arc<dyn Platform>) -> (Arc<AppConfig>, b
             false
         }
     };
+
+    // HTTP config API (all targets): CSRF must be initialized regardless of WiFi outcome.
+    beetle::platform::csrf::init();
 
     #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
     esp_boot_display_after_wifi(platform, &config, wifi_init_ok);

@@ -18,7 +18,7 @@ Config API (optional)
 Hardware JSON
 -------------
 - Copy `hardware.json.example` to your config path (e.g. under the state root `config/hardware.json`) and adjust `backlight_path` / `backlight_max` for your board.
-- SG2002 / LicheeRV Nano style boards often use `backlight0` and `backlight_max` 100 instead of the Luckfox example in this file.
+- Some boards use `backlight0` and `backlight_max` 100; adjust the example values to match your hardware.
 
 systemd
 -------
