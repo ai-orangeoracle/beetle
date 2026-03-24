@@ -45,7 +45,9 @@ impl CronManageTool {
     fn save_tasks(&self, tasks: &[CronTask]) -> Result<()> {
         let data = serde_json::to_string_pretty(tasks)
             .map_err(|e| Error::config("tool_cron_manage", e.to_string()))?;
-        self.store.write_daily_note(CRON_TASKS_REL_PATH, &data)
+        self.store.write_daily_note(CRON_TASKS_REL_PATH, &data)?;
+        crate::cron::mark_cron_persisted_tasks_dirty();
+        Ok(())
     }
 }
 

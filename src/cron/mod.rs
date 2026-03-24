@@ -5,8 +5,18 @@
 use crate::bus::{InboundTx, PcMsg};
 use crate::config::DeviceEntry;
 use crate::memory::MemoryStore;
+use crate::tools::cron_manage::CronTask;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
+
+/// 持久化 cron 任务需在下次匹配前从 SPIFFS 重载；`cron_manage` 写入后置位。启动时为 `true` 保证首轮加载。
+pub static CRON_PERSISTED_TASKS_DIRTY: AtomicBool = AtomicBool::new(true);
+
+/// `cron_manage` 保存任务后调用，使 `run_cron_loop` 内存缓存失效。
+pub fn mark_cron_persisted_tasks_dirty() {
+    CRON_PERSISTED_TASKS_DIRTY.store(true, Ordering::Release);
+}
 
 const TAG: &str = "cron";
 /// 默认轮询间隔（秒）。
@@ -26,6 +36,7 @@ pub fn run_cron_loop(
     crate::util::spawn_guarded("cron", move || {
         let interval = Duration::from_secs(interval_secs);
         let mut backoff = 0u64;
+        let mut persisted_cron_cache: Vec<CronTask> = Vec::new();
         loop {
             std::thread::sleep(interval + Duration::from_secs(backoff));
 
@@ -51,7 +62,7 @@ pub fn run_cron_loop(
 
             // 2. Check persisted cron tasks
             if let Some(ref store) = memory_store {
-                fire_persisted_tasks(store.as_ref(), &inbound_tx);
+                fire_persisted_tasks(store.as_ref(), &inbound_tx, &mut persisted_cron_cache);
                 if let Some((ref plat, ref devs)) = sensor_watch.as_ref() {
                     crate::tools::sensor_watch::check_sensor_watches(
                         store.as_ref(),
@@ -67,8 +78,15 @@ pub fn run_cron_loop(
 }
 
 /// Check persisted cron tasks and fire any that match the current minute.
-fn fire_persisted_tasks(store: &dyn MemoryStore, inbound_tx: &InboundTx) {
-    let tasks = crate::tools::cron_manage::load_persisted_cron_tasks(store);
+fn fire_persisted_tasks(
+    store: &dyn MemoryStore,
+    inbound_tx: &InboundTx,
+    cache: &mut Vec<CronTask>,
+) {
+    if CRON_PERSISTED_TASKS_DIRTY.swap(false, Ordering::AcqRel) {
+        *cache = crate::tools::cron_manage::load_persisted_cron_tasks(store);
+    }
+    let tasks = cache.as_slice();
     if tasks.is_empty() {
         return;
     }
@@ -77,7 +95,7 @@ fn fire_persisted_tasks(store: &dyn MemoryStore, inbound_tx: &InboundTx) {
     let (_y, mo, d, h, min, _s) = crate::util::epoch_to_ymdhms(now_secs);
     let dow_actual = ((now_secs / 86400) as u32 + 4) % 7; // 0=Sunday
 
-    for task in &tasks {
+    for task in tasks {
         if !task.enabled {
             continue;
         }

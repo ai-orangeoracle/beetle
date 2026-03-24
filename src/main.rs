@@ -25,6 +25,7 @@ use beetle::{
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 const TAG: &str = "beetle";
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -199,46 +200,108 @@ fn esp_boot_display_after_wifi(
 /// HTTP 工厂：与 `Platform::create_http_client` 一致（含代理），供流式编辑等独立连接使用。
 type HttpFactory = Box<dyn Fn() -> beetle::Result<Box<dyn PlatformHttpClient>> + Send + Sync>;
 
-/// Telegram 流式编辑器：LLM 流式输出期间，按需创建独立 HTTP 连接发送/编辑消息。
+/// Telegram 流式编辑器：复用同一 TLS 连接，避免每次 edit 重新握手。
 struct TelegramStreamEditor {
     token: String,
     create_http: HttpFactory,
+    http: Mutex<Option<Box<dyn PlatformHttpClient>>>,
 }
 
 impl beetle::StreamEditor for TelegramStreamEditor {
     fn send_initial(&self, chat_id: &str, content: &str) -> beetle::Result<Option<String>> {
-        let mut http = (self.create_http)()?;
-        beetle::tg_send_and_get_id(&mut http, &self.token, chat_id, content)
+        let mut g = self.http.lock().unwrap_or_else(|e| e.into_inner());
+        if g.is_none() {
+            *g = Some((self.create_http)()?);
+        }
+        let http = g.as_mut().unwrap();
+        let r = beetle::tg_send_and_get_id(http, &self.token, chat_id, content);
+        if r.is_err() {
+            *g = None;
+        }
+        r
     }
     fn edit(&self, chat_id: &str, message_id: &str, content: &str) -> beetle::Result<()> {
-        let mut http = (self.create_http)()?;
-        beetle::tg_edit_message_text(&mut http, &self.token, chat_id, message_id, content)
+        let mut g = self.http.lock().unwrap_or_else(|e| e.into_inner());
+        if g.is_none() {
+            *g = Some((self.create_http)()?);
+        }
+        let http = g.as_mut().unwrap();
+        let r = beetle::tg_edit_message_text(http, &self.token, chat_id, message_id, content);
+        if r.is_err() {
+            *g = None;
+        }
+        r
     }
 }
 
-/// 飞书流式编辑器：按需获取 tenant_access_token 并发送/编辑消息。
+/// 飞书流式编辑器：复用 HTTP + tenant_access_token（与 sender 线程相同 TTL 策略）。
+struct FeishuStreamState {
+    http: Option<Box<dyn PlatformHttpClient>>,
+    token: Option<(String, Instant)>,
+}
+
+/// 飞书 tenant_access_token 缓存 TTL（与 `feishu/send` sender 一致：2h − 300s）。
+const FEISHU_STREAM_TOKEN_TTL: Duration = Duration::from_secs(7200 - 300);
+
 struct FeishuStreamEditor {
     app_id: String,
     app_secret: String,
     create_http: HttpFactory,
+    state: Mutex<FeishuStreamState>,
+}
+
+impl FeishuStreamEditor {
+    fn ensure_token(&self, state: &mut FeishuStreamState) -> beetle::Result<String> {
+        let http = state
+            .http
+            .as_mut()
+            .ok_or_else(|| beetle::Error::config("feishu_stream", "http not initialized"))?;
+        let need_refresh = match &state.token {
+            Some((_, acquired)) => acquired.elapsed() >= FEISHU_STREAM_TOKEN_TTL,
+            None => true,
+        };
+        if need_refresh {
+            let t = beetle::feishu_acquire_token(http, &self.app_id, &self.app_secret)
+                .ok_or_else(|| {
+                    beetle::Error::config("feishu_stream", "failed to acquire tenant_token")
+                })?;
+            state.token = Some((t.clone(), Instant::now()));
+            Ok(t)
+        } else {
+            Ok(state.token.as_ref().unwrap().0.clone())
+        }
+    }
 }
 
 impl beetle::StreamEditor for FeishuStreamEditor {
     fn send_initial(&self, chat_id: &str, content: &str) -> beetle::Result<Option<String>> {
-        let mut http = (self.create_http)()?;
-        let token = beetle::feishu_acquire_token(&mut http, &self.app_id, &self.app_secret)
-            .ok_or_else(|| {
-                beetle::Error::config("feishu_stream", "failed to acquire tenant_token")
-            })?;
-        beetle::feishu_send_and_get_id(&mut http, &token, chat_id, content)
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        if state.http.is_none() {
+            state.http = Some((self.create_http)()?);
+        }
+        let token = self.ensure_token(&mut state)?;
+        let http = state.http.as_mut().unwrap();
+        let r = beetle::feishu_send_and_get_id(http, &token, chat_id, content);
+        if r.is_err() {
+            state.http = None;
+            state.token = None;
+        }
+        r
     }
+
     fn edit(&self, _chat_id: &str, message_id: &str, content: &str) -> beetle::Result<()> {
-        let mut http = (self.create_http)()?;
-        let token = beetle::feishu_acquire_token(&mut http, &self.app_id, &self.app_secret)
-            .ok_or_else(|| {
-                beetle::Error::config("feishu_stream", "failed to acquire tenant_token")
-            })?;
-        beetle::feishu_edit_message(&mut http, &token, message_id, content)
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        if state.http.is_none() {
+            state.http = Some((self.create_http)()?);
+        }
+        let token = self.ensure_token(&mut state)?;
+        let http = state.http.as_mut().unwrap();
+        let r = beetle::feishu_edit_message(http, &token, message_id, content);
+        if r.is_err() {
+            state.http = None;
+            state.token = None;
+        }
+        r
     }
 }
 
@@ -867,6 +930,7 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
                     Some(StreamEditorImpl::Telegram(TelegramStreamEditor {
                         token: config.tg_token.clone(),
                         create_http: make_http,
+                        http: Mutex::new(None),
                     }))
                 }
                 "feishu" if !config.feishu_app_id.trim().is_empty() => {
@@ -874,6 +938,10 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
                         app_id: config.feishu_app_id.clone(),
                         app_secret: config.feishu_app_secret.clone(),
                         create_http: make_http,
+                        state: Mutex::new(FeishuStreamState {
+                            http: None,
+                            token: None,
+                        }),
                     }))
                 }
                 _ => None,
