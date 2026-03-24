@@ -2,11 +2,11 @@
 
 [中文](../zh-cn/config-api.md) | **English**
 
-This doc is for **developers integrating with the device HTTP API** (e.g. custom config UI, scripts, or third-party apps). The device firmware exposes only HTTP APIs and **does not** ship a built-in config UI; the config UI is implemented by an external frontend (e.g. this repo’s `configure-ui` or a GitHub Pages deployment). After connecting to the device hotspot or the same LAN, the user enters the **device address** in that page (**http://192.168.1.4** when on the device hotspot, or the router-assigned IP when on the same LAN) to call the APIs below.
+This doc is for **developers integrating with the device HTTP API** (e.g. custom config UI, scripts, or third-party apps). The device firmware exposes only HTTP APIs and **does not** ship a built-in config UI; the config UI is implemented by an external frontend (e.g. this repo’s `configure-ui` or a GitHub Pages deployment). After connecting to the device hotspot or the same LAN, the user enters the **device address** in that page (**http://192.168.4.1** when on the device hotspot, or the router-assigned IP when on the same LAN) to call the APIs below.
 
 ## Network and access
 
-- **SoftAP**: After power-on the device starts a hotspot; SSID is fixed as **Beetle** (no password). When connected to this hotspot, use **http://192.168.1.4** (matches firmware).
+- **SoftAP**: After power-on the device starts a hotspot; SSID is fixed as **Beetle** (no password). When connected to this hotspot, use **http://192.168.4.1** (matches firmware).
 - **STA**: If WiFi is configured and the device is connected to the user’s router, the same HTTP service is reachable on the STA network; use the LAN address assigned by the router.
 - **CORS**: All responses for `/api/*` and `GET /` must include `Access-Control-Allow-Origin: *`. OPTIONS preflight for the listed paths returns 200 with `Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS` and `Access-Control-Allow-Headers: Content-Type, X-Pairing-Code`, so the external config UI can call the API cross-origin.
 
@@ -311,7 +311,7 @@ This doc is for **developers integrating with the device HTTP API** (e.g. custom
 
 ## How to get the device IP
 
-- When connected to hotspot **Beetle**: use **http://192.168.1.4** (firmware SoftAP fixed address).
+- When connected to hotspot **Beetle**: use **http://192.168.4.1** (firmware SoftAP fixed address).
 - When on STA and device is on the same LAN: use the IP assigned by the router to the device.
 
 ## Config UI ownership

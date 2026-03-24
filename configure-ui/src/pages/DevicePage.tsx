@@ -22,30 +22,9 @@ import {
   type ChannelConnectivityItem,
   type HealthData,
 } from "../api/endpoints/system";
+import { SystemStatusPanel } from "../components/SystemStatusPanel";
 
-const DEFAULT_DEVICE_BASE_URL = "http://192.168.1.4";
-
-function formatBytes(value: number): string {
-  if (!Number.isFinite(value) || value < 0) return String(value);
-  if (value < 1024) return `${value} B`;
-  const kb = value / 1024;
-  if (kb < 1024) return `${kb.toFixed(1)} KB`;
-  const mb = kb / 1024;
-  return `${mb.toFixed(1)} MB`;
-}
-
-function pressureColor(pressure?: string): string {
-  switch (pressure) {
-    case "Normal":
-      return "var(--semantic-success)";
-    case "Cautious":
-      return "var(--semantic-warning)";
-    case "Critical":
-      return "var(--semantic-danger)";
-    default:
-      return "var(--text-primary)";
-  }
-}
+const DEFAULT_DEVICE_BASE_URL = "http://192.168.4.1";
 
 export function DevicePage() {
   const { t } = useTranslation();
@@ -318,7 +297,7 @@ export function DevicePage() {
         <Box
           sx={{
             display: "grid",
-            gridTemplateColumns: "repeat(3, 1fr)",
+            gridTemplateColumns: { xs: "1fr", lg: "repeat(3, minmax(0, 1fr))" },
             gap: 2,
           }}
         >
@@ -409,77 +388,7 @@ export function DevicePage() {
                 onRetry={reloadHealth}
               />
             )}
-            {healthData && (
-              <Box
-                sx={{
-                  display: "grid",
-                  gridTemplateColumns: "repeat(2, 1fr)",
-                  gap: 1.5,
-                }}
-              >
-                {healthData.resource?.pressure && (
-                  <Row
-                    label={t("device.systemStatusPressure")}
-                    value={healthData.resource.pressure}
-                    valueColor={pressureColor(healthData.resource.pressure)}
-                  />
-                )}
-                {healthData.resource?.heap_free_internal != null && (
-                  <Row
-                    label={t("device.systemStatusHeapInternal")}
-                    value={formatBytes(healthData.resource.heap_free_internal)}
-                  />
-                )}
-                {healthData.resource?.heap_free_spiram != null && (
-                  <Row
-                    label={t("device.systemStatusHeapSpiram")}
-                    value={formatBytes(healthData.resource.heap_free_spiram)}
-                  />
-                )}
-                {healthData.resource?.heap_largest_block_internal != null && (
-                  <Row
-                    label={t("device.systemStatusHeapLargest")}
-                    value={formatBytes(healthData.resource.heap_largest_block_internal)}
-                  />
-                )}
-                {healthData.resource?.active_http_count != null && (
-                  <Row
-                    label={t("device.systemStatusActiveHttp")}
-                    value={String(healthData.resource.active_http_count)}
-                  />
-                )}
-                {healthData.resource?.inbound_depth != null && (
-                  <Row
-                    label={t("device.systemStatusInboundDepth")}
-                    value={String(healthData.resource.inbound_depth)}
-                  />
-                )}
-                {healthData.resource?.outbound_depth != null && (
-                  <Row
-                    label={t("device.systemStatusOutboundDepth")}
-                    value={String(healthData.resource.outbound_depth)}
-                  />
-                )}
-                {healthData.metrics?.llm_errors != null && (
-                  <Row
-                    label={t("device.systemStatusLlmErrors")}
-                    value={String(healthData.metrics.llm_errors)}
-                  />
-                )}
-                {healthData.metrics?.errors_agent_chat != null && (
-                  <Row
-                    label={t("device.systemStatusChatErrors")}
-                    value={String(healthData.metrics.errors_agent_chat)}
-                  />
-                )}
-                {healthData.metrics?.dispatch_send_fail != null && (
-                  <Row
-                    label={t("device.systemStatusDispatchFail")}
-                    value={String(healthData.metrics.dispatch_send_fail)}
-                  />
-                )}
-              </Box>
-            )}
+            {healthData && <SystemStatusPanel healthData={healthData} t={t} />}
           </SettingsSection>
 
           <SettingsSection
@@ -536,17 +445,37 @@ function Row({
   label,
   value,
   valueColor = "var(--text-primary)",
+  wide,
+  breakWords,
 }: {
   label: string;
   value: string;
   valueColor?: string;
+  /** 占满两列（与 `gridTemplateColumns: repeat(2, 1fr)` 父级配合）。 */
+  wide?: boolean;
+  breakWords?: boolean;
 }) {
   return (
-    <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.5, alignItems: "baseline" }}>
+    <Box
+      sx={{
+        gridColumn: wide ? "1 / -1" : undefined,
+        display: "flex",
+        flexWrap: "wrap",
+        gap: 0.5,
+        alignItems: "baseline",
+      }}
+    >
       <Typography variant="body2" sx={{ color: "var(--muted)", minWidth: 100 }}>
         {label}:
       </Typography>
-      <Typography variant="body2" sx={{ fontFamily: "var(--font-mono)", color: valueColor }}>
+      <Typography
+        variant="body2"
+        sx={{
+          fontFamily: "var(--font-mono)",
+          color: valueColor,
+          wordBreak: breakWords ? "break-word" : undefined,
+        }}
+      >
         {value}
       </Typography>
     </Box>

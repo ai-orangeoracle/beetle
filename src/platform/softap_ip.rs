@@ -1,4 +1,4 @@
-//! SoftAP 固定 IP：在 WiFi AP 启动后强制设为 192.168.1.4/24，与 `constants::SOFTAP_*`、文档、配置页一致，连热点后使用该地址访问。
+//! SoftAP 固定 IP：在 WiFi AP 启动后强制设为 192.168.4.1/24，与 `constants::SOFTAP_*`、文档、配置页一致，连热点后使用该地址访问。
 //! 仅 ESP 目标编译。
 
 #![cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
@@ -6,11 +6,11 @@
 use crate::error::{Error, Result};
 
 const TAG: &str = "platform::softap_ip";
-const SOFTAP_IP: (u8, u8, u8, u8) = (192, 168, 1, 4);
+const SOFTAP_IP: (u8, u8, u8, u8) = (192, 168, 4, 1);
 const SOFTAP_NETMASK: (u8, u8, u8, u8) = (255, 255, 255, 0);
 const WIFI_AP_DEF: &[u8] = b"WIFI_AP_DEF\0";
 
-/// 将默认 SoftAP 网卡 IP 设为 192.168.1.4，子网掩码 255.255.255.0。须在 `wifi.start()` 之后调用。
+/// 将默认 SoftAP 网卡 IP 设为 192.168.4.1，子网掩码 255.255.255.0。须在 `wifi.start()` 之后调用。
 pub fn set_softap_ip() -> Result<()> {
     let netif = unsafe {
         esp_idf_svc::sys::esp_netif_get_handle_from_ifkey(WIFI_AP_DEF.as_ptr() as *const _)

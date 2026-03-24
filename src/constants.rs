@@ -136,11 +136,11 @@ pub const DAILY_NOTE_MAX_LIST: usize = 30;
 // ---------- SoftAP（设备热点）固定地址 ----------
 /// SoftAP 网关 IPv4（点分十进制）；与 `platform::softap_ip`、文档、`configure-ui` 一致。
 /// Fixed SoftAP gateway IPv4; must match firmware, docs, and config UI.
-pub const SOFTAP_DEFAULT_IPV4: &str = "192.168.1.4";
+pub const SOFTAP_DEFAULT_IPV4: &str = "192.168.4.1";
 /// 浏览器访问设备配置页的默认基址（HTTP，端口 80）。
 /// Default base URL for the on-device config UI (HTTP port 80).
-pub const SOFTAP_DEFAULT_BASE_URL: &str = "http://192.168.1.4";
-/// 当 STA 已占用 `192.168.1.0/24` 时，SoftAP 避让使用的备用网关（与文档 §10.3 一致）。
+pub const SOFTAP_DEFAULT_BASE_URL: &str = "http://192.168.4.1";
+/// 当 STA 已占用 `192.168.4.0/24` 时，SoftAP 避让使用的备用网关（与文档 §10.3 一致）。
 pub const SOFTAP_FALLBACK_IPV4: &str = "172.16.42.1";
 
 // ---------- WiFi（跨平台统一超时/退避） ----------

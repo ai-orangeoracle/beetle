@@ -27,7 +27,7 @@ pub const CORS_OPTIONS_HEADERS: &[(&str, &str)] = &[
     ("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS"),
     (
         "Access-Control-Allow-Headers",
-        "Content-Type, X-Pairing-Code",
+        "Content-Type, X-Pairing-Code, X-CSRF-Token, x-csrf-token",
     ),
     ("Content-Type", "text/plain; charset=utf-8"),
     ("Content-Length", "1"),

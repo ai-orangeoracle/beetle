@@ -82,12 +82,12 @@ pub fn wifi_sta_ip() -> Option<String> {
 /// Linux 启动后不阻塞全局启动流程；连接状态由后台与 API 查询。
 pub fn wait_for_network_ready() {}
 
-/// 若 iface 上已有 STA 地址落在 `192.168.1.0/24`，则 AP 避让至备用网段，避免与上游路由同网段冲突。
+/// 若 iface 上已有 STA 地址落在 `192.168.4.0/24`，则 AP 避让至备用网段，避免与 SoftAP 默认网段冲突。
 fn choose_ap_ip(iface: &str) -> &'static str {
     match net::read_sta_ip(iface).ok().flatten() {
-        Some(ip) if ip.starts_with("192.168.1.") => {
+        Some(ip) if ip.starts_with("192.168.4.") => {
             log::info!(
-                "[{}] existing STA in 192.168.1.0/24, AP using fallback {}",
+                "[{}] existing STA in 192.168.4.0/24, AP using fallback {}",
                 TAG,
                 SOFTAP_FALLBACK_IPV4
             );
@@ -97,7 +97,7 @@ fn choose_ap_ip(iface: &str) -> &'static str {
     }
 }
 
-/// AP 已用默认地址而 STA DHCP 落在 `192.168.1.0/24` 时，迁移 AP 至备用地址。
+/// AP 已用默认地址而 STA DHCP 落在 `192.168.4.0/24` 时，迁移 AP 至备用地址。
 fn migrate_ap_if_subnet_conflict(iface: &str, ap_ip: &str, sta_ip: &Option<String>) -> Result<()> {
     if ap_ip != SOFTAP_DEFAULT_IPV4 {
         return Ok(());
@@ -105,9 +105,9 @@ fn migrate_ap_if_subnet_conflict(iface: &str, ap_ip: &str, sta_ip: &Option<Strin
     let Some(sta) = sta_ip else {
         return Ok(());
     };
-    if sta.starts_with("192.168.1.") {
+    if sta.starts_with("192.168.4.") {
         log::warn!(
-            "[{}] STA {} on 192.168.1.0/24 conflicts with AP {}; migrating AP to {}",
+            "[{}] STA {} on 192.168.4.0/24 conflicts with AP {}; migrating AP to {}",
             TAG,
             sta,
             SOFTAP_DEFAULT_IPV4,

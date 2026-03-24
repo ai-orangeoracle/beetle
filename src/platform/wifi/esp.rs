@@ -1,5 +1,5 @@
 //! WiFi：SoftAP（配置热点） + 可选 STA（连接用户路由器）。
-//! 单次初始化，AP 始终开启以便通过 192.168.1.4 访问配置 API。
+//! 单次初始化，AP 始终开启以便通过 192.168.4.1 访问配置 API。
 //! 支持通过通道向 WiFi 线程请求扫描，供 GET /api/wifi/scan 使用。
 
 use crate::config::AppConfig;
@@ -46,8 +46,11 @@ pub fn wifi_sta_ip() -> Option<String> {
 
 /// 阻塞直到出站网络就绪（STA 已连接）；轮询 2s 并喂狗。仅 ESP 生效，host 立即返回。
 /// 供 WSS、通道发送、Agent 等对外请求入口在发起请求前调用，避免无网时无意义请求与资源耗尽。
+///
+/// 须在首次 `feed_current_task` 前将当前任务加入 TWDT（`main` 中本函数早于 `register_current_task_to_task_wdt` 的其它调用点）。
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 pub fn wait_for_network_ready() {
+    crate::platform::task_wdt::register_current_task_to_task_wdt();
     while !is_wifi_sta_connected() {
         crate::platform::task_wdt::feed_current_task();
         std::thread::sleep(Duration::from_secs(2));
@@ -64,7 +67,7 @@ pub struct WifiApEntry {
     pub rssi: i8,
 }
 
-/// SoftAP 固定 SSID，供用户连接后访问 192.168.1.4
+/// SoftAP 固定 SSID，供用户连接后访问 192.168.4.1
 const SOFTAP_SSID: &str = "Beetle";
 /// SoftAP 无密码（开放热点），便于开箱配置
 const SOFTAP_PASSWORD: &str = "";

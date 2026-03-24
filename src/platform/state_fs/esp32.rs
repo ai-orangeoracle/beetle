@@ -40,11 +40,8 @@ impl StateFs for Esp32StateFs {
             ));
         }
         let path = abs_path(rel_path)?;
-        if let Some(parent) = path.parent() {
-            if !parent.as_os_str().is_empty() {
-                std::fs::create_dir_all(parent).map_err(|e| Error::io("state_fs", e))?;
-            }
-        }
+        // SPIFFS 无真实目录：`mkdir`/`create_dir_all` 会返回 Not supported（如 raw_os_error 134）。
+        // 带 `/` 的路径由 VFS 直接 `File::create` 即可（见 `spiffs::write_file`）。
         spiffs::write_file(&path, data)
     }
 

@@ -553,7 +553,7 @@ show_next_steps() {
     echo "       then: nohup /opt/beetle/beetle >> /var/log/beetle.log 2>&1 &"
     echo ""
     echo "  2. Configure WiFi (after WiFi stack works):"
-    echo "     Hotspot SSID Beetle → http://DEVICE_IP/ (or http://192.168.1.4 on SoftAP)"
+    echo "     Hotspot SSID Beetle → http://DEVICE_IP/ (or http://192.168.4.1 on SoftAP)"
     echo ""
     echo "Configuration files:"
     echo "  - State directory: /var/lib/beetle"

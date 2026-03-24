@@ -2,11 +2,11 @@
 
 [English](../en-us/config-api.md) | **中文**
 
-本文档面向**对接设备 HTTP API 的开发者**（如自建配置页、脚本或第三方集成）。设备固件仅提供 HTTP API，**不**内嵌配置页；配置页由外置前端（如本仓库 `configure-ui` 或 GitHub Pages 部署）实现。用户连接设备热点或与设备同网后，在配置页中填写**设备地址**（连接设备热点时填 **http://192.168.1.4**，同网时填路由器分配的 IP）即可调用下述接口。
+本文档面向**对接设备 HTTP API 的开发者**（如自建配置页、脚本或第三方集成）。设备固件仅提供 HTTP API，**不**内嵌配置页；配置页由外置前端（如本仓库 `configure-ui` 或 GitHub Pages 部署）实现。用户连接设备热点或与设备同网后，在配置页中填写**设备地址**（连接设备热点时填 **http://192.168.4.1**，同网时填路由器分配的 IP）即可调用下述接口。
 
 ## 网络与访问
 
-- **SoftAP**：设备上电后开启热点，SSID 固定为 **Beetle**（无密码）。连接该热点后使用 **http://192.168.1.4**（与固件一致）。
+- **SoftAP**：设备上电后开启热点，SSID 固定为 **Beetle**（无密码）。连接该热点后使用 **http://192.168.4.1**（与固件一致）。
 - **STA**：若已配置 WiFi 并连接用户路由器，同一 HTTP 服务在 STA 网段也可访问，使用路由器分配的 LAN 地址。
 - **CORS**：所有 `/api/*` 及 `GET /` 的响应应带 `Access-Control-Allow-Origin: *`；OPTIONS 预检对下列路径返回 200，并带 `Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS`、`Access-Control-Allow-Headers: Content-Type, X-Pairing-Code`，以便外置配置页跨域调用。
 
@@ -311,7 +311,7 @@
 
 ## 如何获知板子 IP
 
-- 连接设备热点 **Beetle** 时：使用 **http://192.168.1.4**（固件 SoftAP 固定地址）。
+- 连接设备热点 **Beetle** 时：使用 **http://192.168.4.1**（固件 SoftAP 固定地址）。
 - 已连 STA 且与设备在同一 LAN 时：使用路由器分配给设备的 IP。
 
 ## 配置页归属
