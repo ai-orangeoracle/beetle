@@ -198,15 +198,13 @@ pub fn build_system_prompt(
         if note.len() <= remaining {
             out.push_str(note);
         } else {
-            let mut n = String::new();
-            for c in note.chars() {
-                if n.len() + c.len_utf8() <= remaining {
-                    n.push(c);
-                } else {
-                    break;
-                }
+            let mut end = remaining;
+            while end > 0 && !note.is_char_boundary(end) {
+                end -= 1;
             }
-            out.push_str(&n);
+            if end > 0 {
+                out.push_str(&note[..end]);
+            }
             break;
         }
     }

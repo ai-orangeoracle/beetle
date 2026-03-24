@@ -87,6 +87,33 @@ fn parse_chat_id_header(line: &str) -> Option<String> {
     None
 }
 
+/// 统计 JSONL 中会话消息行数（与 `append` 慢路径解析规则一致：可选首行 `# chat_id:`，其余为 `serde_json` 行）。
+/// 不反序列化 JSON，仅以 `trim` 后以 `{` 开头作为消息行，与 `SessionMessage` 序列化形态一致。
+fn count_session_message_lines(buf: &[u8]) -> usize {
+    let mut first = true;
+    let mut n = 0usize;
+    for line in buf.split(|&b| b == b'\n') {
+        if line.is_empty() {
+            continue;
+        }
+        if let Ok(s) = std::str::from_utf8(line) {
+            let t = s.trim();
+            if t.is_empty() {
+                continue;
+            }
+            if first && parse_chat_id_header(t).is_some() {
+                first = false;
+                continue;
+            }
+            first = false;
+            if t.starts_with('{') {
+                n += 1;
+            }
+        }
+    }
+    n
+}
+
 /// 列举 chat_id 数量上界（与 MAX_SESSION_ENTRIES 同量级）。
 const MAX_LIST_CHAT_IDS: usize = 128;
 
@@ -125,22 +152,44 @@ impl SessionStore for SpiffsSessionStore {
         }
 
         let (path, write_header) = session_path(chat_id)?;
+
+        // Fast path: 未满环时直接追加一行，避免整文件 JSON 解析/重序列化。
+        let existing_buf = read_file(&path).unwrap_or_default();
+        let msg_count = count_session_message_lines(&existing_buf);
+        if msg_count < MAX_SESSION_ENTRIES {
+            let mut out = Vec::with_capacity(existing_buf.len() + line.len() + 2);
+            if existing_buf.is_empty() {
+                if write_header {
+                    out.extend_from_slice(CHAT_ID_HEADER_PREFIX.as_bytes());
+                    out.extend_from_slice(chat_id.as_bytes());
+                    out.push(b'\n');
+                }
+                out.extend_from_slice(line.as_bytes());
+                return write_file(&path, &out);
+            }
+            out.extend_from_slice(&existing_buf);
+            if !existing_buf.ends_with(b"\n") {
+                out.push(b'\n');
+            }
+            out.extend_from_slice(line.as_bytes());
+            return write_file(&path, &out);
+        }
+
+        // Slow path: 已满，需解析、淘汰最旧、整文件重写。
         let mut messages: Vec<SessionMessage> = Vec::with_capacity(MAX_SESSION_ENTRIES);
-        if let Ok(buf) = read_file(&path) {
-            let mut first = true;
-            for line in buf.split(|&b| b == b'\n') {
-                if line.is_empty() {
+        let mut first = true;
+        for raw_line in existing_buf.split(|&b| b == b'\n') {
+            if raw_line.is_empty() {
+                continue;
+            }
+            if let Ok(s) = std::str::from_utf8(raw_line) {
+                if first && parse_chat_id_header(s).is_some() {
+                    first = false;
                     continue;
                 }
-                if let Ok(s) = std::str::from_utf8(line) {
-                    if first && parse_chat_id_header(s).is_some() {
-                        first = false;
-                        continue;
-                    }
-                    first = false;
-                    if let Some(m) = parse_jsonl_line(s) {
-                        messages.push(m);
-                    }
+                first = false;
+                if let Some(m) = parse_jsonl_line(s) {
+                    messages.push(m);
                 }
             }
         }
@@ -168,8 +217,8 @@ impl SessionStore for SpiffsSessionStore {
             if i > 0 {
                 body.push('\n');
             }
-            let line = serde_json::to_string(m).unwrap_or_default();
-            body.push_str(&line);
+            let json_line = serde_json::to_string(m).unwrap_or_default();
+            body.push_str(&json_line);
         }
         write_file(&path, body.as_bytes())
     }
@@ -177,26 +226,24 @@ impl SessionStore for SpiffsSessionStore {
     fn load_recent(&self, chat_id: &str, n: usize) -> Result<Vec<SessionMessage>> {
         let (path, _) = session_path(chat_id)?;
         let cap = n.min(MAX_SESSION_ENTRIES);
-        let mut recent: Vec<SessionMessage> = Vec::with_capacity(cap);
+        let mut all: Vec<SessionMessage> = Vec::with_capacity(MAX_SESSION_ENTRIES);
         if let Ok(buf) = read_file(&path) {
-            for line in buf.split(|&b| b == b'\n') {
-                if line.is_empty() {
+            for raw_line in buf.split(|&b| b == b'\n') {
+                if raw_line.is_empty() {
                     continue;
                 }
-                if let Ok(s) = std::str::from_utf8(line) {
+                if let Ok(s) = std::str::from_utf8(raw_line) {
                     if parse_chat_id_header(s).is_some() {
                         continue;
                     }
                     if let Some(m) = parse_jsonl_line(s) {
-                        recent.push(m);
-                        if recent.len() > cap {
-                            recent.remove(0);
-                        }
+                        all.push(m);
                     }
                 }
             }
         }
-        Ok(recent)
+        let skip = all.len().saturating_sub(cap);
+        Ok(all.split_off(skip))
     }
 
     fn clear(&self, chat_id: &str) -> Result<()> {

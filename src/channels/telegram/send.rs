@@ -33,6 +33,7 @@ fn send_one_telegram<H: ChannelHttpClient>(
     content: &str,
 ) {
     const TAG: &str = "telegram_send";
+    let url = format!("{}{}/sendMessage", TELEGRAM_API_BASE, token);
     let mut reply_to_message_id: Option<i64> = None;
     for chunk in
         crate::channels::chunk::chunk_str_by_char_count_iter(content, TELEGRAM_MAX_MESSAGE_LEN)
@@ -51,7 +52,6 @@ fn send_one_telegram<H: ChannelHttpClient>(
                 continue;
             }
         };
-        let url = format!("{}{}/sendMessage", TELEGRAM_API_BASE, token);
         if let Ok((status, resp_body)) =
             crate::channels::send::send_post(TAG, http, &url, &body_bytes)
         {

@@ -76,6 +76,7 @@ fn send_feishu_message<H: ChannelHttpClient>(
     content: &str,
 ) {
     const TAG: &str = "feishu_send";
+    let auth_val = format!("Bearer {}", token);
     for chunk in
         crate::channels::chunk::chunk_str_by_char_count_iter(content, FEISHU_MAX_MESSAGE_LEN)
     {
@@ -94,7 +95,6 @@ fn send_feishu_message<H: ChannelHttpClient>(
                 continue;
             }
         };
-        let auth_val = format!("Bearer {}", token);
         let headers = [
             ("Authorization", auth_val.as_str()),
             ("Content-Type", "application/json; charset=utf-8"),
@@ -185,37 +185,29 @@ pub fn run_feishu_sender_loop<H, F>(
             let Some(h) = http.as_mut() else {
                 continue;
             };
-            let token = if let Some((ref t, acquired_at)) = cached_token {
-                if acquired_at.elapsed() < token_ttl {
-                    t.clone()
-                } else {
-                    cached_token = None;
-                    match acquire_tenant_token(h, app_id, app_secret) {
-                        Some(t) => {
-                            cached_token = Some((t.clone(), std::time::Instant::now()));
-                            t
-                        }
-                        None => {
-                            http = None;
-                            continue;
-                        }
-                    }
-                }
-            } else {
+            let need_refresh = match &cached_token {
+                None => true,
+                Some((_, acquired_at)) => acquired_at.elapsed() >= token_ttl,
+            };
+            if need_refresh {
+                cached_token = None;
                 match acquire_tenant_token(h, app_id, app_secret) {
                     Some(t) => {
-                        cached_token = Some((t.clone(), std::time::Instant::now()));
-                        t
+                        cached_token = Some((t, std::time::Instant::now()));
                     }
                     None => {
                         http = None;
                         continue;
                     }
                 }
+            }
+            let Some((token, _)) = cached_token.as_ref() else {
+                log::warn!("[{}] missing tenant token after refresh", TAG);
+                continue;
             };
-            send_feishu_message(h, &token, &chat_id, &content);
+            send_feishu_message(h, token.as_str(), &chat_id, &content);
             while let Ok((cid, cnt)) = rx.try_recv() {
-                send_feishu_message(h, &token, &cid, &cnt);
+                send_feishu_message(h, token, &cid, &cnt);
             }
             sent = true;
             break;
