@@ -76,7 +76,7 @@ Feishu, DingTalk, WeCom, QQ Channel, Telegram, and WebSocket converge on one boa
 
 - **Hardware as Agent runtime**: ReAct, tools, and memory run on the device itself (ESP32 baseline now, broader hardware targets next), with no mandatory cloud inference relay.
 - **Unified multi-channel**: All channels share one queue and one Agent; new channels register by implementing a trait.
-- **Browser provisioning**: When unprovisioned, the device opens hotspot **Beetle** (no password); open **http://192.168.4.1**. After WiFi is set, use the router-assigned device IP; pairing code protects write operations.
+- **Browser provisioning**: When unprovisioned, the device opens hotspot **Beetle** (no password); open **http://192.168.1.4**. After WiFi is set, use the router-assigned device IP; pairing code protects write operations.
 - **Positioning**: A hardware-native \"openClaw\" for low-cost to mid-cost devices, with ESP32-S3 as the current baseline.
 - **Long-term vision**: Portable intelligent assistant + intelligent IoT interconnection, where LLM drives hardware capabilities for customizable and commercial deployments.
 - Inspired by [OpenClaw](https://github.com/openclaw/openclaw); type-safe full-stack Agent on MCU in Rust.
@@ -159,7 +159,7 @@ $env:ESPFLASH_PORT="COM3"; .\build.ps1 --flash
 
 If path is too long, run `.\build.ps1 clean` then build again.
 
-**First use**: Device powers on with hotspot **Beetle**; open **http://192.168.4.1** in a browser to set WiFi and pairing code.
+**First use**: Device powers on with hotspot **Beetle**; open **http://192.168.1.4** in a browser to set WiFi and pairing code.
 
 ---
 
@@ -215,7 +215,7 @@ Full key names and validation: `src/config.rs`. Runtime config segments (LLM, ch
 | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Board as Agent       | ReAct, tools, memory on ESP32                                                                                                                                                                                                                                                                                                         |
 | Unified channels     | Feishu / DingTalk / WeCom / QQ Channel / Telegram / WebSocket, same queue, same Agent                                                                                                                                                                                                                                                 |
-| Browser provisioning | Hotspot Beetle → http://192.168.4.1; after WiFi → router-assigned IP, pairing code for writes                                                                                                                                                                                                                                         |
+| Browser provisioning | Hotspot Beetle → http://192.168.1.4; after WiFi → router-assigned IP, pairing code for writes                                                                                                                                                                                                                                         |
 | Rust stack           | Type-safe, unified errors and resource limits; new channel/tool/LLM via trait                                                                                                                                                                                                                                                         |
 | Memory & tools       | Long-term memory, session summary, reminders; GetTime, Cron, Files, WebSearch, AnalyzeImage, FetchUrl, HttpPost, RemindAt, KvStore, UpdateSessionSummary; **board_info** for device status (chip, heap, uptime, pressure, WiFi, SPIFFS); **device_control** for GPIO/PWM/ADC/buzzer per config/hardware.json; Skills in system prompt |
 | Resource & health    | Orchestrator: heap/queue pressure, HTTP admission, channel circuit breaker; health and resource snapshot via API                                                                                                                                                                                                                      |

@@ -59,6 +59,7 @@ command -v cargo &>/dev/null || { echo "Error: cargo not found. Install Rust: ht
 # --- Parse args (same as build.ps1) ---
 DO_FLASH=""
 NO_MONITOR=""
+BUILD_METHOD="${BUILD_METHOD:-auto}" # auto | docker | local
 BUILD_ARGS=()
 for arg in "$@"; do
   case "$arg" in
@@ -68,6 +69,25 @@ for arg in "$@"; do
     *)            BUILD_ARGS+=("$arg") ;;
   esac
 done
+
+run_linux_docker_build() {
+  local target="$1"
+  echo "  $MSG_USING_DOCKER"
+  echo ""
+  echo "========== $MSG_BUILD_IN_DOCKER =========="
+  if [[ "$target" == "x86_64-unknown-linux-musl" ]]; then
+    docker run --rm -v "$SCRIPT_ROOT":/workspace -w /workspace \
+      rust:latest \
+      bash -c "rustup target add x86_64-unknown-linux-musl && cargo build --release --target x86_64-unknown-linux-musl"
+  elif [[ "$target" == "armv7-unknown-linux-musleabihf" ]]; then
+    docker run --rm -v "$SCRIPT_ROOT":/home/rust/src -w /home/rust/src \
+      messense/rust-musl-cross:armv7-musleabihf \
+      cargo build --release --target armv7-unknown-linux-musleabihf
+  else
+    echo "Error: Docker build not supported for target: $target" >&2
+    exit 1
+  fi
+}
 
 # --- Interactive platform selection ---
 select_build_platform() {
@@ -114,48 +134,65 @@ select_build_platform() {
 PLATFORM_CHOICE=1
 select_build_platform
 
-if [[ $PLATFORM_CHOICE -eq 2 ]]; then
+if [[ $PLATFORM_CHOICE -eq 2 || $PLATFORM_CHOICE -eq 3 ]]; then
   # Linux 构建
   echo ""
   echo "========== $MSG_LINUX_MODE =========="
+  if [[ $PLATFORM_CHOICE -eq 3 ]]; then
+    BUILD_TARGET="armv7-unknown-linux-musleabihf"
+  fi
 
   # 检测当前系统
   CURRENT_OS="$(uname -s)"
   if [[ "$CURRENT_OS" == "Linux" ]]; then
     # 在 Linux 上，直接用原生构建
-    BUILD_TARGET="x86_64-unknown-linux-gnu"
+    if [[ $PLATFORM_CHOICE -eq 2 ]]; then
+      BUILD_TARGET="x86_64-unknown-linux-gnu"
+    fi
     echo "  $MSG_DETECTED_LINUX"
   elif [[ "$CURRENT_OS" == "Darwin" ]]; then
-    # 在 macOS 上，需要交叉编译
+    # On macOS, cross-compile to Linux.
     echo "  $MSG_DETECTED_MACOS"
-    echo ""
-    echo "$MSG_SELECT_METHOD"
-    echo "  1) $MSG_METHOD_DOCKER"
-    echo "  2) $MSG_METHOD_MUSL"
-    echo ""
+    if [[ $PLATFORM_CHOICE -eq 2 ]]; then
+      BUILD_TARGET="x86_64-unknown-linux-musl"
+      LOCAL_LINKER_CMD="x86_64-linux-musl-gcc"
+    else
+      BUILD_TARGET="armv7-unknown-linux-musleabihf"
+      LOCAL_LINKER_CMD="arm-linux-musleabihf-gcc"
+    fi
 
-    while true; do
-      read -r -p "$MSG_INPUT_OPTION [1-2] ($MSG_PRESS_ENTER 1): " method
-      method=${method:-1}
-      case "$method" in
-        1)
-          if ! command -v docker &>/dev/null; then
-            echo ""
-            echo "$MSG_ERROR_NO_DOCKER"
-            echo "$MSG_INSTALL_DOCKER: https://www.docker.com/products/docker-desktop"
-            exit 1
-          fi
+    HAS_DOCKER=0
+    command -v docker &>/dev/null && HAS_DOCKER=1
+    HAS_LOCAL_LINKER=0
+    command -v "$LOCAL_LINKER_CMD" &>/dev/null && HAS_LOCAL_LINKER=1
+
+    case "$BUILD_METHOD" in
+      docker)
+        [[ $HAS_DOCKER -eq 1 ]] || {
+          echo "$MSG_ERROR_NO_DOCKER"
+          echo "$MSG_INSTALL_DOCKER: https://www.docker.com/products/docker-desktop"
+          exit 1
+        }
+        USE_DOCKER=1
+        ;;
+      local)
+        USE_DOCKER=""
+        ;;
+      auto)
+        # Novice-friendly default: if Docker exists, use Docker first.
+        if [[ $HAS_DOCKER -eq 1 ]]; then
           USE_DOCKER=1
-          BUILD_TARGET="x86_64-unknown-linux-musl"
-          break
-          ;;
-        2)
-          BUILD_TARGET="x86_64-unknown-linux-musl"
-          break
-          ;;
-        *) echo "$MSG_INVALID_OPTION 1 or 2" ;;
-      esac
-    done
+          echo "  Auto-selected Docker build (detected Docker)."
+        else
+          USE_DOCKER=""
+          echo "  Auto-selected local musl-cross build (Docker not found)."
+        fi
+        ;;
+      *)
+        echo "Error: BUILD_METHOD must be one of: auto, docker, local" >&2
+        exit 1
+        ;;
+    esac
   else
     echo "$MSG_UNKNOWN_OS $CURRENT_OS, $MSG_TRY_NATIVE"
     BUILD_TARGET="x86_64-unknown-linux-gnu"
@@ -325,23 +362,18 @@ get_flash_port() {
 }
 
 # --- Linux 构建：跳过 ESP 工具链 ---
-if [[ "$BUILD_TARGET" =~ ^x86_64-unknown-linux ]]; then
+if [[ "$BUILD_TARGET" =~ -unknown-linux ]]; then
   echo ""
   echo "========== $MSG_LINUX_MODE =========="
   echo "  Target: $BUILD_TARGET"
 
   # 检查是否在 macOS 上构建 Linux musl
-  if [[ "$BUILD_TARGET" == "x86_64-unknown-linux-musl" ]] && [[ "$(uname -s)" == "Darwin" ]]; then
+  if [[ "$BUILD_TARGET" =~ -unknown-linux-musl ]] && [[ "$(uname -s)" == "Darwin" ]]; then
     echo "  $MSG_DETECTED_MACOS"
 
     # 使用 Docker
     if [[ -n "${USE_DOCKER:-}" ]]; then
-      echo "  $MSG_USING_DOCKER"
-      echo ""
-      echo "========== $MSG_BUILD_IN_DOCKER =========="
-      docker run --rm -v "$SCRIPT_ROOT":/workspace -w /workspace \
-        rust:latest \
-        bash -c "rustup target add x86_64-unknown-linux-musl && cargo build --release --target x86_64-unknown-linux-musl"
+      run_linux_docker_build "$BUILD_TARGET"
 
       echo ""
       echo "========== $MSG_BUILD_COMPLETE =========="
@@ -350,8 +382,8 @@ if [[ "$BUILD_TARGET" =~ ^x86_64-unknown-linux ]]; then
       exit 0
     fi
 
-    # 检查 musl-cross
-    if ! command -v x86_64-linux-musl-gcc &>/dev/null; then
+    # Check and install local musl-cross toolchain when needed.
+    if [[ "$BUILD_TARGET" == "x86_64-unknown-linux-musl" ]] && ! command -v x86_64-linux-musl-gcc &>/dev/null; then
       echo ""
       echo "========== Installing musl-cross toolchain =========="
       echo "  x86_64-linux-musl-gcc not found."
@@ -366,30 +398,72 @@ if [[ "$BUILD_TARGET" =~ ^x86_64-unknown-linux ]]; then
         exit 1
       fi
     fi
+    if [[ "$BUILD_TARGET" == "armv7-unknown-linux-musleabihf" ]] && ! command -v arm-linux-musleabihf-gcc &>/dev/null; then
+      echo ""
+      echo "========== Installing musl-cross toolchain =========="
+      echo "  arm-linux-musleabihf-gcc not found."
+      if command -v brew &>/dev/null; then
+        echo "  Installing via Homebrew..."
+        brew install filosottile/musl-cross/musl-cross
+      else
+        echo "Error: Neither Docker nor musl-cross found." >&2
+        echo "Install one of:" >&2
+        echo "  - Docker: https://www.docker.com/products/docker-desktop" >&2
+        echo "  - musl-cross: brew install filosottile/musl-cross/musl-cross" >&2
+        exit 1
+      fi
+    fi
 
-    if ! command -v x86_64-linux-musl-gcc &>/dev/null; then
+    if [[ "$BUILD_TARGET" == "x86_64-unknown-linux-musl" ]] && ! command -v x86_64-linux-musl-gcc &>/dev/null; then
       echo "Error: x86_64-linux-musl-gcc is still not available after installation." >&2
       echo "Hint: restart your shell and verify with: x86_64-linux-musl-gcc --version" >&2
       echo "Or choose Docker build mode to avoid local linker setup." >&2
       exit 1
     fi
+    if [[ "$BUILD_TARGET" == "armv7-unknown-linux-musleabihf" ]] && ! command -v arm-linux-musleabihf-gcc &>/dev/null; then
+      echo "Error: arm-linux-musleabihf-gcc is still not available after installation." >&2
+      echo "Hint: restart your shell and verify with: arm-linux-musleabihf-gcc --version" >&2
+      echo "Or choose Docker build mode to avoid local linker setup." >&2
+      exit 1
+    fi
 
-    # 配置 musl 链接器
-    mkdir -p .cargo
-    if ! grep -q "x86_64-unknown-linux-musl" .cargo/config.toml 2>/dev/null; then
-      cat >> .cargo/config.toml << 'EOF'
+    # 配置 musl 链接器（x86_64 本地模式）。
+    if [[ "$BUILD_TARGET" == "x86_64-unknown-linux-musl" ]]; then
+      mkdir -p .cargo
+      if ! grep -q "x86_64-unknown-linux-musl" .cargo/config.toml 2>/dev/null; then
+        cat >> .cargo/config.toml << 'EOF'
 
 [target.x86_64-unknown-linux-musl]
 linker = "x86_64-linux-musl-gcc"
 EOF
-      echo "  Configured musl linker in .cargo/config.toml"
-    fi
+        echo "  Configured musl linker in .cargo/config.toml"
+      fi
 
-    if ! grep -q 'linker = "x86_64-linux-musl-gcc"' .cargo/config.toml 2>/dev/null; then
-      cat >> .cargo/config.toml << 'EOF'
+      if ! grep -q 'linker = "x86_64-linux-musl-gcc"' .cargo/config.toml 2>/dev/null; then
+        cat >> .cargo/config.toml << 'EOF'
 linker = "x86_64-linux-musl-gcc"
 EOF
-      echo "  Added linker for musl target in .cargo/config.toml"
+        echo "  Added linker for musl target in .cargo/config.toml"
+      fi
+    fi
+    if [[ "$BUILD_TARGET" == "armv7-unknown-linux-musleabihf" ]]; then
+      mkdir -p .cargo
+      if ! grep -q "armv7-unknown-linux-musleabihf" .cargo/config.toml 2>/dev/null; then
+        cat >> .cargo/config.toml << 'EOF'
+
+[target.armv7-unknown-linux-musleabihf]
+linker = "arm-linux-musleabihf-gcc"
+EOF
+        echo "  Configured armv7 musl linker in .cargo/config.toml"
+      fi
+      if ! grep -q 'linker = "arm-linux-musleabihf-gcc"' .cargo/config.toml 2>/dev/null; then
+        cat >> .cargo/config.toml << 'EOF'
+linker = "arm-linux-musleabihf-gcc"
+EOF
+        echo "  Added linker for armv7 musl target in .cargo/config.toml"
+      fi
+      # Also export linker env to avoid any stale/global Cargo config precedence issues.
+      export CARGO_TARGET_ARMV7_UNKNOWN_LINUX_MUSLEABIHF_LINKER="arm-linux-musleabihf-gcc"
     fi
   fi
 
@@ -472,8 +546,20 @@ echo "========== Step: Building release =========="
 echo "  Target: $BUILD_TARGET  |  Root: $SCRIPT_ROOT"
 
 # Linux 构建用 stable 工具链
-if [[ "$BUILD_TARGET" =~ ^x86_64-unknown-linux ]]; then
+if [[ "$BUILD_TARGET" =~ -unknown-linux ]]; then
   if ! cargo +stable build --release "${RELEASE_ARGS[@]}"; then
+    # Auto fallback: local musl build failed on macOS, retry with Docker if available.
+    if [[ "$(uname -s)" == "Darwin" ]] && [[ "$BUILD_TARGET" =~ -unknown-linux-musl ]] && [[ -z "${USE_DOCKER:-}" ]] && command -v docker &>/dev/null; then
+      echo ""
+      echo "Local toolchain build failed. Auto-fallback to Docker build..."
+      run_linux_docker_build "$BUILD_TARGET"
+      echo ""
+      echo "========== $MSG_BUILD_COMPLETE =========="
+      echo "  $MSG_BINARY: $BIN"
+      ls -lh "$BIN" 2>/dev/null || echo "  (check target/$BUILD_TARGET/release/beetle)"
+      exit 0
+    fi
+
     echo "" >&2
     echo "Build failed for target: $BUILD_TARGET" >&2
     if [[ "$BUILD_TARGET" == "x86_64-unknown-linux-musl" ]] && [[ "$(uname -s)" == "Darwin" ]]; then
@@ -487,6 +573,11 @@ if [[ "$BUILD_TARGET" =~ ^x86_64-unknown-linux ]]; then
       echo "     linker = \"x86_64-linux-musl-gcc\"" >&2
       echo "  4) If your default toolchain is esp, always use +stable for rustup target commands." >&2
       echo "  5) Prefer Docker mode if linker errors persist (recommended)." >&2
+    elif [[ "$BUILD_TARGET" == "armv7-unknown-linux-musleabihf" ]] && [[ "$(uname -s)" == "Darwin" ]]; then
+      echo "Common fixes on macOS (armv7):" >&2
+      echo "  1) Prefer Docker mode for armv7 (recommended)." >&2
+      echo "  2) Ensure target is installed on stable toolchain:" >&2
+      echo "     rustup +stable target add armv7-unknown-linux-musleabihf" >&2
     fi
     exit 1
   fi

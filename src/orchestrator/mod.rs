@@ -54,7 +54,9 @@ pub(crate) fn memory_snapshot_live() -> MemorySnapshot {
     match MEMORY_SNAPSHOT_PROVIDER.get() {
         Some(provider) => provider(),
         None => {
-            log::error!("[orchestrator] memory snapshot provider not registered; returning zero snapshot");
+            log::error!(
+                "[orchestrator] memory snapshot provider not registered; returning zero snapshot"
+            );
             MemorySnapshot {
                 heap_free_internal: 0,
                 heap_free_spiram: 0,

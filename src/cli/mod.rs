@@ -24,7 +24,6 @@ pub struct CliContext {
     pub memory: Arc<dyn MemoryStore + Send + Sync>,
     pub session: Arc<dyn SessionStore + Send + Sync>,
     pub platform: Arc<dyn crate::platform::Platform>,
-    pub wifi_connected: bool,
     /// 入站/出站队列深度（实时读取）；None 表示 bus 未暴露深度。
     pub inbound_depth: Option<Arc<std::sync::atomic::AtomicUsize>>,
     pub outbound_depth: Option<Arc<std::sync::atomic::AtomicUsize>>,
@@ -38,7 +37,6 @@ impl CliContext {
         memory: Arc<dyn MemoryStore + Send + Sync>,
         session: Arc<dyn SessionStore + Send + Sync>,
         platform: Arc<dyn crate::platform::Platform>,
-        wifi_connected: bool,
         inbound_depth: Option<Arc<std::sync::atomic::AtomicUsize>>,
         outbound_depth: Option<Arc<std::sync::atomic::AtomicUsize>>,
     ) -> Self {
@@ -48,7 +46,6 @@ impl CliContext {
             memory,
             session,
             platform,
-            wifi_connected,
             inbound_depth,
             outbound_depth,
         }
@@ -95,9 +92,13 @@ pub fn run_command(ctx: &CliContext, line: &str) -> String {
     out
 }
 
-fn cmd_wifi_status(ctx: &CliContext) -> String {
-    let status = if ctx.wifi_connected { "yes" } else { "no" };
-    format!("WiFi connected: {}\n", status)
+fn cmd_wifi_status(_ctx: &CliContext) -> String {
+    let status = if crate::platform::is_wifi_sta_connected() {
+        "yes"
+    } else {
+        "no"
+    };
+    format!("WiFi STA connected: {}\n", status)
 }
 
 fn cmd_memory_read(ctx: &CliContext) -> String {
@@ -205,8 +206,8 @@ fn cmd_config_reset(ctx: &CliContext, args: Vec<&str>) -> String {
     }
 }
 
-fn cmd_health(ctx: &CliContext) -> String {
-    let wifi = if ctx.wifi_connected {
+fn cmd_health(_ctx: &CliContext) -> String {
+    let wifi = if crate::platform::is_wifi_sta_connected() {
         "connected"
     } else {
         "disconnected"

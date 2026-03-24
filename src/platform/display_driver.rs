@@ -1,6 +1,9 @@
 //! Display runtime state for platform implementations.
 //! 平台层显示运行态封装 — SPI 硬件初始化 + embedded-graphics 渲染。
-#![cfg_attr(not(any(target_arch = "xtensa", target_arch = "riscv32")), allow(dead_code))]
+#![cfg_attr(
+    not(any(target_arch = "xtensa", target_arch = "riscv32")),
+    allow(dead_code)
+)]
 
 use crate::display::{
     DisplayChannelStatus, DisplayCommand, DisplayConfig, DisplayPressureLevel, DisplaySystemState,

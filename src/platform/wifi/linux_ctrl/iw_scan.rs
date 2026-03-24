@@ -13,12 +13,7 @@ pub fn scan_bounded(iface: &str, deadline: Instant) -> Result<Vec<crate::platfor
         return Err(Error::config("wifi_scan", "scan timeout"));
     }
     let t = remain(deadline).min(Duration::from_secs(8));
-    let out = run_checked(
-        "iw",
-        &["dev", iface, "scan"],
-        t,
-        "wifi_scan",
-    )?;
+    let out = run_checked("iw", &["dev", iface, "scan"], t, "wifi_scan")?;
     let mut list = parse_iw_scan(&out.stdout)?;
     list.sort_by(|a, b| b.rssi.cmp(&a.rssi));
     Ok(list)

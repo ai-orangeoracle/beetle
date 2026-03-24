@@ -17,7 +17,6 @@ mod user_message;
 #[allow(clippy::too_many_arguments)]
 pub fn run(
     platform: std::sync::Arc<dyn crate::platform::Platform>,
-    wifi_connected: bool,
     inbound_depth: Arc<std::sync::atomic::AtomicUsize>,
     outbound_depth: Arc<std::sync::atomic::AtomicUsize>,
     memory_store: Arc<dyn crate::memory::MemoryStore + Send + Sync>,
@@ -59,7 +58,6 @@ pub fn run(
         skill_meta_store: Arc::clone(&skill_meta_store),
         inbound_depth: Arc::clone(&inbound_depth),
         outbound_depth: Arc::clone(&outbound_depth),
-        wifi_connected,
         version: Arc::from(env!("CARGO_PKG_VERSION")),
         board_id: Arc::from(crate::build_board_id()),
     });
@@ -99,7 +97,6 @@ fn linux_max_body_bytes(path: &str, method: &str) -> usize {
 #[allow(clippy::too_many_arguments)]
 pub fn run(
     platform: std::sync::Arc<dyn crate::platform::Platform>,
-    wifi_connected: bool,
     inbound_depth: Arc<std::sync::atomic::AtomicUsize>,
     outbound_depth: Arc<std::sync::atomic::AtomicUsize>,
     memory_store: Arc<dyn crate::memory::MemoryStore + Send + Sync>,
@@ -127,7 +124,6 @@ pub fn run(
         skill_meta_store: Arc::clone(&skill_meta_store),
         inbound_depth: Arc::clone(&inbound_depth),
         outbound_depth: Arc::clone(&outbound_depth),
-        wifi_connected,
         version: Arc::from(env!("CARGO_PKG_VERSION")),
         board_id: Arc::from(crate::build_board_id()),
     });

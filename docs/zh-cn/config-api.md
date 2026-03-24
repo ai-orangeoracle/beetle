@@ -2,11 +2,11 @@
 
 [English](../en-us/config-api.md) | **中文**
 
-本文档面向**对接设备 HTTP API 的开发者**（如自建配置页、脚本或第三方集成）。设备固件仅提供 HTTP API，**不**内嵌配置页；配置页由外置前端（如本仓库 `configure-ui` 或 GitHub Pages 部署）实现。用户连接设备热点或与设备同网后，在配置页中填写**设备地址**（连接设备热点时填 **http://192.168.4.1**，同网时填路由器分配的 IP）即可调用下述接口。
+本文档面向**对接设备 HTTP API 的开发者**（如自建配置页、脚本或第三方集成）。设备固件仅提供 HTTP API，**不**内嵌配置页；配置页由外置前端（如本仓库 `configure-ui` 或 GitHub Pages 部署）实现。用户连接设备热点或与设备同网后，在配置页中填写**设备地址**（连接设备热点时填 **http://192.168.1.4**，同网时填路由器分配的 IP）即可调用下述接口。
 
 ## 网络与访问
 
-- **SoftAP**：设备上电后开启热点，SSID 固定为 **Beetle**（无密码）。连接该热点后使用 **http://192.168.4.1**（与固件一致）。
+- **SoftAP**：设备上电后开启热点，SSID 固定为 **Beetle**（无密码）。连接该热点后使用 **http://192.168.1.4**（与固件一致）。
 - **STA**：若已配置 WiFi 并连接用户路由器，同一 HTTP 服务在 STA 网段也可访问，使用路由器分配的 LAN 地址。
 - **CORS**：所有 `/api/*` 及 `GET /` 的响应应带 `Access-Control-Allow-Origin: *`；OPTIONS 预检对下列路径返回 200，并带 `Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS`、`Access-Control-Allow-Headers: Content-Type, X-Pairing-Code`，以便外置配置页跨域调用。
 
@@ -257,10 +257,10 @@
     "resource": { "pressure": "Normal", "heap_largest_block_internal": 12345 }
   }
   ```
-  - `wifi`：`"connected"` | `"disconnected"`。
+  - `wifi`：`"connected"` | `"disconnected"`（**STA 已连上游路由器/有出站路径**；仅连设备 SoftAP 配网热点时仍可能为 `disconnected`）。
   - `inbound_depth` / `outbound_depth`：入站/出站队列深度（数字）。
   - `last_error`：最近一次错误摘要（仅 stage/message，无密钥）；无则为 `"none"`。
-  - `metrics`：`metrics::MetricsSnapshot`（消息吞吐、LLM/tool、dispatch、按 stage 错误计数等）。
+  - `metrics`：`metrics::MetricsSnapshot`（消息吞吐、LLM/tool、dispatch、按 stage 错误计数等；Linux 嵌入式另含 `wifi_reconnect_total`、`wifi_ap_restart_total`、`wifi_last_failure_stage`）。
   - `resource`：`orchestrator::ResourceSnapshot`（压力、堆、队列深度、通道健康等）；`pressure` 为字符串 `"Normal"` | `"Cautious"` | `"Critical"`。
   - **迁移**：若外部脚本曾依赖旧版手写 JSON 中的扁平 `msg_in` 等键名，请改为嵌套 `metrics.messages_in`。
 
@@ -311,7 +311,7 @@
 
 ## 如何获知板子 IP
 
-- 连接设备热点 **Beetle** 时：使用 **http://192.168.4.1**（固件 SoftAP 固定地址）。
+- 连接设备热点 **Beetle** 时：使用 **http://192.168.1.4**（固件 SoftAP 固定地址）。
 - 已连 STA 且与设备在同一 LAN 时：使用路由器分配给设备的 IP。
 
 ## 配置页归属

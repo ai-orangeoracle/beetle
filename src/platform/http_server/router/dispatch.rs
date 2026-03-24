@@ -70,57 +70,57 @@ pub fn dispatch(
             }
             let body =
                 handlers::root::body(ctx).map_err(|e| err_other("http_router_dispatch", e))?;
-            return Ok(OutgoingResponse::json(
+            Ok(OutgoingResponse::json(
                 200,
                 "OK",
                 CORS_HEADERS,
                 body.into_bytes(),
-            ));
+            ))
         }
         ("GET", "/wifi") => {
             let html = handlers::config_page::html();
-            return Ok(OutgoingResponse::json(
+            Ok(OutgoingResponse::json(
                 200,
                 "OK",
                 HTML_HEADERS,
                 html.as_bytes().to_vec(),
-            ));
+            ))
         }
         ("GET", "/pairing") => {
             let html = handlers::config_page::pairing_html();
-            return Ok(OutgoingResponse::json(
+            Ok(OutgoingResponse::json(
                 200,
                 "OK",
                 HTML_HEADERS,
                 html.as_bytes().to_vec(),
-            ));
+            ))
         }
         ("GET", "/common.css") => {
             let css = handlers::config_page::common_css();
-            return Ok(OutgoingResponse::json(
+            Ok(OutgoingResponse::json(
                 200,
                 "OK",
                 CSS_HEADERS,
                 css.as_bytes().to_vec(),
-            ));
+            ))
         }
         ("GET", "/common.js") => {
             let js = handlers::config_page::common_js();
-            return Ok(OutgoingResponse::json(
+            Ok(OutgoingResponse::json(
                 200,
                 "OK",
                 JS_HEADERS,
                 js.as_bytes().to_vec(),
-            ));
+            ))
         }
         ("GET", "/api/pairing_code") => {
             let body = handlers::pairing::body(ctx);
-            return Ok(OutgoingResponse::json(
+            Ok(OutgoingResponse::json(
                 200,
                 "OK",
                 CORS_HEADERS,
                 body.into_bytes(),
-            ));
+            ))
         }
         ("POST", "/api/pairing_code") => {
             let body_str = std::str::from_utf8(&incoming.body).map_err(|_| Error::Other {
@@ -128,7 +128,7 @@ pub fn dispatch(
                 stage: "http_router_dispatch",
             })?;
             let r = handlers::pairing::post_body(ctx, body_str);
-            return Ok(api_to_out(r));
+            Ok(api_to_out(r))
         }
         ("GET", "/api/config") => {
             if let Some(r) = auth::require_activated(store) {
@@ -136,12 +136,12 @@ pub fn dispatch(
             }
             let body = handlers::config::get_body(ctx)
                 .map_err(|e| err_other("http_router_dispatch", e))?;
-            return Ok(OutgoingResponse::json(
+            Ok(OutgoingResponse::json(
                 200,
                 "OK",
                 CORS_HEADERS,
                 body.into_bytes(),
-            ));
+            ))
         }
         ("POST", "/api/config/wifi") => {
             if let Some(r) = auth::require_pairing_code(store, uri, &incoming.headers) {
@@ -162,7 +162,7 @@ pub fn dispatch(
             }
             let mut out = api_to_out(r);
             out.restart = restart;
-            return Ok(out);
+            Ok(out)
         }
         ("POST", "/api/config/llm") => {
             if let Some(r) = auth::require_pairing_code(store, uri, &incoming.headers) {
@@ -177,7 +177,7 @@ pub fn dispatch(
             })?;
             let r = handlers::config::post_llm(ctx, body_str)
                 .map_err(|e| err_other("http_router_dispatch", e))?;
-            return Ok(api_to_out(r));
+            Ok(api_to_out(r))
         }
         ("POST", "/api/config/channels") => {
             if let Some(r) = auth::require_pairing_code(store, uri, &incoming.headers) {
@@ -192,7 +192,7 @@ pub fn dispatch(
             })?;
             let r = handlers::config::post_channels(ctx, body_str)
                 .map_err(|e| err_other("http_router_dispatch", e))?;
-            return Ok(api_to_out(r));
+            Ok(api_to_out(r))
         }
         ("POST", "/api/config/system") => {
             if let Some(r) = auth::require_pairing_code(store, uri, &incoming.headers) {
@@ -207,7 +207,7 @@ pub fn dispatch(
             })?;
             let r = handlers::config::post_system(ctx, body_str)
                 .map_err(|e| err_other("http_router_dispatch", e))?;
-            return Ok(api_to_out(r));
+            Ok(api_to_out(r))
         }
         ("GET", "/api/config/hardware") => {
             if let Some(r) = auth::require_activated(store) {
@@ -215,12 +215,12 @@ pub fn dispatch(
             }
             let body = handlers::config::get_hardware_body(ctx)
                 .map_err(|e| err_other("http_router_dispatch", e))?;
-            return Ok(OutgoingResponse::json(
+            Ok(OutgoingResponse::json(
                 200,
                 "OK",
                 CORS_HEADERS,
                 body.into_bytes(),
-            ));
+            ))
         }
         ("POST", "/api/config/hardware") => {
             if let Some(r) = auth::require_pairing_code(store, uri, &incoming.headers) {
@@ -235,7 +235,7 @@ pub fn dispatch(
             })?;
             let r = handlers::config::post_hardware(ctx, body_str)
                 .map_err(|e| err_other("http_router_dispatch", e))?;
-            return Ok(api_to_out(r));
+            Ok(api_to_out(r))
         }
         ("GET", "/api/config/display") => {
             if let Some(r) = auth::require_activated(store) {
@@ -243,12 +243,12 @@ pub fn dispatch(
             }
             let body = handlers::config::get_display_body(ctx)
                 .map_err(|e| err_other("http_router_dispatch", e))?;
-            return Ok(OutgoingResponse::json(
+            Ok(OutgoingResponse::json(
                 200,
                 "OK",
                 CORS_HEADERS,
                 body.into_bytes(),
-            ));
+            ))
         }
         ("POST", "/api/config/display") => {
             if let Some(r) = auth::require_pairing_code(store, uri, &incoming.headers) {
@@ -269,7 +269,7 @@ pub fn dispatch(
             }
             let mut out = api_to_out(r);
             out.restart = restart;
-            return Ok(out);
+            Ok(out)
         }
         ("GET", "/api/wifi/scan") => match handlers::wifi_scan::get_body(ctx) {
             Ok(body) => Ok(OutgoingResponse::json(
@@ -324,12 +324,12 @@ pub fn dispatch(
             }
             let body =
                 handlers::metrics::body(ctx).map_err(|e| err_other("http_router_dispatch", e))?;
-            return Ok(OutgoingResponse::json(
+            Ok(OutgoingResponse::json(
                 200,
                 "OK",
                 CORS_HEADERS,
                 body.into_bytes(),
-            ));
+            ))
         }
         ("GET", "/api/resource") => {
             if let Some(r) = auth::require_activated(store) {
@@ -337,22 +337,22 @@ pub fn dispatch(
             }
             let body =
                 handlers::resource::body(ctx).map_err(|e| err_other("http_router_dispatch", e))?;
-            return Ok(OutgoingResponse::json(
+            Ok(OutgoingResponse::json(
                 200,
                 "OK",
                 CORS_HEADERS,
                 body.into_bytes(),
-            ));
+            ))
         }
         ("GET", "/api/csrf_token") => {
             let body = handlers::csrf_token::body(ctx)
                 .map_err(|e| err_other("http_router_dispatch", e))?;
-            return Ok(OutgoingResponse::json(
+            Ok(OutgoingResponse::json(
                 200,
                 "OK",
                 CORS_HEADERS,
                 body.into_bytes(),
-            ));
+            ))
         }
         ("GET", "/api/diagnose") => {
             if let Some(r) = auth::require_activated(store) {
@@ -360,12 +360,12 @@ pub fn dispatch(
             }
             let body =
                 handlers::diagnose::body(ctx).map_err(|e| err_other("http_router_dispatch", e))?;
-            return Ok(OutgoingResponse::json(
+            Ok(OutgoingResponse::json(
                 200,
                 "OK",
                 CORS_HEADERS,
                 body.into_bytes(),
-            ));
+            ))
         }
         ("GET", "/api/system_info") => {
             if let Some(r) = auth::require_activated(store) {
@@ -373,12 +373,12 @@ pub fn dispatch(
             }
             let body = handlers::system_info::body(ctx)
                 .map_err(|e| err_other("http_router_dispatch", e))?;
-            return Ok(OutgoingResponse::json(
+            Ok(OutgoingResponse::json(
                 200,
                 "OK",
                 CORS_HEADERS,
                 body.into_bytes(),
-            ));
+            ))
         }
         ("GET", "/api/channel_connectivity") => {
             if let Some(r) = auth::require_activated(store) {
@@ -477,12 +477,12 @@ pub fn dispatch(
                 return Ok(api_to_out(r));
             }
             let body = handlers::memory::body(ctx);
-            return Ok(OutgoingResponse::json(
+            Ok(OutgoingResponse::json(
                 200,
                 "OK",
                 CORS_HEADERS,
                 body.into_bytes(),
-            ));
+            ))
         }
         ("GET", "/api/skills") => {
             if let Some(r) = auth::require_activated(store) {

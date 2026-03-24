@@ -8,6 +8,7 @@ This tarball is for integrators and manual trials. **End-user one-click / SSH in
 Binary
 ------
 - `beetle`: statically linked (musl). If you deploy by hand, a common layout is `/opt/beetle/releases/<version>/` plus a `current` symlink; see the markdown above for current status only.
+- **WiFi addressing**: Beetle sets AP/STA addresses via **rtnetlink** in-process; the **`ip` utility is not required** for those steps (you still need `wpa_supplicant` / `hostapd` / `dnsmasq` / `iw` where the code invokes them).
 
 Config API (optional)
 ---------------------
@@ -23,6 +24,12 @@ systemd
 -------
 - Edit `beetle.service`: set `User=`/`Group=` and tighten `ReadWritePaths=` for your deployment.
 - Install: copy unit to `/etc/systemd/system/`, `systemctl daemon-reload`, `systemctl enable --now beetle`.
+- **Startup order**: the unit uses `After=local-fs.target` and `Wants=network-pre.target` only — **not** `network-online.target`. Beetle manages `wpa_supplicant` / `hostapd` itself; waiting for “full internet” can deadlock with `NetworkManager-wait-online` on devices where the wlan is not yet up at that point.
+- **NetworkManager conflict**: if NetworkManager (or another manager) **owns the same wlan interface**, pick one — either disable NM for that iface or do not run Beetle’s Linux WiFi stack on it. Two controllers on one radio will race.
+
+Environment
+-------------
+- Optional `EnvironmentFile=-/etc/default/beetle` (uncomment in the unit) for e.g. `BEETLE_STATE_ROOT=/var/lib/beetle`.
 
 Permissions
 -----------

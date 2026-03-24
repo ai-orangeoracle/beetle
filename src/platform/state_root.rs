@@ -71,7 +71,7 @@ pub fn state_mount_path() -> PathBuf {
     }
     #[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
     {
-        STATE_ROOT.get().map(|p| p.clone()).unwrap_or_else(|| {
+        STATE_ROOT.get().cloned().unwrap_or_else(|| {
             log::error!("[state_root] not initialized; init_spiffs must run before state_mount_path; using fallback /tmp/beetle");
             PathBuf::from("/tmp/beetle")
         })

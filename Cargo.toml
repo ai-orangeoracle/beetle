@@ -51,6 +51,12 @@ ureq = { version = "2.12", default-features = false, features = ["tls", "gzip", 
 # Linux WSS（飞书/QQ 长连接）：同步客户端，rustls + webpki 根；禁止 default-features 以免拉 tokio。
 tungstenite = { version = "0.24", default-features = false, features = ["handshake", "rustls-tls-webpki-roots"] }
 
+# Linux embedded WiFi：rtnetlink 控制面（仅 target_os=linux 编译进图）
+[target.'cfg(target_os = "linux")'.dependencies]
+rtnetlink = "0.20"
+tokio = { version = "1", features = ["rt", "macros", "net"] }
+futures = "0.3"
+
 [features]
 default = ["config_api", "feishu"]
 config_api = []

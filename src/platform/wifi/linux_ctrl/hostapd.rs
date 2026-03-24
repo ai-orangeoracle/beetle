@@ -2,8 +2,10 @@
 
 use crate::error::Result;
 use crate::platform::state_mount_path;
+use crate::platform::wifi::linux_ctrl::hostapd_ctrl;
 use crate::platform::wifi::linux_ctrl::net;
 use crate::platform::wifi::linux_ctrl::process::{run_checked, write_secure_atomic};
+use crate::platform::wifi::linux_ctrl::HOSTAPD_CTRL_INTERFACE_DIR;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -34,7 +36,7 @@ pub fn start_ap(iface: &str, ssid: &str, ip: &str) -> Result<()> {
     net::setup_ap_address(iface, &format!("{}/24", ip))?;
 
     let hostapd_conf = format!(
-        "interface={iface}\ndriver=nl80211\nssid={ssid}\nhw_mode=g\nchannel=1\nauth_algs=1\nwpa=0\nctrl_interface=/var/run/hostapd\n",
+        "interface={iface}\ndriver=nl80211\nssid={ssid}\nhw_mode=g\nchannel=1\nauth_algs=1\nwpa=0\nctrl_interface={HOSTAPD_CTRL_INTERFACE_DIR}\n",
     );
     write_secure_atomic(
         &hostapd_conf_path(),
@@ -85,6 +87,7 @@ pub fn start_ap(iface: &str, ssid: &str, ip: &str) -> Result<()> {
 
 /// 停止 AP 相关进程并清理 PID；`iface` 用于尝试删除 hostapd 控制 socket。
 pub fn stop_ap(iface: &str) {
+    hostapd_ctrl::try_terminate(iface, Duration::from_secs(3));
     for name in ["dnsmasq", "hostapd"] {
         let pid = pidfile(name);
         if let Ok(raw) = std::fs::read_to_string(&pid) {
@@ -100,7 +103,7 @@ pub fn stop_ap(iface: &str) {
         }
         let _ = std::fs::remove_file(pid);
     }
-    let sock = Path::new("/var/run/hostapd").join(iface);
+    let sock = Path::new(HOSTAPD_CTRL_INTERFACE_DIR).join(iface);
     let _ = std::fs::remove_file(sock);
 }
 

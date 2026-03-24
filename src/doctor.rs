@@ -15,9 +15,11 @@ const DEPTH_WARN_THRESHOLD: usize = 6;
 const LAST_ERROR_MAX_LEN: usize = 200;
 
 /// 根据当前状态生成自检列表。不依赖 platform/state，便于单测与 host 编译。
+///
+/// `wifi_sta_connected`：STA 已关联上游 AP 且有可用出站路径（与 SoftAP/配网页是否可达无关）。
 #[allow(clippy::too_many_arguments)]
 pub fn diagnose(
-    wifi_connected: bool,
+    wifi_sta_connected: bool,
     inbound_depth: usize,
     outbound_depth: usize,
     last_error: Option<String>,
@@ -74,17 +76,17 @@ pub fn diagnose(
         });
     }
 
-    if wifi_connected {
+    if wifi_sta_connected {
         out.push(DiagResult {
             severity: "ok".into(),
             category: "config".into(),
-            message: "wifi connected".into(),
+            message: "wifi sta connected".into(),
         });
     } else {
         out.push(DiagResult {
             severity: "warn".into(),
             category: "config".into(),
-            message: "wifi disconnected".into(),
+            message: "wifi sta disconnected".into(),
         });
     }
 

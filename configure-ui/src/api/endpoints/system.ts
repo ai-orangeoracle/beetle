@@ -22,6 +22,10 @@ export interface MetricsSnapshotData {
   errors_channel_dispatch?: number
   errors_session_append?: number
   errors_other?: number
+  last_active_epoch_secs?: number
+  wifi_reconnect_total?: number
+  wifi_ap_restart_total?: number
+  wifi_last_failure_stage?: string
 }
 
 /** 与固件 `orchestrator::ResourceSnapshot` 对齐的子集；完整嵌套见设备 JSON。 */

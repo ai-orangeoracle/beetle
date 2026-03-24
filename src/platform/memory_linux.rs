@@ -12,7 +12,7 @@ pub fn linux_memory_snapshot() -> MemorySnapshot {
             return MemorySnapshot {
                 heap_free_internal: 0,
                 heap_free_spiram: 0,
-                heap_largest_block: u32::MAX,
+                heap_largest_block: 0,
             };
         }
     };
@@ -26,7 +26,7 @@ pub fn linux_memory_snapshot() -> MemorySnapshot {
     MemorySnapshot {
         heap_free_internal: internal,
         heap_free_spiram: 0,
-        heap_largest_block: u32::MAX,
+        heap_largest_block: internal,
     }
 }
 

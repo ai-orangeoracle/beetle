@@ -23,7 +23,7 @@ import {
   type HealthData,
 } from "../api/endpoints/system";
 
-const DEFAULT_DEVICE_BASE_URL = "http://192.168.4.1";
+const DEFAULT_DEVICE_BASE_URL = "http://192.168.1.4";
 
 function formatBytes(value: number): string {
   if (!Number.isFinite(value) || value < 0) return String(value);

@@ -6,10 +6,12 @@ use crate::constants::{
     WIFI_RETRY_BACKOFF_SECS, WIFI_SCAN_TIMEOUT_SECS,
 };
 use crate::error::{Error, Result};
+use crate::metrics;
 use crate::platform::wifi::linux_ctrl::{
     capability::{self, PhyCapabilities},
     hostapd, iw_scan, net, process, wpa,
 };
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
@@ -42,7 +44,9 @@ pub struct WifiScanHandle {
 
 impl WifiScan for WifiScanHandle {
     fn request_scan(&self) -> Result<Vec<WifiApEntry>> {
+        const MAX_RETRIES: u32 = 20;
         let deadline = Instant::now() + Duration::from_secs(WIFI_SCAN_TIMEOUT_SECS);
+        let mut attempts = 0;
         loop {
             let r = if self.scan_via_iw {
                 iw_scan::scan_bounded(&self.iface, deadline)
@@ -52,7 +56,8 @@ impl WifiScan for WifiScanHandle {
             match r {
                 Ok(list) => return Ok(list),
                 Err(e) => {
-                    if Instant::now() >= deadline {
+                    attempts += 1;
+                    if Instant::now() >= deadline || attempts >= MAX_RETRIES {
                         return Err(e.with_stage("wifi_scan"));
                     }
                     std::thread::sleep(Duration::from_millis(200));
@@ -205,6 +210,7 @@ pub fn connect(config: &AppConfig) -> Result<Option<WifiScanHandle>> {
             set_sta_state(ip);
         }
         Err(e) => {
+            metrics::record_wifi_failure_stage(e.stage());
             log::warn!(
                 "[{}] STA failed (wrong password or unreachable); SoftAP stays up for provisioning: {}",
                 TAG,
@@ -235,8 +241,10 @@ fn start_daemon_watch_thread(iface: String, ap_ip: String) {
                         "[{}] AP stack pid missing or dead; restarting hostapd+dnsmasq",
                         TAG
                     );
+                    metrics::record_wifi_ap_restart();
                     hostapd::stop_ap(&iface);
                     if let Err(e) = hostapd::start_ap(&iface, SOFTAP_SSID, &ap_ip) {
+                        metrics::record_wifi_failure_stage(e.stage());
                         log::error!("[{}] AP stack restart failed: {}", TAG, e);
                     }
                     continue;
@@ -245,7 +253,9 @@ fn start_daemon_watch_thread(iface: String, ap_ip: String) {
                     if let Some(pid) = process::read_pid_file(wpa_pf.as_path()) {
                         if !process::is_pid_alive(pid) {
                             log::warn!("[{}] wpa_supplicant not running; re-ensure", TAG);
+                            metrics::record_wifi_reconnect();
                             if let Err(e) = wpa::ensure_daemon(&iface) {
+                                metrics::record_wifi_failure_stage(e.stage());
                                 log::error!("[{}] wpa_supplicant restart failed: {}", TAG, e);
                             }
                         }

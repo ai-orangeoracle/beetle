@@ -4,6 +4,8 @@
 //! ESP32: no graceful shutdown; process runs until power off.
 use beetle::channels::connect_wss;
 use beetle::config;
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+use beetle::constants::SOFTAP_DEFAULT_IPV4;
 use beetle::memory::{MemoryStore, SessionStore};
 #[cfg(feature = "feishu")]
 use beetle::run_feishu_ws_loop;
@@ -93,10 +95,10 @@ fn bootstrap_config_and_wifi(platform: &Arc<dyn Platform>) -> (Arc<AppConfig>, b
     if platform.display_available() {
         let _ = platform.display_command(DisplayCommand::UpdateBootProgress { stage: 1 });
     }
-    let wifi_connected = match platform.connect_wifi(config.as_ref()) {
+    let wifi_init_ok = match platform.connect_wifi(config.as_ref()) {
         Ok(()) => {
             log::info!(
-                "[{}] WiFi ready (SoftAP up, STA connected if configured)",
+                "[{}] WiFi stack ready (SoftAP + scan; STA may still be negotiating)",
                 TAG
             );
             #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
@@ -111,22 +113,22 @@ fn bootstrap_config_and_wifi(platform: &Arc<dyn Platform>) -> (Arc<AppConfig>, b
             true
         }
         Err(e) => {
-            log::warn!("[{}] WiFi failed: {}", TAG, e);
+            log::warn!("[{}] WiFi init failed: {}", TAG, e);
             false
         }
     };
 
     #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
-    esp_boot_display_after_wifi(platform, &config, wifi_connected);
+    esp_boot_display_after_wifi(platform, &config, wifi_init_ok);
 
-    (config, wifi_connected)
+    (config, wifi_init_ok)
 }
 
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 fn esp_boot_display_after_wifi(
     platform: &Arc<dyn Platform>,
     config: &Arc<AppConfig>,
-    wifi_connected: bool,
+    wifi_init_ok: bool,
 ) {
     if let Some(display_cfg) = config.display.as_ref() {
         if display_cfg.enabled {
@@ -184,10 +186,10 @@ fn esp_boot_display_after_wifi(
             }
         }
     }
-    if wifi_connected && platform.display_available() {
+    if wifi_init_ok && platform.display_available() {
         let ip = platform
             .wifi_sta_ip()
-            .unwrap_or_else(|| "192.168.4.1".to_string());
+            .unwrap_or_else(|| SOFTAP_DEFAULT_IPV4.to_string());
         let _ = platform.display_command(DisplayCommand::UpdateIp { ip });
     }
 }
@@ -264,9 +266,9 @@ fn compute_refresh_secs(
 
 #[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
 fn main() {
-    if let Err(_) =
-        env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
-            .try_init()
+    if env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+        .try_init()
+        .is_err()
     {
         eprintln!("[beetle] env_logger init failed (logging may be incomplete)");
     }
@@ -278,8 +280,8 @@ fn main() {
     log::info!("========================================");
     log::info!("  甲壳虫 beetle v{}", VERSION);
     log::info!("========================================");
-    let (config, wifi_connected) = bootstrap_config_and_wifi(&platform);
-    run_app(platform, config, wifi_connected);
+    let (config, wifi_init_ok) = bootstrap_config_and_wifi(&platform);
+    run_app(platform, config, wifi_init_ok);
 }
 
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
@@ -295,12 +297,12 @@ fn main() {
     log::info!("  甲壳虫 beetle v{}", VERSION);
     log::info!("========================================");
 
-    let (config, wifi_connected) = bootstrap_config_and_wifi(&platform);
-    run_app(platform, config, wifi_connected);
+    let (config, wifi_init_ok) = bootstrap_config_and_wifi(&platform);
+    run_app(platform, config, wifi_init_ok);
 }
 
 /// 启动编排：存储与总线 → 自检 → 后台任务与通道 → agent 循环与 flush。与 main 解耦便于单文件内可读性。
-fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_connected: bool) {
+fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_init_ok: bool) {
     beetle::orchestrator::register_memory_snapshot_provider(Arc::new({
         let p = Arc::clone(&platform);
         move || p.memory_snapshot()
@@ -358,19 +360,17 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
         );
         return;
     }
-    let wifi_status = if wifi_connected {
-        "connected"
-    } else {
-        "disconnected"
-    };
+    let wifi_init_status = if wifi_init_ok { "ok" } else { "failed" };
+    let sta_up = beetle::platform::is_wifi_sta_connected();
     let spiffs_info = platform
         .spiffs_usage()
         .map(|(total, used)| format!("{} free", total.saturating_sub(used)))
         .unwrap_or_else(|| "N/A".to_string());
     log::info!(
-        "[{}] startup self-check ok (storage readable, wifi={}, spiffs={})",
+        "[{}] startup self-check ok (storage readable, wifi_init={}, sta_up={}, spiffs={})",
         TAG,
-        wifi_status,
+        wifi_init_status,
+        sta_up,
         spiffs_info
     );
     #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
@@ -383,13 +383,11 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
         let out = Arc::clone(&outbound_depth);
         let memory_http = Arc::clone(&memory_store);
         let session_http = Arc::clone(&session_store);
-        let w = wifi_connected;
         let http_inbound_tx = inbound_tx.clone();
         let http_qq_cache = Arc::clone(&qq_msg_id_cache);
         beetle::util::spawn_guarded("http_server", move || {
             if let Err(e) = beetle::platform::http_server::run(
                 platform_http,
-                w,
                 inc,
                 out,
                 memory_http,
@@ -402,8 +400,9 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
         });
         #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
         log::info!(
-            "[{}] HTTP config API server started (SoftAP: 192.168.4.1)",
-            TAG
+            "[{}] HTTP config API server started (SoftAP: {})",
+            TAG,
+            SOFTAP_DEFAULT_IPV4
         );
         #[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
         log::info!(
@@ -486,14 +485,14 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
                             DisplayPressureLevel::Critical
                         }
                     };
-                    let wifi_connected = beetle::platform::is_wifi_sta_connected();
+                    let sta_connected = beetle::platform::is_wifi_sta_connected();
                     let busy = snapshot.inbound_depth > 0
                         || snapshot.outbound_depth > 0
                         || snapshot.active_http_count > 0;
                     let state =
                         if snapshot.pressure == beetle::orchestrator::PressureLevel::Critical {
                             DisplaySystemState::Fault
-                        } else if !wifi_connected {
+                        } else if !sta_connected {
                             DisplaySystemState::NoWifi
                         } else if busy {
                             DisplaySystemState::Busy
@@ -502,7 +501,7 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
                         };
                     let ip = display_platform
                         .wifi_sta_ip()
-                        .unwrap_or_else(|| "192.168.4.1".to_string());
+                        .unwrap_or_else(|| SOFTAP_DEFAULT_IPV4.to_string());
 
                     // F5: 通道状态含 consecutive_failures
                     let channels = [
@@ -638,7 +637,7 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
                     if state_changed {
                         let cmd = DisplayCommand::RefreshDashboard {
                             state,
-                            wifi_connected,
+                            wifi_connected: sta_connected,
                             ip_address: Some(ip.clone()),
                             channels: channels.clone(),
                             pressure: pressure.clone(),
@@ -803,7 +802,6 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
             let tg_inbound_tx = inbound_tx.clone();
             let tg_outbound_tx = outbound_tx.clone();
             let tg_session_store = Arc::clone(&session_store);
-            let tg_wifi = wifi_connected;
             let tg_inbound_depth = Arc::clone(&inbound_depth);
             let tg_outbound_depth = Arc::clone(&outbound_depth);
             let tg_config_store = Arc::clone(&config_store);
@@ -817,7 +815,6 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
                     tg_inbound_tx,
                     tg_outbound_tx,
                     tg_session_store,
-                    tg_wifi,
                     tg_inbound_depth,
                     tg_outbound_depth,
                     tg_config_store,
@@ -911,7 +908,6 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
                 Arc::clone(&memory_store),
                 Arc::clone(&session_store),
                 Arc::clone(&platform),
-                wifi_connected,
                 Some(Arc::clone(&inbound_depth)),
                 Some(Arc::clone(&outbound_depth)),
             );

@@ -67,7 +67,10 @@ fn parse_supported_ap(phy_info: &str) -> bool {
             continue;
         }
         if in_modes {
-            if t.starts_with("Band ") || t.starts_with("valid interface") || t.starts_with("Capabilities") {
+            if t.starts_with("Band ")
+                || t.starts_with("valid interface")
+                || t.starts_with("Capabilities")
+            {
                 break;
             }
             let line_trim = line.trim();
@@ -93,7 +96,10 @@ fn parse_concurrent_managed_ap(phy_info: &str) -> bool {
             if tr.is_empty() {
                 continue;
             }
-            if tr.starts_with("Band ") || tr.starts_with("Frequencies:") || tr.starts_with("Supported commands") {
+            if tr.starts_with("Band ")
+                || tr.starts_with("Frequencies:")
+                || tr.starts_with("Supported commands")
+            {
                 break;
             }
             if tr.starts_with('*') && tr.contains("managed") && tr.contains("AP") {

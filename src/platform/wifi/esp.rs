@@ -3,7 +3,7 @@
 //! 支持通过通道向 WiFi 线程请求扫描，供 GET /api/wifi/scan 使用。
 
 use crate::config::AppConfig;
-use crate::constants::{WIFI_CONNECT_TIMEOUT_SECS, WIFI_SCAN_TIMEOUT_SECS};
+use crate::constants::{WIFI_ESP_CONNECT_MAIN_WAIT_SECS, WIFI_SCAN_TIMEOUT_SECS};
 use crate::error::{Error, Result};
 use embedded_svc::wifi::{
     AccessPointConfiguration, AuthMethod, ClientConfiguration, Configuration,
@@ -123,7 +123,7 @@ pub fn connect(config: &AppConfig) -> Result<Option<WifiScanHandle>> {
         do_connect(ssid.as_str(), pass.as_str(), tx, scan_req_rx, scan_resp_tx);
     });
 
-    let result = match rx.recv_timeout(Duration::from_secs(WIFI_CONNECT_TIMEOUT_SECS)) {
+    let result = match rx.recv_timeout(Duration::from_secs(WIFI_ESP_CONNECT_MAIN_WAIT_SECS)) {
         Ok(Ok(())) => {
             log::info!("[{}] WiFi ready (AP up, STA connected if configured)", TAG);
             Ok(Some(WifiScanHandle {
@@ -134,13 +134,16 @@ pub fn connect(config: &AppConfig) -> Result<Option<WifiScanHandle>> {
         Ok(Err(e)) => Err(e),
         Err(mpsc::RecvTimeoutError::Timeout) => {
             log::warn!(
-                "[{}] WiFi STA connect timeout ({}s), AP is up",
+                "[{}] WiFi main thread wait exhausted ({}s) before first ready signal; AP may still be up in worker",
                 TAG,
-                WIFI_CONNECT_TIMEOUT_SECS
+                WIFI_ESP_CONNECT_MAIN_WAIT_SECS
             );
             Err(Error::config(
                 "wifi_connect",
-                format!("STA timeout after {}s", WIFI_CONNECT_TIMEOUT_SECS),
+                format!(
+                    "main thread wait {}s for WiFi ready signal",
+                    WIFI_ESP_CONNECT_MAIN_WAIT_SECS
+                ),
             ))
         }
         Err(mpsc::RecvTimeoutError::Disconnected) => Err(Error::Other {

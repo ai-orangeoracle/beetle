@@ -20,7 +20,7 @@ export const enUS = {
       sectionConnection: 'Device URL & pairing code',
       sectionConnectionDesc: 'Find the device URL on the device screen or packaging; set the pairing code on the device pairing page.',
       baseUrlLabel: 'Device URL',
-      baseUrlPlaceholder: 'e.g. http://192.168.4.1',
+      baseUrlPlaceholder: 'e.g. http://192.168.1.4',
       pairingCodeLabel: 'Pairing code',
       pairingCodePlaceholder: '6 digits, required for write operations',
       save: 'Save',
