@@ -2,7 +2,8 @@
 # ESP firmware: this script injects default --target for release; do not rely on repo .cargo default target.
 # Usage: .\build.ps1  or  .\build.ps1 --target xtensa-esp32s3-espidf
 #        .\build.ps1 clean           清理项目根与短路径 D:\pc_b 的 target（路径过长时只需跑一次）
-#        .\build.ps1 --flash        构建后烧录（会提示 y/N 是否先整片擦除；未设端口则扫描串口交互选择）
+#        .\build.ps1 --flash          构建后烧录（数字菜单，默认 1=仅更新；与 deploy-linux.sh 风格一致）
+#        .\build.ps1 --flash-update   构建后烧录且不擦除（跳过菜单）
 #        $env:ESPFLASH_PORT="COM3"; .\build.ps1 --flash  跳过端口选择，直接烧录到 COM3
 $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
@@ -14,10 +15,13 @@ $env:CARGO_TARGET_DIR = Join-Path $PSScriptRoot "target"
 # ESP-IDF / kconfgen 读 sdkconfig 时若用系统默认编码（中文 Windows 为 GBK）会报 UnicodeDecodeError，强制 Python 使用 UTF-8
 if ($env:OS -eq "Windows_NT") { $env:PYTHONUTF8 = "1" }
 
-# 解析 --flash / --no-monitor，并从 BOARD 解析 target/features（与 build.sh 一致）
-$doFlash = $args -contains "--flash"
+# 解析 --flash / --flash-update / --no-monitor，并从 BOARD 解析 target/features（与 build.sh 一致）
+$flashUpdate = $args -contains "--flash-update"
+$doFlash = ($args -contains "--flash") -or $flashUpdate
 $noMonitor = $args -contains "--no-monitor"
-$buildArgs = $args | Where-Object { $_ -ne "--flash" -and $_ -ne "--no-monitor" }
+$buildArgs = $args | Where-Object {
+  $_ -ne "--flash" -and $_ -ne "--no-monitor" -and $_ -ne "--flash-update"
+}
 
 $buildTarget = "xtensa-esp32s3-espidf"
 $buildFeatures = ""
@@ -189,20 +193,51 @@ if (-not $flashChip -and $doFlash) {
 
 Write-BuildStatus -Step "Detected hardware / build config"
 
-# 烧录前必须确认擦除：选 y 则二次确认后整片擦除再烧录，选 n 则直接退出不烧录
-function Confirm-EraseBeforeFlash {
-  param([string]$ChosenPort, [string]$TargetTriple)
-  $r = Read-Host "Erase entire flash before flashing? (y/n)"
-  $r = $r.Trim().ToLowerInvariant()
-  if ($r -ne 'y' -and $r -ne 'yes') {
-    Write-Host "Skipping flash (no erase)."
-    exit 0
+# 烧录模式：与 deploy-linux.sh 相同 — 数字菜单 + 默认 1（仅更新）。--flash-update 跳过菜单。设置 $eraseBeforeFlash
+function Select-FlashMode {
+  param([string]$ChosenPort, [string]$TargetTriple, [bool]$FlashUpdate)
+  if ($FlashUpdate) {
+    Write-Host "✓ Flash mode: update only — entire flash will NOT be erased (NVS / config preserved)." -ForegroundColor Green
+    Write-Host ""
+    $script:eraseBeforeFlash = $false
+    return
   }
-  Write-Host "WARNING: Entire flash will be erased on $ChosenPort; firmware target: $TargetTriple" -ForegroundColor Yellow
-  $confirm = Read-Host "Type 'yes' to confirm erase and flash"
-  if ($confirm.Trim() -ne 'yes') {
-    Write-Host "Aborted."
-    exit 0
+  Write-Host "========== Flash mode ==========" -ForegroundColor Cyan
+  Write-Host ""
+  Write-Host "  1) Update flash — keep NVS, WiFi credentials, SPIFFS (typical dev / OTA-style)"
+  Write-Host "  2) Full chip erase then flash — wipes entire flash (factory reset / partition change)"
+  Write-Host "  3) Cancel"
+  Write-Host ""
+  while ($true) {
+    $fc = Read-Host "Select [1-3] (default 1)"
+    if ([string]::IsNullOrWhiteSpace($fc)) { $fc = "1" }
+    $fc = $fc.Trim()
+    switch ($fc) {
+      "1" {
+        $script:eraseBeforeFlash = $false
+        Write-Host "✓ Update flash: no full erase." -ForegroundColor Green
+        Write-Host ""
+        return
+      }
+      "2" {
+        Write-Host "⚠ Entire flash will be erased on $ChosenPort; firmware target: $TargetTriple" -ForegroundColor Yellow
+        $confirm = Read-Host "Type 'yes' to confirm full erase and flash"
+        if ($confirm.Trim() -ne 'yes') {
+          Write-Host "Aborted."
+          exit 0
+        }
+        $script:eraseBeforeFlash = $true
+        Write-Host ""
+        return
+      }
+      "3" {
+        Write-Host "Cancelled."
+        exit 0
+      }
+      default {
+        Write-Host "Invalid option — enter 1, 2, or 3" -ForegroundColor Yellow
+      }
+    }
   }
 }
 
@@ -470,16 +505,40 @@ cargo build --release $argStr
             }
             Ensure-Espflash
             $chosenPort = Get-FlashPort
-            Write-BuildStatus -Step "Flash: detected hardware and paths" -BeforeFlash -ChosenPort $chosenPort -BinPath $bin
-            Confirm-EraseBeforeFlash -ChosenPort $chosenPort -TargetTriple $buildTarget
-            Write-Host "========== Step: Erasing entire flash ==========" -ForegroundColor Cyan
-            Write-Host "  Port: $chosenPort  |  Chip: $flashChip" -ForegroundColor Gray
-            espflash erase-flash --port $chosenPort --chip $flashChip
-            if ($LASTEXITCODE -ne 0) { Write-Host "Erase failed (exit $LASTEXITCODE)." -ForegroundColor Red; exit $LASTEXITCODE }
-            Write-Host "  Erase completed. Waiting 2s before flash." -ForegroundColor Green
-            Start-Sleep -Seconds 2
             Write-Host ""
-            Write-Host "========== Step: Flashing firmware ==========" -ForegroundColor Cyan
+            Write-Host "=========================================="
+            Write-Host "  Beetle — Flash to device"
+            Write-Host "=========================================="
+            Write-Host ""
+            Write-BuildStatus -Step "Flash: hardware and paths" -BeforeFlash -ChosenPort $chosenPort -BinPath $bin
+            Write-Host "========== Checking connection ==========" -ForegroundColor Cyan
+            Write-Host ""
+            $null = & espflash board-info --port $chosenPort --chip $flashChip 2>$null
+            if ($LASTEXITCODE -eq 0) {
+              Write-Host "✓ board-info OK" -ForegroundColor Green
+            } else {
+              Write-Host "⚠ Could not read board-info from $chosenPort (connection or chip mismatch)." -ForegroundColor Yellow
+              Write-Host "  Proceeding anyway; if flash fails, check port, download mode, or chip."
+            }
+            Write-Host ""
+            Select-FlashMode -ChosenPort $chosenPort -TargetTriple $buildTarget -FlashUpdate:$flashUpdate
+            if ($eraseBeforeFlash) {
+              Write-Host "========== Erasing entire flash ==========" -ForegroundColor Cyan
+              Write-Host ""
+              Write-Host "  Port: $chosenPort  |  Chip: $flashChip" -ForegroundColor Gray
+              espflash erase-flash --port $chosenPort --chip $flashChip
+              if ($LASTEXITCODE -ne 0) { Write-Host "Erase failed (exit $LASTEXITCODE)." -ForegroundColor Red; exit $LASTEXITCODE }
+              Write-Host "✓ Erase completed. Waiting 2s before flash." -ForegroundColor Green
+              Start-Sleep -Seconds 2
+            } else {
+              Write-Host "========== Skipping full erase (update flash) ==========" -ForegroundColor Cyan
+              Write-Host ""
+              Write-Host "  ✓ NVS and other flash regions are left unchanged." -ForegroundColor Green
+              Write-Host "  Port: $chosenPort  |  Chip: $flashChip" -ForegroundColor Gray
+            }
+            Write-Host ""
+            Write-Host "========== Flashing firmware ==========" -ForegroundColor Cyan
+            Write-Host ""
             Write-Host "  Binary: $bin  |  Partition table: $(if ($partitionTableForFlash) { $partitionTableForFlash } else { $partitionCsv })" -ForegroundColor Gray
             if ($noMonitor) { espflash flash --port $chosenPort --chip $flashChip @flashExtra $bin } else { espflash flash --port $chosenPort --chip $flashChip @flashExtra --monitor $bin }
             exit $LASTEXITCODE
@@ -520,16 +579,40 @@ if ($doFlash) {
   }
   Ensure-Espflash
   $chosenPort = Get-FlashPort
-  Write-BuildStatus -Step "Flash: detected hardware and paths" -BeforeFlash -ChosenPort $chosenPort -BinPath $bin
-  Confirm-EraseBeforeFlash -ChosenPort $chosenPort -TargetTriple $buildTarget
-  Write-Host "========== Step: Erasing entire flash ==========" -ForegroundColor Cyan
-  Write-Host "  Port: $chosenPort  |  Chip: $flashChip" -ForegroundColor Gray
-  espflash erase-flash --port $chosenPort --chip $flashChip
-  if ($LASTEXITCODE -ne 0) { Write-Host "Erase failed (exit $LASTEXITCODE)." -ForegroundColor Red; exit $LASTEXITCODE }
-  Write-Host "  Erase completed. Waiting 2s before flash." -ForegroundColor Green
-  Start-Sleep -Seconds 2
   Write-Host ""
-  Write-Host "========== Step: Flashing firmware ==========" -ForegroundColor Cyan
+  Write-Host "=========================================="
+  Write-Host "  Beetle — Flash to device"
+  Write-Host "=========================================="
+  Write-Host ""
+  Write-BuildStatus -Step "Flash: hardware and paths" -BeforeFlash -ChosenPort $chosenPort -BinPath $bin
+  Write-Host "========== Checking connection ==========" -ForegroundColor Cyan
+  Write-Host ""
+  $null = & espflash board-info --port $chosenPort --chip $flashChip 2>$null
+  if ($LASTEXITCODE -eq 0) {
+    Write-Host "✓ board-info OK" -ForegroundColor Green
+  } else {
+    Write-Host "⚠ Could not read board-info from $chosenPort (connection or chip mismatch)." -ForegroundColor Yellow
+    Write-Host "  Proceeding anyway; if flash fails, check port, download mode, or chip."
+  }
+  Write-Host ""
+  Select-FlashMode -ChosenPort $chosenPort -TargetTriple $buildTarget -FlashUpdate:$flashUpdate
+  if ($eraseBeforeFlash) {
+    Write-Host "========== Erasing entire flash ==========" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "  Port: $chosenPort  |  Chip: $flashChip" -ForegroundColor Gray
+    espflash erase-flash --port $chosenPort --chip $flashChip
+    if ($LASTEXITCODE -ne 0) { Write-Host "Erase failed (exit $LASTEXITCODE)." -ForegroundColor Red; exit $LASTEXITCODE }
+    Write-Host "✓ Erase completed. Waiting 2s before flash." -ForegroundColor Green
+    Start-Sleep -Seconds 2
+  } else {
+    Write-Host "========== Skipping full erase (update flash) ==========" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "  ✓ NVS and other flash regions are left unchanged." -ForegroundColor Green
+    Write-Host "  Port: $chosenPort  |  Chip: $flashChip" -ForegroundColor Gray
+  }
+  Write-Host ""
+  Write-Host "========== Flashing firmware ==========" -ForegroundColor Cyan
+  Write-Host ""
   Write-Host "  Binary: $bin  |  Partition table: $(if ($partitionTableForFlash) { $partitionTableForFlash } else { $partitionCsv })" -ForegroundColor Gray
   if ($noMonitor) { espflash flash --port $chosenPort --chip $flashChip @flashExtra $bin } else { espflash flash --port $chosenPort --chip $flashChip @flashExtra --monitor $bin }
 }

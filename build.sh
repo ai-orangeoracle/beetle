@@ -4,16 +4,28 @@ set -e
 SCRIPT_ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_ROOT"
 
+# Colors (same palette as deploy-linux.sh)
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
 show_help() {
   cat <<'EOF'
 Usage:
-  ./build.sh [--flash] [--no-monitor] [cargo build args...]
+  ./build.sh [--flash | --flash-update] [--no-monitor] [cargo build args...]
+
+Flash:
+  --flash          Build then flash; interactive menu (default: update only, keep NVS).
+  --flash-update   Build then flash without erase (no menu; same as option 1).
 
 Quick examples:
   ./build.sh
   TARGET=linux ./build.sh
   TARGET=linux-armv7 ./build.sh
   TARGET=esp ./build.sh --flash
+  TARGET=esp ./build.sh --flash-update
 
 Notes:
   - On macOS building Linux musl, prefer Docker (zero local linker setup).
@@ -59,14 +71,16 @@ command -v cargo &>/dev/null || { echo "Error: cargo not found. Install Rust: ht
 # --- Parse args (same as build.ps1) ---
 DO_FLASH=""
 NO_MONITOR=""
+FLASH_NO_ERASE=""
 BUILD_METHOD="${BUILD_METHOD:-auto}" # auto | docker | local
 BUILD_ARGS=()
 for arg in "$@"; do
   case "$arg" in
-    -h|--help)    show_help; exit 0 ;;
-    --flash)      DO_FLASH=1 ;;
-    --no-monitor) NO_MONITOR=1 ;;
-    *)            BUILD_ARGS+=("$arg") ;;
+    -h|--help)       show_help; exit 0 ;;
+    --flash)         DO_FLASH=1 ;;
+    --flash-update)  DO_FLASH=1; FLASH_NO_ERASE=1 ;;
+    --no-monitor)    NO_MONITOR=1 ;;
+    *)               BUILD_ARGS+=("$arg") ;;
   esac
 done
 
@@ -101,7 +115,7 @@ select_build_platform() {
     esac
   fi
 
-  # If --flash is set, default to ESP32.
+  # If --flash / --flash-update is set, default to ESP32.
   if [[ -n "$DO_FLASH" ]]; then
     PLATFORM_CHOICE=1
     return 0
@@ -295,21 +309,52 @@ if [[ -n "$DO_FLASH" ]] && [[ -z "$FLASH_CHIP" ]]; then
   exit 1
 fi
 
-# --- Confirm erase (same as build.ps1 Confirm-EraseBeforeFlash) ---
-confirm_erase_before_flash() {
+# --- Flash mode: numbered menu like deploy-linux.sh "Deployment Mode" (sets ERASE_BEFORE_FLASH; may exit) ---
+# FLASH_NO_ERASE=1 (--flash-update): skip menu, never erase.
+select_flash_mode() {
   local port="$1" triple="$2"
-  read -r -p "Erase entire flash before flashing? (y/n): " r
-  r=$(echo "$r" | tr '[:upper:]' '[:lower:]')
-  if [[ "$r" != "y" && "$r" != "yes" ]]; then
-    echo "Skipping flash (no erase)."
-    exit 0
+  ERASE_BEFORE_FLASH=0
+  if [[ -n "$FLASH_NO_ERASE" ]]; then
+    echo -e "${GREEN}✓ Flash mode: update only — entire flash will NOT be erased (NVS / config preserved).${NC}"
+    echo ""
+    return 0
   fi
-  echo "WARNING: Entire flash will be erased on $port; firmware target: $triple" >&2
-  read -r -p "Type 'yes' to confirm erase and flash: " confirm
-  if [[ "$confirm" != "yes" ]]; then
-    echo "Aborted."
-    exit 0
-  fi
+  echo "========== Flash mode =========="
+  echo ""
+  echo "  1) Update flash — keep NVS, WiFi credentials, SPIFFS (typical dev / OTA-style)"
+  echo "  2) Full chip erase then flash — wipes entire flash (factory reset / partition change)"
+  echo "  3) Cancel"
+  echo ""
+  while true; do
+    read -r -p "Select [1-3] (default 1): " flash_choice
+    flash_choice=${flash_choice:-1}
+    case "$flash_choice" in
+      1)
+        ERASE_BEFORE_FLASH=0
+        echo -e "${GREEN}✓ Update flash: no full erase.${NC}"
+        echo ""
+        return 0
+        ;;
+      2)
+        echo -e "${YELLOW}⚠ Entire flash will be erased on ${port}; firmware target: ${triple}${NC}"
+        read -r -p "Type 'yes' to confirm full erase and flash: " confirm
+        if [[ "$confirm" != "yes" ]]; then
+          echo "Aborted."
+          exit 0
+        fi
+        ERASE_BEFORE_FLASH=1
+        echo ""
+        return 0
+        ;;
+      3)
+        echo "Cancelled."
+        exit 0
+        ;;
+      *)
+        echo -e "${YELLOW}Invalid option — enter 1, 2, or 3${NC}"
+        ;;
+    esac
+  done
 }
 
 # Port validation: /dev/ path only (Mac/Linux)
@@ -587,7 +632,7 @@ fi
 
 # --- Flash path (only when --flash) ---
 if [[ -z "$DO_FLASH" ]]; then
-  echo "  Build done. Use ./build.sh --flash to flash."
+  echo "  Build done. Use ./build.sh --flash or --flash-update to flash."
   exit 0
 fi
 
@@ -608,55 +653,76 @@ fi
 ensure_espflash
 CHOSEN_PORT=$(get_flash_port)
 echo ""
-echo "========== Flash: detected hardware and paths =========="
+echo "=========================================="
+echo "  Beetle — Flash to device"
+echo "=========================================="
+echo ""
+echo "========== Flash: hardware and paths =========="
+echo ""
 echo "  Project root:      $SCRIPT_ROOT"
 echo "  Build target:      $BUILD_TARGET"
 echo "  BOARD (optional):  ${BOARD:-(not set)}"
 echo "  Chip (for flash):  ${FLASH_CHIP:-(N/A)}"
 echo "  Features:          ${BUILD_FEATURES:-(none)}"
-echo "  Serial port:       $CHOSEN_PORT"
-echo "  Partition table:  $PARTITION_FOR_FLASH"
+echo -e "  ${BLUE}Serial port:${NC}       $CHOSEN_PORT"
+echo "  Partition table:   $PARTITION_FOR_FLASH"
 echo "  Bootloader:        $BOOTLOADER_BIN"
 echo "  Firmware binary:   $BIN"
 echo ""
 
 # Pre-flash connection check: try board-info; on failure print diagnostic hints.
-echo "========== Step: Checking connection =========="
-if ! espflash board-info --port "$CHOSEN_PORT" --chip "$FLASH_CHIP" 2>/dev/null; then
-  echo "  Warning: could not read board-info from $CHOSEN_PORT (connection or chip mismatch)." >&2
-  echo "  Proceeding anyway; if erase/flash fails, try:" >&2
-  echo "    1) Replug USB or use the other port (e.g. CH340: ESPFLASH_PORT=/dev/cu.usbmodem5B... ./build.sh --flash)" >&2
-  echo "    2) Put board in download mode: hold BOOT, tap RESET, then run flash within a few seconds" >&2
-  echo "    3) On macOS, avoid permission issues: ensure port is not in use by another process" >&2
+echo "========== Checking connection =========="
+echo ""
+if espflash board-info --port "$CHOSEN_PORT" --chip "$FLASH_CHIP" 2>/dev/null; then
+  echo -e "${GREEN}✓ board-info OK${NC}"
+else
+  echo -e "${YELLOW}⚠ Could not read board-info from $CHOSEN_PORT (connection or chip mismatch).${NC}"
+  echo "  Proceeding anyway; if flash fails, try:"
+  echo "    1) Replug USB or set ESPFLASH_PORT=… (see ./build.sh --help)"
+  echo "    2) Download mode: hold BOOT, tap RESET, run flash within a few seconds"
+  echo "    3) macOS: ensure another app is not using the serial port"
 fi
 echo ""
 
-confirm_erase_before_flash "$CHOSEN_PORT" "$BUILD_TARGET"
+select_flash_mode "$CHOSEN_PORT" "$BUILD_TARGET"
 
-echo "========== Step: Erasing entire flash =========="
-echo "  Port: $CHOSEN_PORT  |  Chip: $FLASH_CHIP"
-if ! espflash erase-flash --port "$CHOSEN_PORT" --chip "$FLASH_CHIP"; then
-  echo "" >&2
-  echo "Erase failed. Common causes:" >&2
-  echo "  - Port in use or disconnected: unplug and replug; set ESPFLASH_PORT=/dev/cu.xxx if multiple ports" >&2
-  echo "  - Board not in download mode: hold BOOT, tap RESET, run this command again within a few seconds" >&2
-  echo "  - Wrong chip: build target is $BUILD_TARGET (chip $FLASH_CHIP); use the matching board" >&2
-  exit 1
-fi
-echo "  Erase completed. Waiting 2s before flash."
-sleep 2
-
-echo ""
-echo "========== Step: Flashing firmware =========="
-echo "  Binary: $BIN  |  Partition table: $PARTITION_FOR_FLASH"
-if [[ -n "$NO_MONITOR" ]]; then
-  if ! espflash flash --port "$CHOSEN_PORT" --chip "$FLASH_CHIP" "${FLASH_EXTRA[@]}" "$BIN"; then
-    echo "Flash failed. See erase-step hints (port, download mode, chip)." >&2
+if [[ "$ERASE_BEFORE_FLASH" -eq 1 ]]; then
+  echo "========== Erasing entire flash =========="
+  echo ""
+  echo "  Port: $CHOSEN_PORT  |  Chip: $FLASH_CHIP"
+  if ! espflash erase-flash --port "$CHOSEN_PORT" --chip "$FLASH_CHIP"; then
+    echo "" >&2
+    echo -e "${RED}Erase failed.${NC} Common causes:" >&2
+    echo "  - Port in use or disconnected: unplug and replug; set ESPFLASH_PORT=/dev/cu.xxx if multiple ports" >&2
+    echo "  - Board not in download mode: hold BOOT, tap RESET, run this command again within a few seconds" >&2
+    echo "  - Wrong chip: build target is $BUILD_TARGET (chip $FLASH_CHIP); use the matching board" >&2
     exit 1
   fi
+  echo -e "${GREEN}✓ Erase completed. Waiting 2s before flash.${NC}"
+  sleep 2
+else
+  echo "========== Skipping full erase (update flash) =========="
+  echo ""
+  echo -e "  ${GREEN}✓ NVS and other flash regions are left unchanged.${NC}"
+  echo "  Port: $CHOSEN_PORT  |  Chip: $FLASH_CHIP"
+fi
+
+echo ""
+echo "========== Flashing firmware =========="
+echo ""
+echo "  Binary: $BIN"
+echo "  Partition table: $PARTITION_FOR_FLASH"
+if [[ -n "$NO_MONITOR" ]]; then
+  if ! espflash flash --port "$CHOSEN_PORT" --chip "$FLASH_CHIP" "${FLASH_EXTRA[@]}" "$BIN"; then
+    echo "Flash failed. Check port, download mode, and chip." >&2
+    exit 1
+  fi
+  echo ""
+  echo -e "${GREEN}✓ Flash complete.${NC}"
+  echo ""
 else
   if ! espflash flash --port "$CHOSEN_PORT" --chip "$FLASH_CHIP" "${FLASH_EXTRA[@]}" --monitor "$BIN"; then
-    echo "Flash failed. See erase-step hints (port, download mode, chip)." >&2
+    echo "Flash failed. Check port, download mode, and chip." >&2
     exit 1
   fi
 fi
