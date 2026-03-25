@@ -1,53 +1,62 @@
-# LLM Provider Configuration
+# LLM provider configuration
 
-Beetle supports multiple LLM providers. Configure them in the web UI or via `config/llm.json`.
+[中文](../zh-cn/llm-providers.md) | **English** | [Doc index](../README.md)
 
-## Supported Providers
+Configure sources in the web UI or via SPIFFS `config/llm.json` (or the HTTP API in [config-api](config-api.md)).
+
+## How the firmware picks a client (vs vendor docs)
+
+[`build_llm_clients`](../../src/llm/mod.rs) routes by `provider`:
+
+- **`anthropic`**: `AnthropicClient` (Claude Messages API).
+- **`openai`, `openai_compatible`, `gemini`, `glm`, `qwen`, `deepseek`, `moonshot`, `ollama`**: **`OpenAiCompatibleClient`** (OpenAI-style chat/completions; per-vendor base URL/headers handled inside that client).
+
+Field length validation lives in `config`. **Inclusion in the fallback chain** also follows `build_llm_clients`: **empty `api_url` is OK** for the OpenAI-compatible IDs above; **`anthropic` (and any provider not in that list) is skipped when `api_url` is empty**. For non-empty URLs, `AnthropicClient` expects the **full Messages request URL** (same role as the default `https://api.anthropic.com/v1/messages`), see [`anthropic.rs`](../../src/llm/anthropic.rs).
+
+**Multi-source fallback** ([`FallbackLlmClient`](../../src/llm/fallback.rs)): try `llm_sources` **in order**, return the **first Ok**; if all fail, return the **last** error. Router mode is described under **GET /api/config** / multi-LLM fields in [config-api](config-api.md).
+
+Model names below are **examples**—follow each vendor’s current documentation.
+
+---
+
+## Provider IDs
 
 ### OpenAI
-- **Provider**: `openai`
-- **Model examples**: `gpt-4`, `gpt-3.5-turbo`
-- **API Key**: Get from [platform.openai.com](https://platform.openai.com)
+- **ID**: `openai`
+- **Examples**: `gpt-4o`, `gpt-4`, `gpt-3.5-turbo`
+- **Keys**: [platform.openai.com](https://platform.openai.com)
 
 ### Anthropic (Claude)
-- **Provider**: `anthropic`
-- **Model examples**: `claude-3-5-sonnet-20241022`, `claude-3-haiku-20240307`
-- **API Key**: Get from [console.anthropic.com](https://console.anthropic.com)
+- **ID**: `anthropic`
+- **Examples**: see [Anthropic docs](https://docs.anthropic.com)
+- **Keys**: [console.anthropic.com](https://console.anthropic.com)
 
-### Google Gemini
-- **Provider**: `gemini`
-- **Model examples**: `gemini-pro`, `gemini-1.5-flash`
-- **API Key**: Get from [ai.google.dev](https://ai.google.dev)
+### Google Gemini (via OpenAI-compatible client)
+- **ID**: `gemini`
+- **Examples**: see [Google AI](https://ai.google.dev)
 
-### Zhipu GLM (智谱)
-- **Provider**: `glm`
-- **Model examples**: `glm-4`, `glm-4-flash`
-- **API Key**: Get from [open.bigmodel.cn](https://open.bigmodel.cn)
+### Zhipu GLM
+- **ID**: `glm`
 
-### Qwen (通义千问)
-- **Provider**: `qwen`
-- **Model examples**: `qwen-turbo`, `qwen-plus`, `qwen-max`
-- **API Key**: Get from [dashscope.aliyun.com](https://dashscope.aliyun.com)
+### Qwen
+- **ID**: `qwen`
 
 ### DeepSeek
-- **Provider**: `deepseek`
-- **Model examples**: `deepseek-chat`, `deepseek-coder`
-- **API Key**: Get from [platform.deepseek.com](https://platform.deepseek.com)
+- **ID**: `deepseek`
 
 ### Moonshot
-- **Provider**: `moonshot`
-- **Model examples**: `moonshot-v1-8k`, `moonshot-v1-32k`, `moonshot-v1-128k`
-- **API Key**: Get from [platform.moonshot.cn](https://platform.moonshot.cn)
+- **ID**: `moonshot`
 
-### Ollama (Local)
-- **Provider**: `ollama`
-- **Model examples**: `llama3`, `qwen2`, `gemma2`
-- **Setup**: Install Ollama on your local network, set API URL to `http://YOUR_IP:11434/v1`
-- **API Key**: Any value (not validated)
+### Ollama (local)
+- **ID**: `ollama`
+- **api_url**: typically `http://<host>:11434/v1`
+- **api_key**: any non-empty placeholder is fine if the server ignores it
 
-## Configuration Examples
+---
 
-### Single Provider
+## Configuration examples
+
+### Single provider
 ```json
 {
   "llm_sources": [
@@ -61,7 +70,7 @@ Beetle supports multiple LLM providers. Configure them in the web UI or via `con
 }
 ```
 
-### Multiple Providers (Automatic Fallback)
+### Multiple providers (ordered fallback)
 ```json
 {
   "llm_sources": [
@@ -87,16 +96,14 @@ Beetle supports multiple LLM providers. Configure them in the web UI or via `con
 }
 ```
 
-The device will try providers in order. If the first fails, it automatically falls back to the next.
+Summary:
 
-**How it works:**
-- Providers are tried in the order listed in `llm_sources`
-- First successful response is returned immediately
-- If all providers fail, the last error is returned
+- Sources are tried **in array order**; **first success wins**.
+- If every source fails, the **last** error is returned.
 
-## Offline Mode
+### Offline-friendly ordering (example)
 
-Add Ollama as the last fallback provider. When internet is down, the device will use your local model:
+Put Ollama last so local inference is used when upstream is down:
 
 ```json
 {

@@ -35,23 +35,25 @@ pub fn daemon_pid_path(name: &str) -> PathBuf {
 pub fn start_ap(iface: &str, ssid: &str, ip: &str) -> Result<()> {
     net::setup_ap_address(iface, &format!("{}/24", ip))?;
 
-    let hostapd_conf = format!(
+    let hostapd_conf_body = format!(
         "interface={iface}\ndriver=nl80211\nssid={ssid}\nhw_mode=g\nchannel=1\nauth_algs=1\nwpa=0\nctrl_interface={HOSTAPD_CTRL_INTERFACE_DIR}\n",
     );
+    let hostapd_conf_file = hostapd_conf_path();
     write_secure_atomic(
-        &hostapd_conf_path(),
-        hostapd_conf.as_bytes(),
+        &hostapd_conf_file,
+        hostapd_conf_body.as_bytes(),
         "wifi_ap_config",
     )?;
 
-    let dnsmasq_conf = format!(
+    let dnsmasq_conf_body = format!(
         "interface={iface}\nbind-interfaces\ndhcp-range={net_start},{net_end},255.255.255.0,12h\n",
         net_start = ap_pool_start(ip),
         net_end = ap_pool_end(ip),
     );
+    let dnsmasq_conf_file = dnsmasq_conf_path();
     write_secure_atomic(
-        &dnsmasq_conf_path(),
-        dnsmasq_conf.as_bytes(),
+        &dnsmasq_conf_file,
+        dnsmasq_conf_body.as_bytes(),
         "wifi_ap_config",
     )?;
 
@@ -60,25 +62,22 @@ pub fn start_ap(iface: &str, ssid: &str, ip: &str) -> Result<()> {
     let _ = std::fs::remove_file(&hostapd_pid);
     let _ = std::fs::remove_file(&dnsmasq_pid);
 
+    // Use owned `String` argv fragments (not `path().to_string_lossy().as_ref()` on temporaries):
+    // dnsmasq 2.90 is strict about argv; unstable pointers produced "junk found in command line".
+    let hostapd_pid_s = hostapd_pid.to_string_lossy().into_owned();
+    let hostapd_conf_s = hostapd_conf_file.to_string_lossy().into_owned();
     run_checked(
         "hostapd",
-        &[
-            "-B",
-            "-P",
-            hostapd_pid.to_string_lossy().as_ref(),
-            hostapd_conf_path().to_string_lossy().as_ref(),
-        ],
+        &["-B", "-P", hostapd_pid_s.as_str(), hostapd_conf_s.as_str()],
         CMD_TIMEOUT,
         "wifi_hostapd_start",
     )?;
+    // Single-token `--opt=path` avoids any ambiguity with multi-arg parsing on embedded dnsmasq.
+    let dnsmasq_cf = format!("--conf-file={}", dnsmasq_conf_file.display());
+    let dnsmasq_pf = format!("--pid-file={}", dnsmasq_pid.display());
     run_checked(
         "dnsmasq",
-        &[
-            "--conf-file",
-            dnsmasq_conf_path().to_string_lossy().as_ref(),
-            "--pid-file",
-            dnsmasq_pid.to_string_lossy().as_ref(),
-        ],
+        &[dnsmasq_cf.as_str(), dnsmasq_pf.as_str()],
         CMD_TIMEOUT,
         "wifi_dnsmasq_start",
     )?;

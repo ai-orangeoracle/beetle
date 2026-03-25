@@ -1,6 +1,6 @@
 # 配置与使用
 
-[English](../en-us/configuration.md) | **中文**
+[English](../en-us/configuration.md) | **中文** | [文档索引](../README.md)
 
 本文档面向**最终用户**，说明如何访问设备、配网、使用配置页（含在线版）、设置配对码，以及常用配置键与健康接口的用途。配置 API 的完整契约见 [配置 API 契约](config-api.md)。
 
@@ -48,7 +48,7 @@
 - 代理、搜索 Key 等
 - 系统信息、重启、OTA（若固件启用）、恢复出厂等
 
-所有写操作需在请求中携带正确配对码（配置页会代为携带）。
+设备**已激活**（已设置过配对码）后，变更类 API 需 **配对码** + **CSRF**（见 [config-api 鉴权](config-api.md#配对码与鉴权)）；配置页应代为携带。未激活时无法调用多数只读 API（如 `GET /api/health`），需先完成配对。
 
 ---
 
@@ -74,5 +74,5 @@
 
 ## 健康与可观测
 
-- **GET /api/health**：无需配对码，返回 WiFi 状态、入站/出站队列深度、最近错误摘要及 **metrics** 快照（消息进/出、LLM/tool 调用与错误、WDT feed、按 stage 错误计数等，无敏感信息）。调用方式：在浏览器或脚本中请求 **http://192.168.4.1/api/health**（连接设备热点时）或设备在局域网中的 IP。便于运维巡检与优化前后对比。
-- **串口**：heartbeat 每 30 秒打一条 metrics 基线（msg_in、llm_calls、err_* 等），可用于长期运行对比。
+- **GET /api/health**：需设备**已激活**；**请求 URL/Header 中不必附带配对码**。返回字段与嵌套 `metrics` / `resource` 的说明见 [config-api：GET /api/health](config-api.md#get-apihealth)。同网访问示例：`http://192.168.4.1/api/health`（热点下）或 `http://<设备LAN IP>/api/health`。
+- **串口**：heartbeat 周期性输出 metrics 基线，便于长期对比（细节以固件日志为准）。

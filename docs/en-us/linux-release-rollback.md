@@ -1,6 +1,6 @@
 # Linux install and versions (current status)
 
-**English** | [中文](../zh-cn/linux-release-rollback.md)
+**English** | [中文](../zh-cn/linux-release-rollback.md) | [Doc index](../README.md)
 
 ## Who this is for
 

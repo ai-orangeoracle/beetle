@@ -1,6 +1,6 @@
 # Linux 安装与版本（当前状态）
 
-[English](../en-us/linux-release-rollback.md) | **中文**
+[English](../en-us/linux-release-rollback.md) | **中文** | [文档索引](../README.md)
 
 ## 面向谁
 

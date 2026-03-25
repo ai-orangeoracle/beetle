@@ -197,7 +197,8 @@ impl Platform for LinuxPlatform {
     }
 
     fn request_restart(&self) {
-        log::warn!("request_restart: no-op on Linux host");
+        log::warn!("[platform::linux] restart requested, exiting process (systemd will restart)");
+        std::process::exit(42);
     }
 
     fn init_sntp(&self) {

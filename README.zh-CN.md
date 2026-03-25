@@ -252,12 +252,13 @@ cargo build --release
 
 | 文档                                                                | 说明                                                                |
 | ------------------------------------------------------------------- | ------------------------------------------------------------------- |
-| [Linux 部署（deploy-linux.sh）](docs/zh-cn/deploy-linux.md)         | 嵌入式 Linux 上安装二进制、随带 WiFi 工具、有/无 systemd |
+| [文档索引](docs/README.md)                                          | 按读者分类的中英文入口与维护约定                                         |
+| [Linux 发布包说明](docs/zh-cn/linux-release-rollback.md)             | musl 包目录约定、手工部署说明（尚无一键安装）；tar 内含 systemd 示例 |
 | [配置与使用](docs/zh-cn/configuration.md)                           | 怎么配网、用配置页、常用配置项                                              |
 | [配置 API 契约](docs/zh-cn/config-api.md)                           | HTTP API：配对、配置分段、健康检查、OTA、webhook                        |
-| [Agent 工具说明](docs/zh-cn/tools.md)                               | Agent 能用哪些工具（get_time、web_search、board_info 等） |
+| [Agent 工具说明](docs/zh-cn/tools.md)                               | 固件 `build_default_registry` 注册的工具说明                         |
 | [硬件与资源](docs/zh-cn/hardware.md)                                | 板型、内存、PSRAM、看门狗、编译选项、排错                           |
-| [硬件设备配置与 LLM 驱动设计](docs/zh-cn/hardware-device-config.md) | 设计文档：JSON 配置、device_control 工具、GPIO/PWM/ADC/蜂鸣器 |
+| [硬件设备配置](docs/zh-cn/hardware-device-config.md)                | `hardware.json` 与 `device_control`（GPIO/PWM/ADC/蜂鸣器）        |
 | [架构概要](docs/zh-cn/architecture.md)                              | 模块怎么划分的、数据怎么流转、怎么扩展                                          |
 
 ---

@@ -4,7 +4,7 @@
 
 On Linux, beetle invokes **`iw`**, **`hostapd`**, and **`dnsmasq`**. If they are missing on the device (common on **trimmed images without a package manager**), place matching binaries under **`packaging/linux/embed-deps/<arch>/`**; **`./deploy-linux.sh`** copies them to **`/opt/beetle/bin/`**, which beetle checks **before** `PATH`.
 
-用户向操作说明见 **[docs/zh-cn/deploy-linux.md](../../docs/zh-cn/deploy-linux.md)**（中文）与 **[docs/en-us/deploy-linux.md](../../docs/en-us/deploy-linux.md)**（英文）。
+用户向说明见 **[docs/zh-cn/linux-release-rollback.md](../../docs/zh-cn/linux-release-rollback.md)**（中文）与 **[docs/en-us/linux-release-rollback.md](../../docs/en-us/linux-release-rollback.md)**（英文）；上传脚本仍为仓库根目录 **`deploy-linux.sh`**。
 
 ---
 

@@ -1,6 +1,6 @@
 # 架构概要
 
-[English](../en-us/architecture.md) | **中文**
+[English](../en-us/architecture.md) | **中文** | [文档索引](../README.md)
 
 本文档面向**希望了解模块划分、数据流或做二次扩展的读者**，简要说明各模块职责、消息流向与如何新增通道/工具/LLM，不涉及内部实现细节。
 
@@ -17,7 +17,7 @@
 | **memory** | 长期记忆与会话存储；系统提示聚合。 |
 | **platform** | 平台抽象（配置存储、技能存储、HTTP 客户端等）与 ESP32 实现；唯一直接依赖 esp-idf-svc 的模块。 |
 | **llm** | LLM 客户端抽象；支持 Anthropic、OpenAI 兼容（含 Ollama）等。 |
-| **tools** | 工具注册表；GetTime、Cron、FetchUrl、WebSearch、RemindAt、Files 等；新工具实现 Tool trait 并注册。 |
+| **tools** | 工具注册表；内置工具见 [Agent 工具说明](tools.md)；新工具实现 `Tool` trait 并在 `build_default_registry` 中注册。 |
 | **agent** | 上下文构建、ReAct 循环；依赖 LlmClient、ToolRegistry、Memory、Session。 |
 | **channels** | 通道抽象与分发；Telegram、飞书、钉钉、企微、QQ 频道、WebSocket 等；入站推 bus，出站由 dispatch 按 channel 分发；通道健康追踪委托给 orchestrator。 |
 | **metrics** | 运行指标与错误画像：消息进/出、LLM/tool 调用与错误、WDT feed、dispatch 成功/失败、按 stage 聚合错误（含 session 写入失败）；供 health API 与 heartbeat 基线日志暴露。 |
@@ -25,7 +25,7 @@
 | **ota** (可选) | 从 URL 拉取固件、写 OTA 分区；失败不破坏当前分区。 |
 | **cron / heartbeat / skills** | 定时任务、周期日志（含 metrics 基线）、SPIFFS 技能加载。 |
 
-**平台边界补充**：除 `platform/` 外，`channels/wss_gateway/esp_conn.rs` 为 ESP 专用 WSS 传输，直接依赖 `esp-idf-svc`（需 `esp-idf-sys` 的 `extra_components` 拉取 `esp_websocket_client` 且绑定一致）。这是相对「业务层经 platform 访问硬件」的**明确例外**，避免与 CLAUDE.md 审查表述冲突。
+**平台边界补充**：除 `platform/` 外，`channels/wss_gateway/esp_conn.rs` 为 ESP 专用 WSS 传输，直接依赖 `esp-idf-svc`（需 `esp-idf-sys` 的 `extra_components` 提供 `esp_websocket_client` 且绑定一致）。相对「业务层经 `platform` 访问硬件」而言，这是**有意的例外**。
 
 ---
 
@@ -47,7 +47,7 @@
 - **Agent**：从 Memory/Session 聚合系统提示与历史消息，调用 LLM；若有 tool_use 则执行工具并追加结果，循环直至 end_turn；写会话并将回复推入 Outbound。
 - **出站**：Dispatch 从 Outbound 取消息，按 channel 调用对应通道的发送接口；通道健康（连续失败与冷却）由 orchestrator 模块统一追踪。
 
-**可观测与健康**：`GET /api/health` 返回 WiFi、入站/出站队列深度、最近错误摘要及 **metrics** 快照（消息进/出、LLM/tool 调用与错误、WDT feed、按 stage 的错误计数等，无敏感信息）。heartbeat 每 30 秒打一条 metrics 基线日志，便于对比优化前后。
+**可观测与健康**：HTTP 字段与鉴权见 [配置 API：GET /api/health](config-api.md#get-apihealth)；heartbeat 周期性输出基线日志（与 `metrics` 对齐，具体以固件为准）。
 
 ---
 

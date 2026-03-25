@@ -38,18 +38,13 @@ pub fn ensure_daemon(iface: &str) -> Result<()> {
         super::WPA_CTRL_INTERFACE_DIR
     );
     let conf_path = wpa_conf_path(iface);
+    let pid_path = supplicant_pid_path(iface);
     write_secure_atomic(&conf_path, conf.as_bytes(), "wifi_wpa_config")?;
+    let pid_s = pid_path.to_string_lossy().into_owned();
+    let conf_s = conf_path.to_string_lossy().into_owned();
     run_checked(
         "wpa_supplicant",
-        &[
-            "-B",
-            "-i",
-            iface,
-            "-P",
-            supplicant_pid_path(iface).to_string_lossy().as_ref(),
-            "-c",
-            conf_path.to_string_lossy().as_ref(),
-        ],
+        &["-B", "-i", iface, "-P", pid_s.as_str(), "-c", conf_s.as_str()],
         Duration::from_secs(10),
         "wifi_wpa_start",
     )?;

@@ -511,7 +511,7 @@ report_wifi_tools_on_device() {
         echo -e "${YELLOW}  Put matching binaries on **this computer** under:${NC}"
         echo -e "${YELLOW}    packaging/linux/embed-deps/$SELECTED_ARCH/${NC}"
         echo -e "${YELLOW}  then run ./deploy-linux.sh again (or install those packages on the device if you can).${NC}"
-        echo -e "${YELLOW}  See docs/zh-cn/deploy-linux.md${NC}"
+        echo -e "${YELLOW}  See docs/zh-cn/linux-release-rollback.md${NC}"
         echo ""
     fi
 }

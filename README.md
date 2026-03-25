@@ -234,12 +234,13 @@ Full key names and validation: `src/config.rs`. Runtime config segments (LLM, ch
 
 | Doc                                                                                 | Description                                                                              |
 | ----------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| [Linux deployment](docs/en-us/deploy-linux.md)                                      | Install binary on embedded Linux, bundled WiFi tools, with/without systemd               |
+| [Documentation index](docs/README.md)                                                | Audience-based map (EN/ZH paths) and maintainer conventions                            |
+| [Linux release tarball](docs/en-us/linux-release-rollback.md)                       | musl bundle layout, manual install notes (no one-click yet); systemd sample in tarball   |
 | [Configuration](docs/en-us/configuration.md)                                        | Provisioning, config page, common config                                                 |
 | [Config API contract](docs/en-us/config-api.md)                                     | HTTP API: pairing, config segments, health, OTA, webhook                                 |
-| [Agent tools](docs/en-us/tools.md)                                                  | User-facing guide: what tools the Agent can use (get_time, web_search, board_info, etc.) |
+| [Agent tools](docs/en-us/tools.md)                                                  | User-facing guide: tools registered in firmware (`build_default_registry`)             |
 | [Hardware & resources](docs/en-us/hardware.md)                                      | Boards, memory, PSRAM, watchdog, build options, troubleshooting                          |
-| [Hardware device config & LLM-driven control](docs/en-us/hardware-device-config.md) | Milestone design: JSON config–driven device_control tool for GPIO/PWM/ADC/buzzer         |
+| [Hardware device config](docs/en-us/hardware-device-config.md)                      | `hardware.json` + `device_control` design (GPIO/PWM/ADC/buzzer)                          |
 | [Architecture](docs/en-us/architecture.md)                                          | Modules, data flow, extension                                                            |
 
 ---

@@ -1,6 +1,6 @@
 # Configuration and usage
 
-**English** | [中文](../zh-cn/configuration.md)
+**English** | [中文](../zh-cn/configuration.md) | [Doc index](../README.md)
 
 This doc is for **end users**: how to access the device, provision WiFi, use the config page (including the online version), set the pairing code, and what the common config keys and health API are for. The full API contract is in [Config API Contract](config-api.md).
 
@@ -48,7 +48,7 @@ The config page provides:
 - Proxy, search keys, etc.
 - System info, restart, OTA (if enabled in firmware), factory reset
 
-All write operations must include the correct pairing code in the request (the config page sends it for you).
+After the device is **activated** (pairing code has been set once), mutating APIs need **pairing code** + **CSRF** (see [config-api auth](config-api.md#pairing-code-and-auth)); the config UI should attach both. Before activation, most read APIs (e.g. `GET /api/health`) return 401—complete pairing first.
 
 ---
 
@@ -74,5 +74,5 @@ Build-time env vars `BEETLE_*` can prefill; at runtime the config page (NVS) win
 
 ## Health and observability
 
-- **GET /api/health**: No pairing code required. Returns WiFi status, inbound/outbound queue depth, recent error summary, and a **metrics** snapshot (messages in/out, LLM/tool calls and errors, WDT feed, per-stage error counts, etc.; no sensitive data). Call it at **http://192.168.4.1/api/health** (when on the device hotspot) or the device’s LAN IP. Useful for ops checks and before/after tuning.
-- **Serial**: Heartbeat logs a metrics baseline every 30 seconds (`msg_in`, `llm_calls`, `err_*`, etc.) for long-run comparison.
+- **GET /api/health**: Requires **activation**; you do **not** need to put the pairing code in the URL or headers. Field shapes for nested `metrics` / `resource` are documented under [config-api: GET /api/health](config-api.md#get-apihealth). Example: `http://192.168.4.1/api/health` on the hotspot or `http://<device-lan-ip>/api/health` on the LAN.
+- **Serial**: Heartbeat periodically logs a metrics baseline for long-run comparison (exact fields follow firmware logs).

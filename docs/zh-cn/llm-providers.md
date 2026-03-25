@@ -1,49 +1,59 @@
 # LLM 提供商配置
 
-甲壳虫支持多个 LLM 提供商。在网页配置界面或通过 `config/llm.json` 文件配置。
+[English](../en-us/llm-providers.md) | **中文** | [文档索引](../README.md)
 
-## 支持的提供商
+在网页配置界面或通过 SPIFFS 上的 `config/llm.json`（亦可通过 [配置 API](config-api.md) 写入）管理多源列表。
+
+## 实现如何选客户端（与厂商文档分开）
+
+固件在 [`build_llm_clients`](../../src/llm/mod.rs) 中按 `provider` 分流：
+
+- **`anthropic`**：走 `AnthropicClient`（Claude Messages API）。
+- **`openai`、`openai_compatible`、`gemini`、`glm`、`qwen`、`deepseek`、`moonshot`、`ollama`**：走 **`OpenAiCompatibleClient`**（OpenAI 风格 chat/completions 协议；各厂商 base URL 与鉴权头由该客户端按 provider 处理）。
+
+写入配置时，字段长度校验见 `config` 模块。**能否进入回退链**还受 `build_llm_clients` 过滤影响：`api_url` **可为空**的 provider 为上述 OpenAI 兼容族；**`anthropic` 及任何不在该列表中的标识**在 `api_url` 为空时**不会**加入客户端列表。`AnthropicClient` 对非空 `api_url` 的语义为「完整 Messages 请求 URL」（与代码中默认 `https://api.anthropic.com/v1/messages` 同级），见 [`anthropic.rs`](../../src/llm/anthropic.rs)。
+
+**多源回退**（[`FallbackLlmClient`](../../src/llm/fallback.rs)）：按 `llm_sources` **顺序**依次调用，**首次成功即返回**；全部失败则返回**最后一次**错误。与「路由模式」（`llm_router_source_index` + `llm_worker_source_index`）可同时存在，路由细节见 [config-api](config-api.md) 中 **GET /api/config** 与多 LLM 源字段说明。
+
+下文模型名为**示例**，请以各服务商当前文档为准。
+
+---
+
+## 支持的提供商标识
 
 ### OpenAI
-- **提供商标识**: `openai`
-- **模型示例**: `gpt-4`, `gpt-3.5-turbo`
-- **API 密钥**: 从 [platform.openai.com](https://platform.openai.com) 获取
+- **标识**: `openai`
+- **模型示例**: `gpt-4o`, `gpt-4`, `gpt-3.5-turbo`
+- **密钥**: [platform.openai.com](https://platform.openai.com)
 
 ### Anthropic (Claude)
-- **提供商标识**: `anthropic`
-- **模型示例**: `claude-3-5-sonnet-20241022`, `claude-3-haiku-20240307`
-- **API 密钥**: 从 [console.anthropic.com](https://console.anthropic.com) 获取
+- **标识**: `anthropic`
+- **模型示例**: 以 [Anthropic 文档](https://docs.anthropic.com) 为准
+- **密钥**: [console.anthropic.com](https://console.anthropic.com)
 
-### Google Gemini
-- **提供商标识**: `gemini`
-- **模型示例**: `gemini-pro`, `gemini-1.5-flash`
-- **API 密钥**: 从 [ai.google.dev](https://ai.google.dev) 获取
+### Google Gemini（OpenAI 兼容客户端路径）
+- **标识**: `gemini`
+- **模型示例**: 以 [Google AI](https://ai.google.dev) 为准
+- **密钥**: Google AI Studio
 
 ### 智谱 GLM
-- **提供商标识**: `glm`
-- **模型示例**: `glm-4`, `glm-4-flash`
-- **API 密钥**: 从 [open.bigmodel.cn](https://open.bigmodel.cn) 获取
+- **标识**: `glm`
 
 ### 通义千问
-- **提供商标识**: `qwen`
-- **模型示例**: `qwen-turbo`, `qwen-plus`, `qwen-max`
-- **API 密钥**: 从 [dashscope.aliyun.com](https://dashscope.aliyun.com) 获取
+- **标识**: `qwen`
 
 ### DeepSeek
-- **提供商标识**: `deepseek`
-- **模型示例**: `deepseek-chat`, `deepseek-coder`
-- **API 密钥**: 从 [platform.deepseek.com](https://platform.deepseek.com) 获取
+- **标识**: `deepseek`
 
 ### Moonshot
-- **提供商标识**: `moonshot`
-- **模型示例**: `moonshot-v1-8k`, `moonshot-v1-32k`, `moonshot-v1-128k`
-- **API 密钥**: 从 [platform.moonshot.cn](https://platform.moonshot.cn) 获取
+- **标识**: `moonshot`
 
-### Ollama（本地模型）
-- **提供商标识**: `ollama`
-- **模型示例**: `llama3`, `qwen2`, `gemma2`
-- **设置方法**: 在局域网安装 Ollama，API 地址设为 `http://你的IP:11434/v1`
-- **API 密钥**: 填任意值（不验证）
+### Ollama（本地）
+- **标识**: `ollama`
+- **api_url**: 一般为 `http://<主机>:11434/v1`
+- **api_key**: 可填占位非空字符串（本地常不校验）
+
+---
 
 ## 配置示例
 
@@ -61,7 +71,7 @@
 }
 ```
 
-### 多个提供商（自动回退）
+### 多个提供商（顺序回退）
 ```json
 {
   "llm_sources": [
@@ -87,16 +97,14 @@
 }
 ```
 
-设备会按顺序尝试提供商。如果第一个失败，会自动切换到下一个。
+行为摘要：
 
-**工作原理：**
-- 按 `llm_sources` 列表顺序依次尝试
-- 第一个成功的响应会立即返回
-- 如果全部失败，返回最后一个错误
+- 按 `llm_sources` **顺序**尝试；**第一个成功的响应**立即返回。
+- 若全部失败，返回**最后一次**错误。
 
-## 离线模式
+### 离线优先（示例）
 
-将 Ollama 作为最后的回退提供商。当互联网断开时，设备会使用你的本地模型：
+将 Ollama 放在列表末尾，主线路不可用时再使用本地模型：
 
 ```json
 {
