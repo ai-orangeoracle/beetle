@@ -1,4 +1,11 @@
-import { useCallback, useContext, useEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import Drawer from "@mui/material/Drawer";
@@ -13,6 +20,8 @@ import { DeviceBanner } from "./DeviceBanner";
 import { Sidebar } from "./Sidebar";
 import { TopBar } from "./TopBar";
 import { NavBlockerContext } from "../contexts/NavBlockerContext";
+import { PcbDecorOverlay } from "./PcbDecorOverlay";
+import { MAIN_SURFACE_PCB_SX } from "../theme/pcbSurface";
 import { UnsavedContext } from "../contexts/UnsavedContext";
 import { useConfig } from "../hooks/useConfig";
 import { useToast } from "../hooks/useToast";
@@ -26,6 +35,28 @@ import WarningAmberRounded from "@mui/icons-material/WarningAmberRounded";
 
 interface LayoutProps {
   onOpenSettings?: () => void;
+}
+
+function MainSurface({ children }: { children: ReactNode }) {
+  return (
+    <Box
+      component="main"
+      sx={{
+        ...MAIN_SURFACE_PCB_SX,
+        position: "relative",
+        flex: 1,
+        minHeight: 0,
+        overflow: "auto",
+        pt: 3,
+        pb: 5,
+        px: { xs: 2, md: 3 },
+        width: "100%",
+      }}
+    >
+      <PcbDecorOverlay />
+      <Box sx={{ position: "relative", zIndex: 1 }}>{children}</Box>
+    </Box>
+  );
 }
 
 export function Layout({ onOpenSettings }: LayoutProps) {
@@ -283,8 +314,8 @@ export function Layout({ onOpenSettings }: LayoutProps) {
                   width: 280,
                   maxWidth: "85vw",
                   boxSizing: "border-box",
-                  backgroundColor: "var(--card)",
-                  boxShadow: "8px 0 32px rgba(0,0,0,0.15)",
+                  backgroundColor: "var(--surface)",
+                  boxShadow: "var(--shadow-card)",
                 },
               }}
             >
@@ -306,26 +337,9 @@ export function Layout({ onOpenSettings }: LayoutProps) {
                 }}
               />
               <DeviceBanner />
-              <Box
-                component="main"
-                sx={{
-                  flex: 1,
-                  minHeight: 0,
-                  overflow: "auto",
-                  pt: 3,
-                  pb: 5,
-                  px: 2,
-                  width: "100%",
-                  backgroundColor: "var(--surface)",
-                  backgroundImage: [
-                    "linear-gradient(90deg, color-mix(in srgb, var(--foreground) 6%, transparent) 1px, transparent 1px)",
-                    "linear-gradient(180deg, color-mix(in srgb, var(--foreground) 6%, transparent) 1px, transparent 1px)",
-                  ].join(", "),
-                  backgroundSize: "24px 24px, 24px 24px",
-                }}
-              >
+              <MainSurface>
                 <Outlet />
-              </Box>
+              </MainSurface>
             </Box>
           </>
         ) : (
@@ -341,26 +355,9 @@ export function Layout({ onOpenSettings }: LayoutProps) {
             >
               <TopBar onOpenSettings={onOpenSettings} />
               <DeviceBanner />
-              <Box
-                component="main"
-                sx={{
-                  flex: 1,
-                  minHeight: 0,
-                  overflow: "auto",
-                  pt: 3,
-                  pb: 5,
-                  px: { xs: 2, md: 3 },
-                  width: "100%",
-                  backgroundColor: "var(--surface)",
-                  backgroundImage: [
-                    "linear-gradient(90deg, color-mix(in srgb, var(--foreground) 6%, transparent) 1px, transparent 1px)",
-                    "linear-gradient(180deg, color-mix(in srgb, var(--foreground) 6%, transparent) 1px, transparent 1px)",
-                  ].join(", "),
-                  backgroundSize: "24px 24px, 24px 24px",
-                }}
-              >
+              <MainSurface>
                 <Outlet />
-              </Box>
+              </MainSurface>
             </Box>
           </>
         )}

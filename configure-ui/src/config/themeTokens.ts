@@ -8,11 +8,11 @@ export type ThemeBrand = 'blue' | 'teal' | 'logo' | 'firmware'
  */
 export const LAYOUT_TOKENS = {
   /** 控件圆角（按钮、输入框、Toggle 等） */
-  radiusControl: 12,
+  radiusControl: 4,
   /** 卡片/抽屉/弹层圆角 */
-  radiusCard: 16,
+  radiusCard: 6,
   /** 小控件圆角（Chip、IconButton、Tooltip） */
-  radiusChip: 10,
+  radiusChip: 4,
   /** 强调动效曲线 */
   easeEmphasized: 'cubic-bezier(0.22, 1, 0.36, 1)',
   /** 平滑缓动曲线 */
@@ -50,7 +50,7 @@ export const LAYOUT_TOKENS = {
   /** 搜索框等 pill 形态圆角（px），足够大即呈全圆角 */
   radiusSearchPill: 9999,
   /** 强调线宽度（左侧/顶部主色条，区块 accent） */
-  accentLineWidth: 3,
+  accentLineWidth: 2,
   /** 卡片顶部强调线宽度（较克制） */
   cardAccentLineWidth: 2,
   /** 图标尺寸：小（列表内、输入框内） */
@@ -85,8 +85,8 @@ export const LAYOUT_TOKENS = {
   carouselSlideDurationMs: 520,
   /** 轮播与右侧资讯卡叠压宽度（px） */
   carouselOverlapPx: 24,
-  /** hover 上浮位移（px），用于卡片等 */
-  hoverLiftY: -2,
+  /** hover 上浮位移（px），用于卡片等；控制台面板固定为 0 */
+  hoverLiftY: 0,
   /** hover 右移位移（px），用于“更多”链接、箭头等 */
   hoverShiftX: 2,
   /** 字间距：标题紧 */
@@ -117,6 +117,11 @@ export const LAYOUT_TOKENS = {
   fontSizeOverline: '0.75rem',
   /** 字号：徽章 / 极小标签 */
   fontSizeLabel: '0.6875rem',
+  /** 等宽字体栈：数值、地址、标识符 */
+  fontMono:
+    '"JetBrains Mono", "Fira Code", "Cascadia Code", ui-monospace, monospace',
+  /** 等宽数据值字号 */
+  fontSizeDataValue: '0.8125rem',
   /** 行高：紧（大标题） */
   lineHeightTight: 1.2,
   /** 行高：略紧（小标题、卡片标题） */
@@ -195,7 +200,7 @@ const tokenMap: Record<ThemeMode, Record<ThemeBrand, ThemeTokens>> = {
       card: '#ffffff',
       surface: '#f8f9fc',
       muted: '#64748b',
-      border: '#e2e8f0',
+      border: '#e8ecf2',
       primary: '#3b82f6',
       primarySoft: 'rgba(59, 130, 246, 0.06)',
       primaryFg: '#ffffff',
@@ -208,9 +213,9 @@ const tokenMap: Record<ThemeMode, Record<ThemeBrand, ThemeTokens>> = {
       transitionDuration: '200ms',
       transitionDurationEmphasized: '220ms',
       foregroundSoft: '#64748b',
-      borderSubtle: '#f1f5f9',
-      shadowSubtle: '0 1px 2px rgba(0,0,0,0.04)',
-      shadowCardHover: '0 2px 6px rgba(0,0,0,0.05)',
+      borderSubtle: '#f4f6f9',
+      shadowSubtle: '0 1px 0 rgba(15,23,42,0.035)',
+      shadowCardHover: '0 4px 20px rgba(15,23,42,0.045)',
       badgeNew: '#ef4444',
     },
     teal: {
@@ -219,7 +224,7 @@ const tokenMap: Record<ThemeMode, Record<ThemeBrand, ThemeTokens>> = {
       card: '#ffffff',
       surface: '#f8f9fc',
       muted: '#64748b',
-      border: '#e2e8f0',
+      border: '#e8ecf2',
       primary: '#14b8a6',
       primarySoft: 'rgba(20, 184, 166, 0.06)',
       primaryFg: '#ffffff',
@@ -232,9 +237,9 @@ const tokenMap: Record<ThemeMode, Record<ThemeBrand, ThemeTokens>> = {
       transitionDuration: '200ms',
       transitionDurationEmphasized: '220ms',
       foregroundSoft: '#64748b',
-      borderSubtle: '#f1f5f9',
-      shadowSubtle: '0 1px 2px rgba(0,0,0,0.04)',
-      shadowCardHover: '0 2px 6px rgba(0,0,0,0.05)',
+      borderSubtle: '#f4f6f9',
+      shadowSubtle: '0 1px 0 rgba(15,23,42,0.035)',
+      shadowCardHover: '0 4px 20px rgba(15,23,42,0.045)',
       badgeNew: '#ef4444',
     },
     logo: {
@@ -243,7 +248,7 @@ const tokenMap: Record<ThemeMode, Record<ThemeBrand, ThemeTokens>> = {
       card: '#ffffff',
       surface: '#f7f5ff',
       muted: '#64748b',
-      border: '#e8e4f2',
+      border: '#ebe7f3',
       primary: '#6d28d9',
       primarySoft: 'rgba(109, 40, 217, 0.08)',
       primaryFg: '#ffffff',
@@ -256,9 +261,9 @@ const tokenMap: Record<ThemeMode, Record<ThemeBrand, ThemeTokens>> = {
       transitionDuration: '200ms',
       transitionDurationEmphasized: '220ms',
       foregroundSoft: '#64748b',
-      borderSubtle: '#f1effa',
-      shadowSubtle: '0 1px 2px rgba(0,0,0,0.04)',
-      shadowCardHover: '0 2px 6px rgba(0,0,0,0.05)',
+      borderSubtle: '#f5f3fb',
+      shadowSubtle: '0 1px 0 rgba(15,23,42,0.035)',
+      shadowCardHover: '0 4px 20px rgba(15,23,42,0.045)',
       badgeNew: '#ef4444',
     },
     firmware: {
@@ -267,7 +272,7 @@ const tokenMap: Record<ThemeMode, Record<ThemeBrand, ThemeTokens>> = {
       card: '#ffffff',
       surface: '#f8f9fc',
       muted: '#64748b',
-      border: '#e2e8f0',
+      border: '#e8ecf2',
       primary: '#c43030',
       primarySoft: 'rgba(196, 48, 48, 0.06)',
       primaryFg: '#ffffff',
@@ -280,9 +285,9 @@ const tokenMap: Record<ThemeMode, Record<ThemeBrand, ThemeTokens>> = {
       transitionDuration: '200ms',
       transitionDurationEmphasized: '220ms',
       foregroundSoft: '#64748b',
-      borderSubtle: '#f1f5f9',
-      shadowSubtle: '0 1px 2px rgba(0,0,0,0.04)',
-      shadowCardHover: '0 2px 6px rgba(0,0,0,0.05)',
+      borderSubtle: '#f4f6f9',
+      shadowSubtle: '0 1px 0 rgba(15,23,42,0.035)',
+      shadowCardHover: '0 4px 20px rgba(15,23,42,0.045)',
       badgeNew: '#ef4444',
     },
   },
@@ -293,7 +298,7 @@ const tokenMap: Record<ThemeMode, Record<ThemeBrand, ThemeTokens>> = {
       card: '#1a1d24',
       surface: '#22262e',
       muted: '#94a3b8',
-      border: '#334155',
+      border: '#2c3340',
       primary: '#60a5fa',
       primarySoft: 'rgba(59, 130, 246, 0.10)',
       primaryFg: '#ffffff',
@@ -306,9 +311,9 @@ const tokenMap: Record<ThemeMode, Record<ThemeBrand, ThemeTokens>> = {
       transitionDuration: '200ms',
       transitionDurationEmphasized: '220ms',
       foregroundSoft: '#94a3b8',
-      borderSubtle: '#1e2229',
-      shadowSubtle: '0 1px 3px rgba(0,0,0,0.20)',
-      shadowCardHover: '0 4px 10px rgba(0,0,0,0.28)',
+      borderSubtle: '#1a1e26',
+      shadowSubtle: '0 1px 0 rgba(0,0,0,0.35)',
+      shadowCardHover: '0 4px 18px rgba(0,0,0,0.22)',
       badgeNew: '#f87171',
     },
     teal: {
@@ -317,7 +322,7 @@ const tokenMap: Record<ThemeMode, Record<ThemeBrand, ThemeTokens>> = {
       card: '#1a1d24',
       surface: '#22262e',
       muted: '#94a3b8',
-      border: '#334155',
+      border: '#2c3340',
       primary: '#2dd4bf',
       primarySoft: 'rgba(20, 184, 166, 0.10)',
       primaryFg: '#ffffff',
@@ -330,9 +335,9 @@ const tokenMap: Record<ThemeMode, Record<ThemeBrand, ThemeTokens>> = {
       transitionDuration: '200ms',
       transitionDurationEmphasized: '220ms',
       foregroundSoft: '#94a3b8',
-      borderSubtle: '#1e2229',
-      shadowSubtle: '0 1px 3px rgba(0,0,0,0.20)',
-      shadowCardHover: '0 4px 10px rgba(0,0,0,0.28)',
+      borderSubtle: '#1a1e26',
+      shadowSubtle: '0 1px 0 rgba(0,0,0,0.35)',
+      shadowCardHover: '0 4px 18px rgba(0,0,0,0.22)',
       badgeNew: '#f87171',
     },
     logo: {
@@ -341,7 +346,7 @@ const tokenMap: Record<ThemeMode, Record<ThemeBrand, ThemeTokens>> = {
       card: '#161024',
       surface: '#1c1530',
       muted: '#94a3b8',
-      border: '#352848',
+      border: '#302448',
       primary: '#a78bfa',
       primarySoft: 'rgba(167, 139, 250, 0.12)',
       primaryFg: '#ffffff',
@@ -354,9 +359,9 @@ const tokenMap: Record<ThemeMode, Record<ThemeBrand, ThemeTokens>> = {
       transitionDuration: '200ms',
       transitionDurationEmphasized: '220ms',
       foregroundSoft: '#94a3b8',
-      borderSubtle: '#241a38',
-      shadowSubtle: '0 1px 3px rgba(0,0,0,0.20)',
-      shadowCardHover: '0 4px 10px rgba(0,0,0,0.28)',
+      borderSubtle: '#221830',
+      shadowSubtle: '0 1px 0 rgba(0,0,0,0.35)',
+      shadowCardHover: '0 4px 18px rgba(0,0,0,0.22)',
       badgeNew: '#f87171',
     },
     firmware: {
@@ -365,7 +370,7 @@ const tokenMap: Record<ThemeMode, Record<ThemeBrand, ThemeTokens>> = {
       card: '#1a1d24',
       surface: '#22262e',
       muted: '#94a3b8',
-      border: '#334155',
+      border: '#2c3340',
       primary: '#ef7a7a',
       primarySoft: 'rgba(196, 48, 48, 0.08)',
       primaryFg: '#ffffff',
@@ -378,9 +383,9 @@ const tokenMap: Record<ThemeMode, Record<ThemeBrand, ThemeTokens>> = {
       transitionDuration: '200ms',
       transitionDurationEmphasized: '220ms',
       foregroundSoft: '#94a3b8',
-      borderSubtle: '#1e2229',
-      shadowSubtle: '0 1px 3px rgba(0,0,0,0.20)',
-      shadowCardHover: '0 4px 10px rgba(0,0,0,0.28)',
+      borderSubtle: '#1a1e26',
+      shadowSubtle: '0 1px 0 rgba(0,0,0,0.35)',
+      shadowCardHover: '0 4px 18px rgba(0,0,0,0.22)',
       badgeNew: '#f87171',
     },
   },

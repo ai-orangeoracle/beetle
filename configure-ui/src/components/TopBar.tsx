@@ -48,6 +48,9 @@ function metaForPathname(pathname: string) {
   if (pathname.startsWith("/device-config")) {
     return PATH_TO_META["/device-config"];
   }
+  if (pathname.startsWith("/soul-user")) {
+    return PATH_TO_META["/soul-user"];
+  }
   return PATH_TO_META[pathname];
 }
 
@@ -94,11 +97,12 @@ export function TopBar({ onMenuClick, onOpenSettings }: TopBarProps) {
       component="header"
       sx={{
         flexShrink: 0,
+        minHeight: 48,
         display: "flex",
         alignItems: "center",
         justifyContent: "space-between",
         px: 2,
-        backgroundColor: "var(--card)",
+        backgroundColor: "var(--surface)",
         gap: 2,
       }}
     >
@@ -116,7 +120,10 @@ export function TopBar({ onMenuClick, onOpenSettings }: TopBarProps) {
               color: "var(--foreground)",
               flexShrink: 0,
               borderRadius: "var(--radius-control)",
-              "&:hover": { backgroundColor: "var(--surface)" },
+              "&:hover": {
+                backgroundColor:
+                  "color-mix(in srgb, var(--foreground) 6%, transparent)",
+              },
             }}
             aria-label="Open menu"
           >
@@ -159,7 +166,8 @@ export function TopBar({ onMenuClick, onOpenSettings }: TopBarProps) {
               color: "var(--muted)",
               borderRadius: "var(--radius-control)",
               "&:hover": {
-                backgroundColor: "var(--surface)",
+                backgroundColor:
+                  "color-mix(in srgb, var(--foreground) 6%, transparent)",
                 color: "var(--foreground)",
               },
             }}
