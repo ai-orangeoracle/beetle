@@ -2,9 +2,9 @@
 
 **中文** | [English section below](#english)
 
-面向外部读者：按角色选读，避免在多篇文档里重复维护同一事实。
+按使用场景选读；同一主题尽量只在一份文档里写全，其他文档用链接引用。
 
-## 维护约定（给贡献者）
+## 文档维护（仓库贡献者）
 
 - **HTTP 路由与鉴权**：以 [`src/platform/http_server/router/dispatch.rs`](../src/platform/http_server/router/dispatch.rs) 为准。
 - **工具清单**：以 [`src/tools/registry.rs`](../src/tools/registry.rs) 中 `build_default_registry` 为准。
@@ -35,9 +35,9 @@
 
 ## English
 
-For external readers: pick docs by role; each topic has one primary source of truth.
+Choose docs by scenario; one primary page per topic, link elsewhere instead of duplicating.
 
-### Conventions (contributors)
+### Maintainer notes (repo contributors)
 
 - **HTTP routes and auth**: [`src/platform/http_server/router/dispatch.rs`](../src/platform/http_server/router/dispatch.rs).
 - **Tool list**: `build_default_registry` in [`src/tools/registry.rs`](../src/tools/registry.rs).

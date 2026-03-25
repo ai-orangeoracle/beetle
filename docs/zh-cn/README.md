@@ -2,7 +2,7 @@
 
 [返回文档总索引](../README.md)
 
-建议顺序：**configuration** →（对接 HTTP 时）**config-api**；**tools** / **llm-providers** 按需；二次开发看 **architecture**、**hardware**。
+建议阅读顺序：**configuration** →（要接 HTTP 时）**config-api**；**tools**、**llm-providers** 按需；二次开发或排错看 **architecture**、**hardware**。
 
 | 文档 | 说明 |
 |------|------|

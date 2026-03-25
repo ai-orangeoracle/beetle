@@ -2,9 +2,9 @@
 
 [中文](../zh-cn/tools.md) | **English** | [Doc index](../README.md)
 
-This doc is for **users of a Beetle device**: it lists the **tools** the on-device AI Agent can use, what they do, and their limits. You do not call them yourself—the Agent picks tools from the conversation. Failures (network, bad args, etc.) are reported in natural language.
+Tools the on-device **Agent may invoke automatically** during chat (you do not call them manually). On failure, the Agent explains in plain language.
 
-**Source of truth**: registration order in `build_default_registry` ([`src/tools/registry.rs`](../../src/tools/registry.rs)); conditional tools are called out separately.
+The list follows firmware registration order in [`build_default_registry`](../../src/tools/registry.rs). Tools that appear only when config conditions are met are labeled separately.
 
 ---
 

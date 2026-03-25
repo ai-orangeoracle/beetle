@@ -19,7 +19,7 @@ Source of truth: [`dispatch.rs`](../../src/platform/http_server/router/dispatch.
 - **Not activated**: No valid 6-digit pairing code stored in NVS.
 - **Activated**: `POST /api/pairing_code` has succeeded at least once.
 - **Activated only** (`require_activated`): The device is activated; the request **does not** need `?code=` or `X-Pairing-Code`.
-- **Writes** (state-changing): Unless listed as **exceptions**, require **pairing code** + **CSRF** after activation (order: pairing check first, then CSRF).
+- **Writes** (state-changing): After activation, default to **pairing code** + **CSRF** (pairing first, then CSRF). Path list and **exceptions**: section **Writes: pairing code + CSRF**.
 
 ### Allowed when not activated
 
@@ -37,7 +37,7 @@ Other paths return **401** when not activated (wording may vary by locale).
 
 These require **activation** but **not** `?code=` or `X-Pairing-Code` (this is what “no pairing code” means in user docs: **not** “works before activation”):
 
-**GET /** (below), **GET /api/config**, **GET /api/config/hardware**, **GET /api/config/display**, **GET /api/health**, **GET /api/metrics**, **GET /api/resource**, **GET /api/diagnose**, **GET /api/system_info**, **GET /api/channel_connectivity**, **GET /api/sessions**, **GET /api/memory/status**, **GET /api/skills**, **GET /api/soul**, **GET /api/user**; with `ota` feature, **GET /api/ota/check**.
+**GET /**, **GET /api/config**, **GET /api/config/hardware**, **GET /api/config/display**, **GET /api/health**, **GET /api/metrics**, **GET /api/resource**, **GET /api/diagnose**, **GET /api/system_info**, **GET /api/channel_connectivity**, **GET /api/sessions**, **GET /api/memory/status**, **GET /api/skills**, **GET /api/soul**, **GET /api/user**; with `ota` feature, **GET /api/ota/check**.
 
 ### Writes: pairing code + CSRF
 
@@ -129,7 +129,7 @@ Includes: `POST /api/config/wifi`, `/api/config/llm`, `/api/config/channels`, `/
 ### POST /api/config/llm
 
 - **Purpose**: Write only the LLM segment (multi-source and router/worker indices) to SPIFFS (`config/llm.json`); request body is the full segment; backend validates and writes.
-- **Auth**: Activated + pairing code + CSRF (see above).
+- **Auth**: Activated + pairing code + CSRF (same rules as **Writes: pairing code + CSRF** in this doc).
 - **Request**: `Content-Type: application/json`, Body `{ "llm_sources": [...], "llm_router_source_index": 0, "llm_worker_source_index": 0 }` (last two optional). `llm_sources` must be non-empty; each item must have `api_key`. Each item may include:
   - `provider` (required non-empty string; length checks in `config`. Runtime client selection: [`llm/mod.rs`](../../src/llm/mod.rs)—common values include `anthropic`, `openai`, `openai_compatible`, `gemini`, `glm`, `qwen`, `deepseek`, `moonshot`, `ollama`; see [LLM providers](llm-providers.md))
   - `api_key` (required)
@@ -274,7 +274,7 @@ Includes: `POST /api/config/wifi`, `/api/config/llm`, `/api/config/channels`, `/
 ### POST /api/webhook
 
 - **Purpose**: External HTTP POST to inject one inbound message; body is used as content and pushed to the inbound queue for the agent.
-- **Auth**: Activated + pairing code + CSRF; plus **webhook token** below.
+- **Auth**: Activated + pairing code + CSRF; then the **webhook token** check in the same subsection.
 - **Config**: Requires `webhook_enabled: true` and non-empty `webhook_token` in config; otherwise 403.
 - **Token check**: After pairing and CSRF, the request must include the configured token: Header `X-Webhook-Token` or query `token`; mismatch returns 401.
 - **Request**: Body is arbitrary UTF-8 text as inbound message content; max 4KB.

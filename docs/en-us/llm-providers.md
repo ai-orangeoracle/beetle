@@ -15,7 +15,7 @@ Field length validation lives in `config`. **Inclusion in the fallback chain** a
 
 **Multi-source fallback** ([`FallbackLlmClient`](../../src/llm/fallback.rs)): try `llm_sources` **in order**, return the **first Ok**; if all fail, return the **last** error. Router mode is described under **GET /api/config** / multi-LLM fields in [config-api](config-api.md).
 
-Model names below are **examples**—follow each vendor’s current documentation.
+Model names in each vendor section are **examples**—follow each vendor’s current documentation.
 
 ---
 

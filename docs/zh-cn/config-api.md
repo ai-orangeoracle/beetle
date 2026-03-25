@@ -19,7 +19,7 @@
 - **未激活**：NVS 中尚未保存有效 6 位配对码。
 - **已激活**：已成功执行过 `POST /api/pairing_code`。
 - **仅已激活**：设备已激活即可调用；**不要求**在 query/header 中带配对码（实现为 `require_activated`）。
-- **写操作**（变更状态或配置）：除下文**例外**外，在已激活前提下还须 **配对码** + **CSRF**（实现顺序为先配对码、再 CSRF）。
+- **写操作**（变更状态或配置）：已激活后默认须 **配对码** + **CSRF**（先校验配对码，再校验 CSRF）；**例外**见后文 **「写操作：配对码 + CSRF」**。
 
 ### 未激活时可用的请求
 
@@ -37,7 +37,7 @@
 
 以下接口在**已激活**后，**无需** `?code=` 或 `X-Pairing-Code`（与部分用户文档中「无需配对码」同义：**指请求不必附带码**，不是指未激活即可访问）：
 
-**GET /**（见下节）、**GET /api/config**、**GET /api/config/hardware**、**GET /api/config/display**、**GET /api/health**、**GET /api/metrics**、**GET /api/resource**、**GET /api/diagnose**、**GET /api/system_info**、**GET /api/channel_connectivity**、**GET /api/sessions**、**GET /api/memory/status**、**GET /api/skills**、**GET /api/soul**、**GET /api/user**；启用 `ota` 时另有 **GET /api/ota/check**。
+**GET /**、**GET /api/config**、**GET /api/config/hardware**、**GET /api/config/display**、**GET /api/health**、**GET /api/metrics**、**GET /api/resource**、**GET /api/diagnose**、**GET /api/system_info**、**GET /api/channel_connectivity**、**GET /api/sessions**、**GET /api/memory/status**、**GET /api/skills**、**GET /api/soul**、**GET /api/user**；启用 `ota` 时另有 **GET /api/ota/check**。
 
 未激活时访问上述接口 → 401。
 
@@ -130,7 +130,7 @@
 ### POST /api/config/llm
 
 - **用途**：仅写入 LLM 段（多源与路由/worker 下标）到 SPIFFS（`config/llm.json`）；请求体为 segment 全量，后端按 body 校验并写入。
-- **鉴权**：已激活 + 配对码 + CSRF（见上文）。
+- **鉴权**：已激活 + 配对码 + CSRF（要求同本节「写操作：配对码 + CSRF」）。
 - **请求**：`Content-Type: application/json`，Body 为 `{ "llm_sources": [...], "llm_router_source_index": 0, "llm_worker_source_index": 0 }`（后两者可选）。`llm_sources` 非空；每项 `api_key` 必填。每项可含：
   - `provider`（必填，非空字符串；长度等校验见 `config` 模块。运行时客户端分流见 [`llm/mod.rs`](../../src/llm/mod.rs)：常见值含 `anthropic` 与 `openai`、`openai_compatible`、`gemini`、`glm`、`qwen`、`deepseek`、`moonshot`、`ollama` 等；完整说明见 [LLM 提供商](llm-providers.md)）
   - `api_key`（必填）
@@ -275,7 +275,7 @@
 ### POST /api/webhook
 
 - **用途**：外部 HTTP POST 触发一条入站消息，body 作为 content 推入入站队列，由 agent 处理。
-- **鉴权**：已激活 + 配对码 + CSRF；另须通过下方 **webhook token** 校验。
+- **鉴权**：已激活 + 配对码 + CSRF；并须通过本条 **webhook token** 校验。
 - **配置**：需在配置中设置 `webhook_enabled: true` 且 `webhook_token` 非空；否则返回 403。
 - **校验**：在配对码与 CSRF 通过后，请求还须携带与配置一致的 token：Header `X-Webhook-Token` 或 query 参数 `token`；不匹配返回 401。
 - **请求**：Body 为任意 UTF-8 文本，作为入站消息 content；上限 4KB。
@@ -366,7 +366,7 @@
 
 ### 通道回调（无配对码 / 无 CSRF）
 
-供各 IM 平台服务器调用；鉴权为各 handler 内签名或 token 逻辑，**不**走上文配对码+CSRF：
+供各 IM 平台服务器调用；鉴权为各 handler 内签名或 token 逻辑，**不适用**设备侧的配对码 + CSRF 流程：
 
 - **POST /api/feishu/event**
 - **POST /api/dingtalk/webhook**

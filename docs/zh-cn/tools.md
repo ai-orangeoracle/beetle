@@ -2,9 +2,9 @@
 
 [English](../en-us/tools.md) | **中文** | [文档索引](../README.md)
 
-本文档面向**使用 Beetle 设备的用户**，说明设备上 AI Agent 在对话中可用的**工具**及其作用与限制。你不需要手动调用这些工具——Agent 会根据对话自动选用；若调用失败（如网络错误、参数不合法），Agent 会用自然语言说明结果。
+说明聊天时 **Agent 可自动调用的工具**（无需手动调用）：名称、用途与限制。调用失败时 Agent 会用自然语言反馈原因。
 
-**清单来源**：固件中 `build_default_registry`（[`src/tools/registry.rs`](../../src/tools/registry.rs)）注册顺序；条件注册的工具单独标注。
+工具列表与固件 [`build_default_registry`](../../src/tools/registry.rs) 的注册顺序一致；仅在满足配置条件时出现的工具单独标注。
 
 ---
 

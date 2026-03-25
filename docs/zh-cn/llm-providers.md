@@ -15,7 +15,7 @@
 
 **多源回退**（[`FallbackLlmClient`](../../src/llm/fallback.rs)）：按 `llm_sources` **顺序**依次调用，**首次成功即返回**；全部失败则返回**最后一次**错误。与「路由模式」（`llm_router_source_index` + `llm_worker_source_index`）可同时存在，路由细节见 [config-api](config-api.md) 中 **GET /api/config** 与多 LLM 源字段说明。
 
-下文模型名为**示例**，请以各服务商当前文档为准。
+各小节中的模型名为**示例**，请以服务商现行文档为准。
 
 ---
 
