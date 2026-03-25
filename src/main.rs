@@ -372,6 +372,10 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
         move || p.memory_snapshot()
     }));
     let config_store = platform.config_store();
+    let resolve_locale_ui: Arc<dyn Fn() -> beetle::i18n::Locale + Send + Sync> = Arc::new({
+        let cs = Arc::clone(&config_store);
+        move || beetle::i18n::Locale::from_storage(&beetle::config::get_locale(cs.as_ref()))
+    });
     let skill_storage = platform.skill_storage();
     let skill_meta_store = platform.skill_meta_store();
     let memory_store: Arc<dyn MemoryStore + Send + Sync> = platform.memory_store();
@@ -480,6 +484,7 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
         beetle::cron::DEFAULT_CRON_INTERVAL_SECS,
         Some(Arc::clone(&memory_store)),
         Some((Arc::clone(&platform), config.hardware_devices.clone())),
+        Arc::clone(&resolve_locale_ui),
     );
     beetle::heartbeat::run_heartbeat_loop_with_tasks(
         VERSION,
@@ -490,6 +495,7 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
         Arc::clone(&outbound_depth),
         Arc::clone(&session_store),
         Arc::clone(&platform),
+        Arc::clone(&resolve_locale_ui),
     );
 
     // 出站前等待 STA + 编排器初始化：须在 `create_http_client` 成功判定之前，以便 Linux 在 HTTP 桩返回 Err 时仍能 init orchestrator。
@@ -776,7 +782,12 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
             .ok();
     }
 
-    beetle::memory::run_remind_loop(Arc::clone(&remind_at_store), inbound_tx.clone(), 60);
+    beetle::memory::run_remind_loop(
+        Arc::clone(&remind_at_store),
+        inbound_tx.clone(),
+        60,
+        Arc::clone(&resolve_locale_ui),
+    );
 
     let (sinks, mut channel_rx_set) =
         beetle::channels::build_channel_sinks(config.as_ref(), &qq_msg_id_cache);
@@ -869,6 +880,7 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
             let tg_inbound_depth = Arc::clone(&inbound_depth);
             let tg_outbound_depth = Arc::clone(&outbound_depth);
             let tg_config_store = Arc::clone(&config_store);
+            let tg_resolve_locale = Arc::clone(&resolve_locale_ui);
             let pf = Arc::clone(&platform);
             let cfg = Arc::clone(&config);
             beetle::util::spawn_guarded("tg_poll", move || {
@@ -882,6 +894,7 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
                     tg_inbound_depth,
                     tg_outbound_depth,
                     tg_config_store,
+                    tg_resolve_locale,
                     move || pf.create_http_client(cfg.as_ref()),
                 )
             });
@@ -898,7 +911,8 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
             }
         }
 
-        let (router_client, worker_llm_box) = beetle::build_llm_clients(&config);
+        let (router_client, worker_llm_box) =
+            beetle::build_llm_clients(&config, Arc::clone(&resolve_locale_ui));
         let registry = beetle::build_default_registry(
             &config,
             Arc::clone(&platform),
@@ -978,6 +992,7 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
             pending_retry: pending_retry_store.as_ref(),
             llm_stream: config.llm_stream,
             stream_editor: stream_editor_ref,
+            resolve_locale: std::sync::Arc::clone(&resolve_locale_ui),
         };
         #[cfg(feature = "cli")]
         {

@@ -6,6 +6,7 @@ use crate::constants::{
     SENSOR_WATCH_MAX_ALERT_LEN, SENSOR_WATCH_MAX_ENTRIES, SENSOR_WATCH_MIN_INTERVAL_SECS,
 };
 use crate::error::{Error, Result};
+use crate::i18n::{tr, Message as UiMessage, SensorWatchThresholdKind};
 use crate::memory::MemoryStore;
 use crate::tools::{parse_tool_args, Tool, ToolContext};
 use serde::{Deserialize, Serialize};
@@ -342,6 +343,7 @@ pub(crate) fn check_sensor_watches(
     inbound_tx: &crate::bus::InboundTx,
     platform: &dyn crate::platform::Platform,
     devices: &[DeviceEntry],
+    loc: crate::i18n::Locale,
 ) {
     let mut watches = load_sensor_watches(store);
     if watches.is_empty() {
@@ -388,17 +390,20 @@ pub(crate) fn check_sensor_watches(
         };
 
         if triggered {
-            let content = format!(
-                "传感器告警 [{}] {}: 当前值={:.2}, 阈值={:.2} ({})",
-                watch.id,
-                watch.alert_message,
-                value,
-                watch.threshold_value,
-                match watch.threshold_type {
-                    ThresholdType::Above => "above",
-                    ThresholdType::Below => "below",
-                    ThresholdType::Change => "change",
-                }
+            let threshold_kind = match watch.threshold_type {
+                ThresholdType::Above => SensorWatchThresholdKind::Above,
+                ThresholdType::Below => SensorWatchThresholdKind::Below,
+                ThresholdType::Change => SensorWatchThresholdKind::Change,
+            };
+            let content = tr(
+                UiMessage::SensorWatchAlert {
+                    id: watch.id.clone(),
+                    label: watch.alert_message.clone(),
+                    value,
+                    threshold: watch.threshold_value,
+                    threshold_kind,
+                },
+                loc,
             );
             match crate::bus::PcMsg::new(&watch.channel, &watch.chat_id, content) {
                 Ok(msg) => {

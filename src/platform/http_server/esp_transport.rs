@@ -71,19 +71,13 @@ fn read_body_esp<C: Connection>(
         EspBodyMode::Utf8(max) => match common::read_body_utf8_impl(req, req.content_len(), max) {
             Ok(s) => Ok(s.into_bytes()),
             Err(BodyReadError::ReadFailed) => {
-                let locale = crate::config::get_locale(store);
-                let msg = crate::platform::http_server::user_message::from_api_key(
-                    "body_read_failed",
-                    &locale,
-                );
+                let loc = crate::i18n::locale_from_store(store);
+                let msg = crate::i18n::tr(crate::i18n::Message::BodyReadFailed, loc);
                 Err(ApiResponse::err_500(&msg))
             }
             Err(BodyReadError::InvalidUtf8) => {
-                let locale = crate::config::get_locale(store);
-                let msg = crate::platform::http_server::user_message::from_api_key(
-                    "invalid_utf8",
-                    &locale,
-                );
+                let loc = crate::i18n::locale_from_store(store);
+                let msg = crate::i18n::tr(crate::i18n::Message::InvalidUtf8, loc);
                 Err(ApiResponse::err_400(&msg))
             }
         },
@@ -92,19 +86,13 @@ fn read_body_esp<C: Connection>(
             match common::read_body_utf8_impl(req, req.content_len(), max) {
                 Ok(s) => Ok(s.into_bytes()),
                 Err(BodyReadError::ReadFailed) => {
-                    let locale = crate::config::get_locale(store);
-                    let msg = crate::platform::http_server::user_message::from_api_key(
-                        "body_read_failed",
-                        &locale,
-                    );
+                    let loc = crate::i18n::locale_from_store(store);
+                    let msg = crate::i18n::tr(crate::i18n::Message::BodyReadFailed, loc);
                     Err(ApiResponse::err_500(&msg))
                 }
                 Err(BodyReadError::InvalidUtf8) => {
-                    let locale = crate::config::get_locale(store);
-                    let msg = crate::platform::http_server::user_message::from_api_key(
-                        "invalid_utf8",
-                        &locale,
-                    );
+                    let loc = crate::i18n::locale_from_store(store);
+                    let msg = crate::i18n::tr(crate::i18n::Message::InvalidUtf8, loc);
                     Err(ApiResponse::err_400(&msg))
                 }
             }
@@ -113,19 +101,13 @@ fn read_body_esp<C: Connection>(
             match common::read_body_utf8_impl(req, req.content_len(), FEISHU_EVENT_BODY_MAX) {
                 Ok(s) => Ok(s.into_bytes()),
                 Err(BodyReadError::ReadFailed) => {
-                    let locale = crate::config::get_locale(store);
-                    let msg = crate::platform::http_server::user_message::from_api_key(
-                        "body_read_failed",
-                        &locale,
-                    );
+                    let loc = crate::i18n::locale_from_store(store);
+                    let msg = crate::i18n::tr(crate::i18n::Message::BodyReadFailed, loc);
                     Err(ApiResponse::err_500(&msg))
                 }
                 Err(BodyReadError::InvalidUtf8) => {
-                    let locale = crate::config::get_locale(store);
-                    let msg = crate::platform::http_server::user_message::from_api_key(
-                        "invalid_utf8",
-                        &locale,
-                    );
+                    let loc = crate::i18n::locale_from_store(store);
+                    let msg = crate::i18n::tr(crate::i18n::Message::InvalidUtf8, loc);
                     Err(ApiResponse::err_400(&msg))
                 }
             }
@@ -139,11 +121,8 @@ fn read_body_esp<C: Connection>(
             let n = match embedded_io::Read::read(req, &mut buf) {
                 Ok(n) => n,
                 Err(_) => {
-                    let locale = crate::config::get_locale(store);
-                    let msg = crate::platform::http_server::user_message::from_api_key(
-                        "body_read_failed",
-                        &locale,
-                    );
+                    let loc = crate::i18n::locale_from_store(store);
+                    let msg = crate::i18n::tr(crate::i18n::Message::BodyReadFailed, loc);
                     return Err(ApiResponse::err_500(&msg));
                 }
             };

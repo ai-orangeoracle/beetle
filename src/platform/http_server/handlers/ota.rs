@@ -1,10 +1,9 @@
 //! POST /api/ota：配对后根据 body.url 执行 OTA，成功则需重启（由 mod spawn）。
 //! GET /api/ota/check：按板型与渠道查 manifest，返回是否有更新及 url。
 
-use crate::config;
 use crate::error::Error;
+use crate::i18n::{locale_from_store, tr, tr_error, Message};
 use crate::platform::http_server::common::ApiResponse;
-use crate::platform::http_server::user_message;
 
 use super::HandlerContext;
 
@@ -35,11 +34,11 @@ fn semver_gt(a: &str, b: &str) -> bool {
 pub fn get_check(ctx: &HandlerContext, channel: &str) -> Result<String, std::io::Error> {
     use crate::platform::http_server::common::to_io;
 
-    let locale = config::get_locale(ctx.config_store.as_ref());
+    let loc = locale_from_store(ctx.config_store.as_ref());
     let current = ctx.version.as_ref();
 
     if crate::ota_manifest_url().is_empty() {
-        let err_msg = user_message::from_api_key("ota_channel_not_configured", &locale);
+        let err_msg = tr(Message::OtaChannelNotConfigured, loc);
         let json = serde_json::json!({
             "current_version": current,
             "update_available": false,
@@ -51,7 +50,7 @@ pub fn get_check(ctx: &HandlerContext, channel: &str) -> Result<String, std::io:
     let body = match ctx.fetch_url(crate::ota_manifest_url(), MAX_MANIFEST_LEN) {
         Ok(b) => b,
         Err(_) => {
-            let err_msg = user_message::from_api_key("ota_check_fail", &locale);
+            let err_msg = tr(Message::OtaCheckFail, loc);
             let json = serde_json::json!({
                 "current_version": current,
                 "update_available": false,
@@ -64,7 +63,7 @@ pub fn get_check(ctx: &HandlerContext, channel: &str) -> Result<String, std::io:
     let body_str = match std::str::from_utf8(&body) {
         Ok(s) => s,
         Err(_) => {
-            let err_msg = user_message::from_api_key("ota_check_fail", &locale);
+            let err_msg = tr(Message::OtaCheckFail, loc);
             let json = serde_json::json!({
                 "current_version": current,
                 "update_available": false,
@@ -77,7 +76,7 @@ pub fn get_check(ctx: &HandlerContext, channel: &str) -> Result<String, std::io:
     let root: serde_json::Value = match serde_json::from_str(body_str) {
         Ok(v) => v,
         Err(_) => {
-            let err_msg = user_message::from_api_key("ota_check_fail", &locale);
+            let err_msg = tr(Message::OtaCheckFail, loc);
             let json = serde_json::json!({
                 "current_version": current,
                 "update_available": false,
@@ -150,7 +149,7 @@ pub fn get_check(ctx: &HandlerContext, channel: &str) -> Result<String, std::io:
 /// body 为请求体 UTF-8 字符串。返回 (ApiResponse, should_spawn_restart)。
 #[cfg(feature = "ota")]
 pub fn post(ctx: &HandlerContext, body: &str) -> Result<(ApiResponse, bool), std::io::Error> {
-    let locale = config::get_locale(ctx.config_store.as_ref());
+    let loc = locale_from_store(ctx.config_store.as_ref());
     let url = match serde_json::from_str::<serde_json::Value>(body) {
         Ok(v) => v
             .get("url")
@@ -162,33 +161,27 @@ pub fn post(ctx: &HandlerContext, body: &str) -> Result<(ApiResponse, bool), std
     let url = match url {
         Some(u) => u,
         None => {
-            return Ok((
-                ApiResponse::err_400(&user_message::from_api_key("invalid_url", &locale)),
-                false,
-            ))
+            return Ok((ApiResponse::err_400(&tr(Message::InvalidUrl, loc)), false))
         }
     };
     let valid = (url.starts_with("http://") || url.starts_with("https://")) && url.len() > 8;
     if !valid {
-        return Ok((
-            ApiResponse::err_400(&user_message::from_api_key("invalid_url", &locale)),
-            false,
-        ));
+        return Ok((ApiResponse::err_400(&tr(Message::InvalidUrl, loc)), false));
     }
     match ctx.platform.ota_from_url(url) {
         Ok(()) => Ok((ApiResponse::ok_200_json("{\"ok\":true}"), true)),
         Err(e) => {
             let msg = match &e {
                 Error::Esp { stage, .. } => {
-                    let key = match stage.as_str() {
-                        "ota_download" => "ota_download",
-                        "ota_validate" => "ota_validate",
-                        "ota_write" => "ota_write",
-                        _ => "operation_failed",
+                    let m = match stage.as_str() {
+                        "ota_download" => Message::OtaDownload,
+                        "ota_validate" => Message::OtaValidate,
+                        "ota_write" => Message::OtaWrite,
+                        _ => Message::OperationFailed,
                     };
-                    user_message::from_api_key(key, &locale)
+                    tr(m, loc)
                 }
-                _ => user_message::from_error(&e, &locale),
+                _ => tr_error(&e, loc),
             };
             Ok((ApiResponse::err_500(&msg), false))
         }

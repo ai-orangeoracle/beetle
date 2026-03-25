@@ -5,6 +5,7 @@
 //! 调用方（前端或网关）应设置合理 HTTP 超时。
 
 use crate::config::AppConfig;
+use crate::i18n::{tr, Locale, Message};
 use serde::Serialize;
 
 /// 单通道连通性结果；与前端约定字段名。
@@ -39,14 +40,20 @@ fn webhook_configured(c: &AppConfig) -> bool {
 pub fn check_all<H: crate::channels::ChannelHttpClient + ?Sized>(
     config: &AppConfig,
     http: &mut H,
+    loc: Locale,
 ) -> Vec<ChannelConnectivityItem> {
     let mut out = Vec::with_capacity(6);
-    out.push(crate::channels::telegram::check_connectivity(config, http));
-    out.push(crate::channels::feishu::check_connectivity(config, http));
-    out.push(crate::channels::dingtalk::check_connectivity(config, http));
-    out.push(crate::channels::wecom::check_connectivity(config, http));
-    out.push(crate::channels::qq::check_connectivity(config, http));
+    out.push(crate::channels::telegram::check_connectivity(config, http, loc));
+    out.push(crate::channels::feishu::check_connectivity(config, http, loc));
+    out.push(crate::channels::dingtalk::check_connectivity(config, http, loc));
+    out.push(crate::channels::wecom::check_connectivity(config, http, loc));
+    out.push(crate::channels::qq::check_connectivity(config, http, loc));
     let configured = webhook_configured(config);
-    out.push(item("webhook", configured, configured, None));
+    let msg = if configured {
+        None
+    } else {
+        Some(tr(Message::ConnectivityNotConfigured, loc))
+    };
+    out.push(item("webhook", configured, configured, msg));
     out
 }

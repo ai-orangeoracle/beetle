@@ -10,6 +10,7 @@ use crate::constants::{
     TASK_CONTINUATION_CONTINUE_THRESHOLD_LEN,
 };
 use crate::error::Result;
+use crate::i18n::{tr, Locale as UiLocale, Message as UiMessage};
 use crate::llm::{LlmClient, LlmHttpClient, Message, StopReason, ToolSpec};
 use crate::memory::{
     EmotionSignalStore, ImportantMessageStore, MemoryStore, PendingRetryStore, SessionStore,
@@ -49,8 +50,6 @@ const ROUTER_SYSTEM: &str =
 /// 程序性会话摘要：单次轻量 LLM 调用的 system 提示。
 const SUMMARY_SYSTEM: &str = "You are a conversation summarizer. Compress the following conversation into a concise summary (max 800 chars) preserving key facts, user preferences and pending tasks. Reply with the summary only.";
 
-/// 低内存时发给用户的固定人话（出站），并重新入队当前消息。
-const LOW_MEMORY_USER_MESSAGE: &str = "设备内存紧张，请稍后再试。";
 /// 同一 chat_id 的 "low memory, defer" 日志最少间隔，避免刷屏。
 const LOW_MEM_DEFER_LOG_INTERVAL: Duration = Duration::from_secs(60);
 
@@ -166,6 +165,7 @@ struct AgentToolCtx<'a, H: PlatformHttpClient> {
     http: &'a mut H,
     chat_id: Arc<str>,
     channel: Arc<str>,
+    locale: UiLocale,
 }
 
 impl<H: PlatformHttpClient> LlmHttpClient for AgentToolCtx<'_, H> {
@@ -201,6 +201,9 @@ impl<H: PlatformHttpClient> ToolContext for AgentToolCtx<'_, H> {
     fn current_channel(&self) -> Option<&str> {
         Some(&self.channel)
     }
+    fn user_locale(&self) -> UiLocale {
+        self.locale
+    }
 }
 
 /// 程序性触发：用最近会话生成摘要并 `set_with_count`。LLM 失败时确定性回退，仍落盘。
@@ -229,10 +232,12 @@ fn generate_session_summary<H: PlatformHttpClient>(
         content: transcript,
     };
     let messages = [user_msg];
+    let loc = (config.resolve_locale)();
     let mut ctx = AgentToolCtx {
         http,
         chat_id: Arc::from(chat_id),
         channel: Arc::from("system"),
+        locale: loc,
     };
     match llm.chat(&mut ctx, SUMMARY_SYSTEM, &messages, None) {
         Ok(resp) => {
@@ -298,6 +303,8 @@ pub struct AgentLoopConfig<'a> {
     pub llm_stream: bool,
     /// 流式编辑器；llm_stream 开且通道支持编辑时由 main 传入。
     pub stream_editor: Option<&'a dyn StreamEditor>,
+    /// 当前 NVS 语言；工具与降级文案按此本地化。
+    pub resolve_locale: std::sync::Arc<dyn Fn() -> UiLocale + Send + Sync>,
 }
 
 /// 从 inbound_rx 取一条 PcMsg，构建 context，多轮 chat（含 tool 执行），写会话并发送一条出站。
@@ -349,6 +356,7 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
         };
         metrics::record_message_in();
         crate::platform::task_wdt::feed_current_task();
+        let loc = (config.resolve_locale)();
 
         // Periodic GC: evict expired failure/defer entries to prevent unbounded growth.
         msg_since_gc += 1;
@@ -378,7 +386,7 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
             let out = PcMsg {
                 channel: msg.channel.clone(),
                 chat_id: msg.chat_id.clone(),
-                content: "节点正在维护，请稍后...".to_string(),
+                content: tr(UiMessage::NodeMaintenance, loc),
                 is_group: false,
             };
             metrics::record_message_out();
@@ -407,7 +415,7 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
                     let defer_out = PcMsg {
                         channel: msg.channel.clone(),
                         chat_id: msg.chat_id.clone(),
-                        content: LOW_MEMORY_USER_MESSAGE.to_string(),
+                        content: tr(UiMessage::LowMemoryUserDefer, loc),
                         is_group: false,
                     };
                     metrics::record_message_out();
@@ -418,7 +426,7 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
                 let defer_out = PcMsg {
                     channel: msg.channel.clone(),
                     chat_id: msg.chat_id.clone(),
-                    content: LOW_MEMORY_USER_MESSAGE.to_string(),
+                    content: tr(UiMessage::LowMemoryUserDefer, loc),
                     is_group: false,
                 };
                 metrics::record_message_out();
@@ -489,7 +497,7 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
                 let out = PcMsg {
                     channel: msg.channel.clone(),
                     chat_id: msg.chat_id.clone(),
-                    content: LOW_MEMORY_USER_MESSAGE.to_string(),
+                    content: tr(UiMessage::LowMemoryUserDefer, loc),
                     is_group: false,
                 };
                 metrics::record_message_out();
@@ -524,6 +532,7 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
                                 registry,
                                 config,
                                 &tool_descriptions,
+                                loc,
                             )
                         }
                     }
@@ -536,7 +545,15 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
                     }
                 }
             }
-            None => run_worker_path(http, worker_llm, &msg, registry, config, &tool_descriptions),
+            None => run_worker_path(
+                http,
+                worker_llm,
+                &msg,
+                registry,
+                config,
+                &tool_descriptions,
+                loc,
+            ),
         };
 
         let (outcome, consumed_round, streamed) = match final_content {
@@ -575,7 +592,7 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
                 let reply = PcMsg {
                     channel: msg.channel.clone(),
                     chat_id: msg.chat_id.clone(),
-                    content: "节点正在维护，请稍后...".to_string(),
+                    content: tr(UiMessage::NodeMaintenance, loc),
                     is_group: false,
                 };
                 metrics::record_message_out();
@@ -725,11 +742,13 @@ fn run_worker_path<H: PlatformHttpClient>(
     registry: &crate::tools::ToolRegistry,
     config: &AgentLoopConfig<'_>,
     tool_descriptions: &str,
+    loc: UiLocale,
 ) -> Result<(WorkerOutcome, Option<u32>, bool)> {
     let mut tool_ctx = AgentToolCtx {
         http,
         chat_id: msg.chat_id.clone(),
         channel: msg.channel.clone(),
+        locale: loc,
     };
     let (suffix, consumed_round) =
         match config.task_continuation.get_task_continuation(&msg.chat_id) {
@@ -809,9 +828,10 @@ fn run_worker_path<H: PlatformHttpClient>(
                 LlmDecision::Proceed => {}
                 LlmDecision::RetryLater { .. } | LlmDecision::Degrade { .. } => {
                     if final_content.is_empty() {
-                        final_content = LOW_MEMORY_USER_MESSAGE.to_string();
+                        final_content = tr(UiMessage::LowMemoryUserDefer, loc);
                     } else {
-                        final_content.push_str("\n\n（因设备内存不足，后续步骤已省略）");
+                        final_content.push_str("\n\n");
+                        final_content.push_str(&tr(UiMessage::StreamLowMemoryOmitted, loc));
                     }
                     break;
                 }
@@ -907,7 +927,8 @@ fn run_worker_path<H: PlatformHttpClient>(
         if response.stop_reason == StopReason::MaxTokens {
             let mut content = response.content;
             if !content.is_empty() {
-                content.push_str("\n\n（回复因长度限制被截断）");
+                content.push_str("\n\n");
+                content.push_str(&tr(UiMessage::ReplyTruncated, loc));
             }
             final_content = content;
             break;
@@ -962,9 +983,21 @@ fn run_worker_path<H: PlatformHttpClient>(
                 if let (Some(ref mid), Some(ed)) = (&stream_msg_id, editor) {
                     if !stream_edit_disabled {
                         let progress = if tool_calls.len() == 1 {
-                            format!("正在执行 {}…", tc.name)
+                            tr(
+                                UiMessage::ToolProgressSingle {
+                                    name: tc.name.clone(),
+                                },
+                                loc,
+                            )
                         } else {
-                            format!("正在执行 {} ({}/{})…", tc.name, i + 1, tool_calls.len())
+                            tr(
+                                UiMessage::ToolProgress {
+                                    name: tc.name.clone(),
+                                    index: i,
+                                    total: tool_calls.len(),
+                                },
+                                loc,
+                            )
                         };
                         let _ = ed.edit(&msg.chat_id, mid, &progress);
                     }

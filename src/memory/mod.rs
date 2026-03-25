@@ -220,6 +220,7 @@ pub fn run_remind_loop(
     remind_store: std::sync::Arc<dyn RemindAtStore + Send + Sync>,
     inbound_tx: crate::bus::InboundTx,
     poll_interval_secs: u64,
+    resolve_locale: std::sync::Arc<dyn Fn() -> crate::i18n::Locale + Send + Sync>,
 ) {
     crate::util::spawn_guarded("remind", move || loop {
         std::thread::sleep(std::time::Duration::from_secs(poll_interval_secs));
@@ -228,7 +229,9 @@ pub fn run_remind_loop(
             .map(|d| d.as_secs())
             .unwrap_or(0);
         while let Ok(Some((channel, chat_id, context))) = remind_store.pop_due(now) {
-            let content = format!("提醒：{}", context);
+            let loc = resolve_locale();
+            let prefix = crate::i18n::tr(crate::i18n::Message::RemindPrefix, loc);
+            let content = format!("{}{}", prefix, context);
             if let Ok(msg) = PcMsg::new(channel, chat_id, content) {
                 let _ = inbound_tx.send(msg);
             }

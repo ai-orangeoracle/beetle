@@ -6,15 +6,12 @@ use std::sync::Arc;
 use crate::bus::{InboundTx, OutboundTx, PcMsg, MAX_CONTENT_LEN};
 use crate::channels::ChannelHttpClient;
 use crate::error::{Error, Result};
+use crate::i18n::{tr, Locale as UiLocale, Message as UiMessage};
 use crate::memory::SessionStore;
 
 use super::send::set_message_reaction;
 
 const TAG_POLL: &str = "telegram";
-const BIND_HINT_EMPTY: &str = "Bind: set BEETLE_TG_ALLOWED_CHAT_IDS=<your_chat_id> and rebuild.";
-const BIND_HINT_NOT_IN_LIST: &str =
-    "Bind: add your chat_id to BEETLE_TG_ALLOWED_CHAT_IDS (comma-separated) and rebuild.";
-
 /// Telegram 控制命令（/activation、/session clear、/status）执行所需的上下文，由 main 传入轮询线程。
 #[allow(clippy::type_complexity)]
 pub struct TelegramCommandCtx {
@@ -115,7 +112,9 @@ pub fn poll_telegram_once<H: ChannelHttpClient>(
     group_activation: &str,
     bot_username: Option<&str>,
     cmd_ctx: Option<&TelegramCommandCtx>,
+    resolve_locale: &std::sync::Arc<dyn Fn() -> UiLocale + Send + Sync>,
 ) -> Result<Option<i64>> {
+    let loc = resolve_locale();
     let url = format!(
         "{}{}/getUpdates?timeout=5{}",
         TELEGRAM_API_BASE,
@@ -146,7 +145,7 @@ pub fn poll_telegram_once<H: ChannelHttpClient>(
                     "[{}] rejected chat_id={} (allowlist empty). {}",
                     TAG_POLL,
                     chat_id,
-                    BIND_HINT_EMPTY
+                    tr(UiMessage::BindHintEmpty, loc)
                 );
                 continue;
             }
@@ -155,7 +154,7 @@ pub fn poll_telegram_once<H: ChannelHttpClient>(
                     "[{}] rejected chat_id={} (not in allowlist). {} Example: ...{}",
                     TAG_POLL,
                     chat_id,
-                    BIND_HINT_NOT_IN_LIST,
+                    tr(UiMessage::BindHintNotInList, loc),
                     chat_id
                 );
                 continue;
@@ -180,6 +179,7 @@ pub fn poll_telegram_once<H: ChannelHttpClient>(
                 }
             }
             if let Some(ctx) = cmd_ctx {
+                let loc_cmd = resolve_locale();
                 if text.starts_with('/') {
                     let parts: Vec<&str> = text.split_whitespace().collect();
                     let handled = match parts.as_slice() {
@@ -187,36 +187,49 @@ pub fn poll_telegram_once<H: ChannelHttpClient>(
                             if let Err(e) = (ctx.set_group_activation)("mention") {
                                 log::warn!("[{}] set_group_activation: {}", TAG_POLL, e);
                             }
-                            let _ = PcMsg::new("telegram", &chat_id, "已切换为 mention")
-                                .map(|m| ctx.outbound_tx.send(m));
+                            let _ = PcMsg::new(
+                                "telegram",
+                                &chat_id,
+                                tr(UiMessage::TgActivationMention, loc_cmd),
+                            )
+                            .map(|m| ctx.outbound_tx.send(m));
                             true
                         }
                         ["/activation", "always"] => {
                             if let Err(e) = (ctx.set_group_activation)("always") {
                                 log::warn!("[{}] set_group_activation: {}", TAG_POLL, e);
                             }
-                            let _ = PcMsg::new("telegram", &chat_id, "已切换为 always")
-                                .map(|m| ctx.outbound_tx.send(m));
+                            let _ = PcMsg::new(
+                                "telegram",
+                                &chat_id,
+                                tr(UiMessage::TgActivationAlways, loc_cmd),
+                            )
+                            .map(|m| ctx.outbound_tx.send(m));
                             true
                         }
                         ["/session", "clear"] => {
                             if let Err(e) = ctx.session_store.clear(&chat_id) {
                                 log::warn!("[{}] session clear: {}", TAG_POLL, e);
                             }
-                            let _ = PcMsg::new("telegram", &chat_id, "会话已清空")
-                                .map(|m| ctx.outbound_tx.send(m));
+                            let _ = PcMsg::new(
+                                "telegram",
+                                &chat_id,
+                                tr(UiMessage::TgSessionCleared, loc_cmd),
+                            )
+                            .map(|m| ctx.outbound_tx.send(m));
                             true
                         }
                         ["/status"] => {
-                            let wifi = if crate::platform::is_wifi_sta_connected() {
-                                "connected"
-                            } else {
-                                "disconnected"
-                            };
                             let inc = ctx.inbound_depth.load(Ordering::Relaxed);
                             let out = ctx.outbound_depth.load(Ordering::Relaxed);
-                            let status =
-                                format!("wifi: {}, inbound: {}, outbound: {}", wifi, inc, out);
+                            let status = tr(
+                                UiMessage::TelegramStatus {
+                                    wifi_connected: crate::platform::is_wifi_sta_connected(),
+                                    inbound: inc,
+                                    outbound: out,
+                                },
+                                loc_cmd,
+                            );
                             let _ = PcMsg::new("telegram", &chat_id, status)
                                 .map(|m| ctx.outbound_tx.send(m));
                             true
@@ -261,6 +274,7 @@ pub fn run_telegram_poll_loop<H, F>(
     inbound_depth: Arc<std::sync::atomic::AtomicUsize>,
     outbound_depth: Arc<std::sync::atomic::AtomicUsize>,
     config_store: Arc<dyn crate::platform::ConfigStore>,
+    resolve_locale: Arc<dyn Fn() -> UiLocale + Send + Sync>,
     mut create_http: F,
 ) where
     H: ChannelHttpClient,
@@ -308,6 +322,7 @@ pub fn run_telegram_poll_loop<H, F>(
             &group_activation,
             bot_username.as_deref(),
             Some(&cmd_ctx),
+            &resolve_locale,
         ) {
             Ok(next) => offset = next,
             Err(e) => {

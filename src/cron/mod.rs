@@ -4,6 +4,7 @@
 
 use crate::bus::{InboundTx, PcMsg};
 use crate::config::DeviceEntry;
+use crate::i18n::Locale;
 use crate::memory::MemoryStore;
 use crate::tools::cron_manage::CronTask;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -32,6 +33,7 @@ pub fn run_cron_loop(
     interval_secs: u64,
     memory_store: Option<Arc<dyn MemoryStore + Send + Sync>>,
     sensor_watch: Option<(Arc<dyn crate::platform::Platform>, Vec<DeviceEntry>)>,
+    resolve_locale: Arc<dyn Fn() -> Locale + Send + Sync>,
 ) {
     crate::util::spawn_guarded("cron", move || {
         let interval = Duration::from_secs(interval_secs);
@@ -62,13 +64,20 @@ pub fn run_cron_loop(
 
             // 2. Check persisted cron tasks
             if let Some(ref store) = memory_store {
-                fire_persisted_tasks(store.as_ref(), &inbound_tx, &mut persisted_cron_cache);
+                fire_persisted_tasks(
+                    store.as_ref(),
+                    &inbound_tx,
+                    &mut persisted_cron_cache,
+                    &resolve_locale,
+                );
                 if let Some((ref plat, ref devs)) = sensor_watch.as_ref() {
+                    let loc = resolve_locale();
                     crate::tools::sensor_watch::check_sensor_watches(
                         store.as_ref(),
                         &inbound_tx,
                         plat.as_ref(),
                         devs.as_slice(),
+                        loc,
                     );
                 }
             }
@@ -82,7 +91,9 @@ fn fire_persisted_tasks(
     store: &dyn MemoryStore,
     inbound_tx: &InboundTx,
     cache: &mut Vec<CronTask>,
+    resolve_locale: &Arc<dyn Fn() -> Locale + Send + Sync>,
 ) {
+    let loc = resolve_locale();
     if CRON_PERSISTED_TASKS_DIRTY.swap(false, Ordering::AcqRel) {
         *cache = crate::tools::cron_manage::load_persisted_cron_tasks(store);
     }
@@ -101,7 +112,13 @@ fn fire_persisted_tasks(
         }
         if let Ok(matches) = cron_matches(&task.expr, min, h, d, mo, dow_actual) {
             if matches {
-                let content = format!("定时任务 [{}]: {}", task.id, task.action);
+                let content = crate::i18n::tr(
+                    crate::i18n::Message::CronTaskFired {
+                        id: task.id.clone(),
+                        action: task.action.clone(),
+                    },
+                    loc,
+                );
                 match PcMsg::new(&task.channel, &task.chat_id, content) {
                     Ok(msg) => {
                         if let Err(e) = inbound_tx.send(msg) {

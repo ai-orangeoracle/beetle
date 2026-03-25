@@ -11,7 +11,6 @@ use std::sync::Arc;
 
 pub(crate) mod common;
 mod handlers;
-mod user_message;
 
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 #[allow(clippy::too_many_arguments)]

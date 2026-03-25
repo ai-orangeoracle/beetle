@@ -1,20 +1,19 @@
 //! 未配置 LLM 时的占位实现；chat 返回固定提示文案。
 //! No-op LLM when no source is configured; chat returns a fixed message.
 
+use std::sync::Arc;
+
 use crate::error::Result;
+use crate::i18n::{tr, Locale, Message as UiMessage};
 use crate::llm::{LlmClient, LlmHttpClient, LlmResponse, Message, StopReason, ToolSpec};
 
-pub struct NoopLlmClient;
-
-impl Default for NoopLlmClient {
-    fn default() -> Self {
-        Self::new()
-    }
+pub struct NoopLlmClient {
+    resolve_locale: Arc<dyn Fn() -> Locale + Send + Sync>,
 }
 
 impl NoopLlmClient {
-    pub fn new() -> Self {
-        Self
+    pub fn new(resolve_locale: Arc<dyn Fn() -> Locale + Send + Sync>) -> Self {
+        Self { resolve_locale }
     }
 }
 
@@ -26,9 +25,9 @@ impl LlmClient for NoopLlmClient {
         _messages: &[Message],
         _tools: Option<&[ToolSpec]>,
     ) -> Result<LlmResponse> {
+        let loc = (self.resolve_locale)();
         Ok(LlmResponse {
-            content: "LLM 未配置或配置无效，请通过 Web UI / 配置 API 设置 llm_sources 或 api_key。"
-                .to_string(),
+            content: tr(UiMessage::LlmNotConfigured, loc),
             stop_reason: StopReason::EndTurn,
             tool_calls: None,
         })

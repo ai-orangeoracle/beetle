@@ -116,49 +116,78 @@ where
 pub fn check_connectivity<H: ChannelHttpClient + ?Sized>(
     config: &AppConfig,
     http: &mut H,
+    loc: crate::i18n::Locale,
 ) -> super::super::connectivity::ChannelConnectivityItem {
     use super::super::connectivity;
+    use crate::i18n::{tr, Message};
     let configured =
         !config.qq_channel_app_id.trim().is_empty() && !config.qq_channel_secret.trim().is_empty();
-    let (ok, message) = if !configured {
-        (false, None)
-    } else {
-        let body = QqTokenRequest {
-            app_id: config.qq_channel_app_id.trim().to_string(),
-            client_secret: config.qq_channel_secret.trim().to_string(),
-        };
-        let body_bytes = match serde_json::to_vec(&body) {
-            Ok(b) => b,
-            Err(e) => {
-                return connectivity::item("qq_channel", configured, false, Some(e.to_string()))
-            }
-        };
-        let (status, resp_body) = match http.http_post(QQ_GET_APP_ACCESS_TOKEN_URL, &body_bytes) {
-            Ok(r) => r,
-            Err(e) => {
-                return connectivity::item("qq_channel", configured, false, Some(e.to_string()))
-            }
-        };
-        if status >= 400 {
+    if !configured {
+        return connectivity::item(
+            "qq_channel",
+            false,
+            false,
+            Some(tr(Message::ConnectivityNotConfigured, loc)),
+        );
+    }
+    let body = QqTokenRequest {
+        app_id: config.qq_channel_app_id.trim().to_string(),
+        client_secret: config.qq_channel_secret.trim().to_string(),
+    };
+    let body_bytes = match serde_json::to_vec(&body) {
+        Ok(b) => b,
+        Err(e) => {
+            log::warn!("[qq_connectivity] json: {}", e);
             return connectivity::item(
                 "qq_channel",
                 configured,
                 false,
-                Some(format!("getAppAccessToken status {}", status)),
+                Some(tr(Message::ConnectivityCheckFailed, loc)),
             );
         }
-        let r: QqTokenResponse = match serde_json::from_slice(resp_body.as_ref()) {
-            Ok(x) => x,
-            Err(e) => {
-                return connectivity::item("qq_channel", configured, false, Some(e.to_string()))
-            }
-        };
-        match r.access_token {
-            Some(t) if !t.is_empty() => (true, None),
-            _ => (false, Some("no access_token".into())),
+    };
+    let (status, resp_body) = match http.http_post(QQ_GET_APP_ACCESS_TOKEN_URL, &body_bytes) {
+        Ok(r) => r,
+        Err(e) => {
+            log::warn!("[qq_connectivity] post: {}", e);
+            return connectivity::item(
+                "qq_channel",
+                configured,
+                false,
+                Some(tr(Message::ConnectivityCheckFailed, loc)),
+            );
         }
     };
-    connectivity::item("qq_channel", configured, ok, message)
+    if status >= 400 {
+        log::warn!("[qq_connectivity] status {}", status);
+        return connectivity::item(
+            "qq_channel",
+            configured,
+            false,
+            Some(tr(Message::ConnectivityTokenInvalid, loc)),
+        );
+    }
+    let r: QqTokenResponse = match serde_json::from_slice(resp_body.as_ref()) {
+        Ok(x) => x,
+        Err(e) => {
+            log::warn!("[qq_connectivity] parse: {}", e);
+            return connectivity::item(
+                "qq_channel",
+                configured,
+                false,
+                Some(tr(Message::ConnectivityCheckFailed, loc)),
+            );
+        }
+    };
+    match r.access_token {
+        Some(t) if !t.is_empty() => connectivity::item("qq_channel", configured, true, None),
+        _ => connectivity::item(
+            "qq_channel",
+            configured,
+            false,
+            Some(tr(Message::ConnectivityTokenInvalid, loc)),
+        ),
+    }
 }
 
 /// Returns `(access_token, expires_in_secs)` from QQ API for caching.

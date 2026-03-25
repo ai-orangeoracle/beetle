@@ -31,6 +31,7 @@ pub mod ota;
 
 pub mod cron;
 pub mod heartbeat;
+pub mod i18n;
 pub mod orchestrator;
 pub mod skills;
 
@@ -108,6 +109,9 @@ impl<T: platform::PlatformHttpClient> llm::LlmHttpClient for T {
 }
 
 impl<T: platform::PlatformHttpClient> tools::ToolContext for T {
+    fn user_locale(&self) -> crate::i18n::Locale {
+        crate::i18n::Locale::Zh
+    }
     fn get_with_headers(
         &mut self,
         url: &str,

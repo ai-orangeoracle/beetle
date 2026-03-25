@@ -22,10 +22,15 @@ pub use types::{
 
 use crate::config::AppConfig;
 use crate::error::Result;
+use crate::i18n::Locale;
+use std::sync::Arc;
 
 /// 从配置构建 (router, worker) LLM 客户端对。
 /// router 用于分发判断（可选），worker 用于实际 LLM 请求。空列表返回 (None, NoopLlmClient)。
-pub fn build_llm_clients(config: &AppConfig) -> (Option<Box<dyn LlmClient>>, Box<dyn LlmClient>) {
+pub fn build_llm_clients(
+    config: &AppConfig,
+    resolve_locale: Arc<dyn Fn() -> Locale + Send + Sync>,
+) -> (Option<Box<dyn LlmClient>>, Box<dyn LlmClient>) {
     const TAG: &str = "beetle";
 
     let global_stream = config.llm_stream;
@@ -68,7 +73,10 @@ pub fn build_llm_clients(config: &AppConfig) -> (Option<Box<dyn LlmClient>>, Box
             "[{}] LLM is in no-op mode: local tools and message processing remain available",
             TAG
         );
-        return (None, Box::new(NoopLlmClient::new()));
+        return (
+            None,
+            Box::new(NoopLlmClient::new(Arc::clone(&resolve_locale))),
+        );
     }
 
     let n_sources = config.llm_sources.len();

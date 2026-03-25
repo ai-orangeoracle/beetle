@@ -109,6 +109,8 @@ pub trait ToolContext {
     fn current_channel(&self) -> Option<&str> {
         None
     }
+    /// 当前用户界面语言（来自设备 NVS），供工具返回人话时使用。
+    fn user_locale(&self) -> crate::i18n::Locale;
 }
 
 /// 工具 trait；Agent 按 name 派发，execute 时传入 ctx 以发 HTTP 等。

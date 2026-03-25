@@ -4,6 +4,8 @@
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
+use crate::i18n::{tr, Locale, Message as UiMessage};
+
 const TAG: &str = "heartbeat";
 const TASK_THROTTLE_SECS: u64 = 30;
 
@@ -68,6 +70,7 @@ pub fn run_heartbeat_loop_with_tasks(
     outbound_depth: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     session_store: std::sync::Arc<dyn crate::memory::SessionStore + Send + Sync>,
     platform: Arc<dyn crate::platform::Platform>,
+    resolve_locale: Arc<dyn Fn() -> Locale + Send + Sync>,
 ) {
     let interval = Duration::from_secs(interval_secs);
     crate::util::spawn_guarded("heartbeat_tasks", move || {
@@ -133,11 +136,9 @@ pub fn run_heartbeat_loop_with_tasks(
             if !should_inject {
                 continue;
             }
-            let msg = match crate::bus::PcMsg::new(
-                "heartbeat",
-                "heartbeat",
-                "请根据 HEARTBEAT.md 中的待办事项执行并更新文件。",
-            ) {
+            let loc = resolve_locale();
+            let body = tr(UiMessage::HeartbeatPendingTasksReminder, loc);
+            let msg = match crate::bus::PcMsg::new("heartbeat", "heartbeat", body) {
                 Ok(m) => m,
                 Err(e) => {
                     log::warn!("[{}] PcMsg::new failed: {}", TAG, e);

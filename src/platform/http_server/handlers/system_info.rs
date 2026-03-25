@@ -3,6 +3,7 @@
 
 use super::HandlerContext;
 use crate::config;
+use crate::i18n::{locale_from_store, tr, Message};
 use crate::platform::http_server::common::to_io;
 use crate::state;
 use std::sync::atomic::Ordering;
@@ -89,16 +90,17 @@ pub fn body(ctx: &HandlerContext) -> Result<String, std::io::Error> {
     let inc = ctx.inbound_depth.load(Ordering::Relaxed);
     let out = ctx.outbound_depth.load(Ordering::Relaxed);
     let sta_up = crate::platform::is_wifi_sta_connected();
+    let loc = locale_from_store(ctx.config_store.as_ref());
     let system_status = if sta_up && storage_ok && last_error.is_none() && inc <= 6 && out <= 6 {
-        "正常"
+        tr(Message::SystemStatusOk, loc)
     } else if !sta_up {
-        "WiFi 未连接"
+        tr(Message::SystemStatusWifiDisconnected, loc)
     } else if !storage_ok {
-        "存储异常"
+        tr(Message::SystemStatusStorage, loc)
     } else if last_error.is_some() {
-        "通道异常"
+        tr(Message::SystemStatusChannel, loc)
     } else {
-        "运行中"
+        tr(Message::SystemStatusRunning, loc)
     };
     let product_name = "beetle";
     let current_time = current_time_str();
