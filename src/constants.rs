@@ -1,4 +1,4 @@
-//! 资源上界单源；仅支持带 PSRAM 的 ESP32-S3，C3/S2 已移除。
+//! 资源上界单源；仅支持带 PSRAM 的 ESP32-S3。
 //! Single source for resource bounds; only ESP32-S3 with PSRAM supported.
 
 /// 入站/出站队列固定容量（条数）。

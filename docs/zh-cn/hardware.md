@@ -15,7 +15,7 @@
 | `esp32-s3-32mb` | 32MB | 16MB Octal | 240MHz | N32R16；构建时用 `BOARD=esp32-s3-32mb ./build.sh` |
 
 - 板型通过 `BOARD=esp32-s3-8mb` | `esp32-s3-16mb` | `esp32-s3-32mb` 选择（可省略，默认 `esp32-s3-16mb`）；`board_presets.toml` 决定 target 与分区表。
-- **仅支持带 PSRAM 的 ESP32-S3**；C3/S2 已不再支持。
+- **仅支持带 PSRAM 的 ESP32-S3**。
 
 ---
 
