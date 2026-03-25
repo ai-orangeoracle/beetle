@@ -105,7 +105,19 @@ pub fn run_dispatch(outbound_rx: OutboundRx, sinks: Arc<ChannelSinks>) {
     const TAG: &str = "channel_dispatch";
     let mut cooldown_buffer: VecDeque<crate::bus::PcMsg> = VecDeque::new();
 
-    while let Ok(msg) = outbound_rx.recv() {
+    loop {
+        let msg = match outbound_rx.recv() {
+            Ok(m) => m,
+            Err(e) => {
+                log::warn!(
+                    "[{}] outbound disconnected, dispatch exiting: {:?}",
+                    TAG,
+                    e
+                );
+                break;
+            }
+        };
+
         let content = truncate_content_to_max(&msg.content, MAX_CONTENT_LEN);
         if content.trim() == "SILENT" || msg.channel.as_ref() == "cron" {
             continue;
@@ -114,26 +126,34 @@ pub fn run_dispatch(outbound_rx: OutboundRx, sinks: Arc<ChannelSinks>) {
         // Replay buffered messages whose channel is out of cooldown
         let mut i = 0;
         while i < cooldown_buffer.len() {
-            if !is_channel_in_cooldown(&cooldown_buffer[i].channel) {
-                if let Some(buffered) = cooldown_buffer.swap_remove_back(i) {
-                    let bc = truncate_content_to_max(&buffered.content, MAX_CONTENT_LEN);
-                    if let Some(sink) = sinks.get(&buffered.channel) {
-                        if sink.send(&buffered.chat_id, &bc).is_ok() {
-                            record_channel_ok(&buffered.channel);
-                            metrics::record_dispatch_send(true);
-                        } else {
-                            record_channel_fail(&buffered.channel);
-                            metrics::record_dispatch_send(false);
-                            log::warn!(
-                                "[{}] channel={} cooldown replay failed",
-                                TAG,
-                                buffered.channel
-                            );
-                        }
-                    }
-                }
-            } else {
+            if is_channel_in_cooldown(&cooldown_buffer[i].channel) {
                 i += 1;
+                continue;
+            }
+            if let Some(buffered) = cooldown_buffer.swap_remove_back(i) {
+                let bc = truncate_content_to_max(&buffered.content, MAX_CONTENT_LEN);
+                if let Some(sink) = sinks.get(buffered.channel.as_ref()) {
+                    if sink.send(&buffered.chat_id, &bc).is_ok() {
+                        record_channel_ok(&buffered.channel);
+                        metrics::record_dispatch_send(true);
+                    } else {
+                        record_channel_fail(&buffered.channel);
+                        metrics::record_dispatch_send(false);
+                        log::warn!(
+                            "[{}] channel={} cooldown replay failed",
+                            TAG,
+                            buffered.channel
+                        );
+                    }
+                } else {
+                    log::warn!(
+                        "[{}] no sink for channel={}, message kept in cooldown buffer",
+                        TAG,
+                        buffered.channel
+                    );
+                    cooldown_buffer.push_back(buffered);
+                    i += 1;
+                }
             }
         }
 
