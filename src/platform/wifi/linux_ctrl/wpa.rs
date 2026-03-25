@@ -44,7 +44,15 @@ pub fn ensure_daemon(iface: &str) -> Result<()> {
     let conf_s = conf_path.to_string_lossy().into_owned();
     run_checked(
         "wpa_supplicant",
-        &["-B", "-i", iface, "-P", pid_s.as_str(), "-c", conf_s.as_str()],
+        &[
+            "-B",
+            "-i",
+            iface,
+            "-P",
+            pid_s.as_str(),
+            "-c",
+            conf_s.as_str(),
+        ],
         Duration::from_secs(10),
         "wifi_wpa_start",
     )?;

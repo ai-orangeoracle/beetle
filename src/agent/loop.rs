@@ -849,7 +849,8 @@ fn run_worker_path<H: PlatformHttpClient>(
                     response.content
                 },
             });
-            let mut cap = MAX_TOOL_RESULTS_USER_MESSAGE_LEN.min(tool_calls.len().saturating_mul(192));
+            let mut cap =
+                MAX_TOOL_RESULTS_USER_MESSAGE_LEN.min(tool_calls.len().saturating_mul(192));
             cap = cap.max(TOOL_RESULTS_PREFIX.len());
             let mut user_content_raw = String::with_capacity(cap);
             user_content_raw.push_str(TOOL_RESULTS_PREFIX);
@@ -861,44 +862,40 @@ fn run_worker_path<H: PlatformHttpClient>(
                         let progress = if tool_calls.len() == 1 {
                             format!("正在执行 {}…", tc.name)
                         } else {
-                            format!(
-                                "正在执行 {} ({}/{})…",
-                                tc.name,
-                                i + 1,
-                                tool_calls.len()
-                            )
+                            format!("正在执行 {} ({}/{})…", tc.name, i + 1, tool_calls.len())
                         };
                         let _ = ed.edit(&msg.chat_id, mid, &progress);
                     }
                 }
                 // 工具执行门控
                 let needs_net = registry.is_network_tool(&tc.name);
-                let mut result = match crate::orchestrator::can_execute_tool_pub(&tc.name, needs_net) {
-                    ToolDecision::Deny { reason } => {
-                        log::info!("[agent_tool] {} denied: {}", tc.name, reason);
-                        serde_json::json!({ "error": reason }).to_string()
-                    }
-                    ToolDecision::Allow => {
-                        match registry.execute(&tc.name, &tc.input, &mut tool_ctx) {
-                            Ok(s) => {
-                                metrics::record_tool_call(true);
-                                s
-                            }
-                            Err(e) => {
-                                metrics::record_tool_call(false);
-                                metrics::record_error_by_stage(e.stage());
-                                log::error!(
-                                    "[agent_tool] {} execute failed: {} (stage: {})",
-                                    tc.name,
-                                    e,
-                                    e.stage()
-                                );
-                                state::set_last_error(&e);
-                                format!("[tool error] {} (stage: {})", e, e.stage())
+                let mut result =
+                    match crate::orchestrator::can_execute_tool_pub(&tc.name, needs_net) {
+                        ToolDecision::Deny { reason } => {
+                            log::info!("[agent_tool] {} denied: {}", tc.name, reason);
+                            serde_json::json!({ "error": reason }).to_string()
+                        }
+                        ToolDecision::Allow => {
+                            match registry.execute(&tc.name, &tc.input, &mut tool_ctx) {
+                                Ok(s) => {
+                                    metrics::record_tool_call(true);
+                                    s
+                                }
+                                Err(e) => {
+                                    metrics::record_tool_call(false);
+                                    metrics::record_error_by_stage(e.stage());
+                                    log::error!(
+                                        "[agent_tool] {} execute failed: {} (stage: {})",
+                                        tc.name,
+                                        e,
+                                        e.stage()
+                                    );
+                                    state::set_last_error(&e);
+                                    format!("[tool error] {} (stage: {})", e, e.stage())
+                                }
                             }
                         }
-                    }
-                };
+                    };
                 let call_key = hash_tool_call(&tc.name, &tc.input);
                 let n = tool_call_repeat.entry(call_key).or_insert(0);
                 *n = (*n).saturating_add(1);

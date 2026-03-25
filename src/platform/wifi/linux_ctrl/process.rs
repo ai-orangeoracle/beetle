@@ -102,11 +102,7 @@ pub fn run_checked(
             }
             return Err(Error::config(
                 stage,
-                format!(
-                    "{} failed: {}",
-                    exe.to_string_lossy(),
-                    stderr.trim()
-                ),
+                format!("{} failed: {}", exe.to_string_lossy(), stderr.trim()),
             ));
         }
         if start.elapsed() > timeout {

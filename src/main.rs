@@ -261,10 +261,9 @@ impl FeishuStreamEditor {
             None => true,
         };
         if need_refresh {
-            let t = beetle::feishu_acquire_token(http, &self.app_id, &self.app_secret)
-                .ok_or_else(|| {
-                    beetle::Error::config("feishu_stream", "failed to acquire tenant_token")
-                })?;
+            let t = beetle::feishu_acquire_token(http, &self.app_id, &self.app_secret).ok_or_else(
+                || beetle::Error::config("feishu_stream", "failed to acquire tenant_token"),
+            )?;
             state.token = Some((t.clone(), Instant::now()));
             Ok(t)
         } else {
@@ -887,6 +886,16 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
                 )
             });
             log::info!("[{}] Telegram poll loop started", TAG);
+        }
+
+        if let Some(ref bus_cfg) = config.i2c_bus {
+            if let Err(e) = platform.init_i2c(bus_cfg) {
+                log::warn!(
+                    "[{}] I2C bus init failed (devices will be unavailable): {}",
+                    TAG,
+                    e
+                );
+            }
         }
 
         let (router_client, worker_llm_box) = beetle::build_llm_clients(&config);

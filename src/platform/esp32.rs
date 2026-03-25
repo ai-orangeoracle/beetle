@@ -43,6 +43,7 @@ pub struct Esp32Platform {
     session_summary_store: Arc<SpiffsSessionSummaryStore>,
     wifi_scan_handle: Mutex<Option<Arc<dyn crate::platform::WifiScan + Send + Sync>>>,
     display_state: Mutex<Option<DisplayState>>,
+    i2c_state: Mutex<Option<crate::platform::hardware_drivers::I2cBusState>>,
 }
 
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
@@ -64,6 +65,7 @@ impl Esp32Platform {
             session_summary_store: Arc::new(SpiffsSessionSummaryStore::new()),
             wifi_scan_handle: Mutex::new(None),
             display_state: Mutex::new(None),
+            i2c_state: Mutex::new(None),
         }
     }
 }
@@ -341,11 +343,35 @@ impl Platform for Esp32Platform {
         crate::platform::hardware_drivers::drive_buzzer(pins, params)
     }
 
+    fn init_i2c(&self, config: &crate::config::I2cBusConfig) -> crate::error::Result<()> {
+        let state = crate::platform::hardware_drivers::I2cBusState::new(
+            config.sda_pin,
+            config.scl_pin,
+            config.freq_hz,
+        )?;
+        *self.i2c_state.lock().unwrap_or_else(|e| e.into_inner()) = Some(state);
+        Ok(())
+    }
+
     fn i2c_read(&self, addr: u8, register: u8, len: usize) -> crate::error::Result<Vec<u8>> {
-        crate::platform::hardware_drivers::drive_i2c_read(addr, register, len)
+        let mut guard = self.i2c_state.lock().unwrap_or_else(|e| e.into_inner());
+        match guard.as_mut() {
+            Some(state) => state.read(addr, register, len),
+            None => Err(crate::error::Error::config(
+                "i2c_read",
+                "I2C bus not initialized",
+            )),
+        }
     }
 
     fn i2c_write(&self, addr: u8, register: u8, data: &[u8]) -> crate::error::Result<()> {
-        crate::platform::hardware_drivers::drive_i2c_write(addr, register, data)
+        let mut guard = self.i2c_state.lock().unwrap_or_else(|e| e.into_inner());
+        match guard.as_mut() {
+            Some(state) => state.write(addr, register, data),
+            None => Err(crate::error::Error::config(
+                "i2c_write",
+                "I2C bus not initialized",
+            )),
+        }
     }
 }

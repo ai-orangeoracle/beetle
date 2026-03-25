@@ -282,6 +282,12 @@ pub trait Platform: Send + Sync {
         Ok(())
     }
 
+    /// 按 `I2cBusConfig` 初始化 I2C master 总线（ESP-IDF `i2c_master.h`）。默认 no-op（Linux / 未用 I2C）。
+    /// Initialize I2C master bus from config. Default no-op.
+    fn init_i2c(&self, _config: &crate::config::I2cBusConfig) -> Result<()> {
+        Ok(())
+    }
+
     /// I2C 读取：从指定地址的寄存器读取数据。默认返回不支持错误。
     /// I2C read: read data from register at given address. Default returns unsupported error.
     fn i2c_read(&self, _addr: u8, _register: u8, _len: usize) -> Result<Vec<u8>> {

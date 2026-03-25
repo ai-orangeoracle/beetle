@@ -41,7 +41,11 @@ async fn read_sta_ip_async(iface: &str) -> Result<Option<String>> {
     tokio::spawn(connection);
 
     let mut links = handle.link().get().match_name(iface.to_string()).execute();
-    let Some(link) = links.try_next().await.map_err(|e| map_rt_stage(e, "wifi_sta_ip"))? else {
+    let Some(link) = links
+        .try_next()
+        .await
+        .map_err(|e| map_rt_stage(e, "wifi_sta_ip"))?
+    else {
         return Ok(None);
     };
 
