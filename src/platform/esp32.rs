@@ -2,17 +2,16 @@
 //! ESP32 implementation of Platform trait.
 
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
-use crate::platform::abstraction::Platform;
+use crate::platform::abstraction::{MemorySnapshot, Platform, StateFs};
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 use crate::platform::{
     display_driver::DisplayState,
     fetch_url::fetch_url_with_client,
     heartbeat_file::read_heartbeat_file,
     spiffs::{
-        read_file, remove_file, spiffs_usage, write_file, SpiffsImportantMessageStore,
-        SpiffsMemoryStore, SpiffsPendingRetryStore, SpiffsRemindAtStore, SpiffsSessionStore,
-        SpiffsSessionSummaryStore, SpiffsSkillMetaStore, SpiffsSkillStorage,
-        SpiffsTaskContinuationStore, SPIFFS_BASE,
+        spiffs_usage, SpiffsImportantMessageStore, SpiffsMemoryStore, SpiffsPendingRetryStore,
+        SpiffsRemindAtStore, SpiffsSessionStore, SpiffsSessionSummaryStore, SpiffsSkillMetaStore,
+        SpiffsSkillStorage, SpiffsTaskContinuationStore,
     },
     NvsConfigStore,
 };
@@ -25,13 +24,13 @@ use crate::{
         SessionSummaryStore, TaskContinuationStore,
     },
 };
-use std::path::PathBuf;
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 use std::sync::{Arc, Mutex};
 
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 /// ESP32 平台实现。
 pub struct Esp32Platform {
+    state_fs: Arc<dyn StateFs + Send + Sync>,
     config_store: Arc<NvsConfigStore>,
     skill_storage: Arc<SpiffsSkillStorage>,
     skill_meta_store: Arc<SpiffsSkillMetaStore>,
@@ -49,7 +48,10 @@ pub struct Esp32Platform {
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 impl Esp32Platform {
     pub fn new() -> Self {
+        let state_fs: Arc<dyn StateFs + Send + Sync> =
+            Arc::new(crate::platform::state_fs::Esp32StateFs);
         Self {
+            state_fs,
             config_store: Arc::new(NvsConfigStore),
             skill_storage: Arc::new(SpiffsSkillStorage),
             skill_meta_store: Arc::new(SpiffsSkillMetaStore),
@@ -75,14 +77,27 @@ impl Default for Esp32Platform {
 
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 impl Platform for Esp32Platform {
+    fn state_fs(&self) -> Arc<dyn StateFs + Send + Sync> {
+        Arc::clone(&self.state_fs)
+    }
+
+    fn memory_snapshot(&self) -> MemorySnapshot {
+        use crate::platform::heap::{
+            heap_free_internal, heap_free_spiram, heap_largest_free_block_internal,
+        };
+        MemorySnapshot {
+            heap_free_internal: heap_free_internal() as u32,
+            heap_free_spiram: heap_free_spiram() as u32,
+            heap_largest_block: heap_largest_free_block_internal() as u32,
+        }
+    }
+
     fn init(&self) -> crate::error::Result<()> {
         esp_idf_svc::sys::link_patches();
         esp_idf_svc::log::EspLogger::initialize_default();
         // 屏蔽 HTTP 服务器每个 URI 注册的 Info 日志，减少刷屏（0.52+ 使用 EspIdfLogFilter）
-        let _ = esp_idf_svc::log::EspIdfLogFilter::new().set_target_level(
-            "esp_idf_svc::http::server",
-            log::LevelFilter::Warn,
-        );
+        let _ = esp_idf_svc::log::EspIdfLogFilter::new()
+            .set_target_level("esp_idf_svc::http::server", log::LevelFilter::Warn);
         self.init_nvs()?;
         self.init_spiffs()?;
         Ok(())
@@ -191,28 +206,6 @@ impl Platform for Esp32Platform {
         fetch_url_with_client(client.as_mut(), url, max_len)
     }
 
-    fn read_config_file(&self, rel_path: &str) -> crate::error::Result<Option<Vec<u8>>> {
-        let mut p = PathBuf::from(SPIFFS_BASE);
-        p.push(rel_path);
-        match read_file(&p) {
-            Ok(b) => Ok(Some(b)),
-            Err(_) => Ok(None),
-        }
-    }
-
-    fn write_config_file(&self, rel_path: &str, data: &[u8]) -> crate::error::Result<()> {
-        let mut p = PathBuf::from(SPIFFS_BASE);
-        p.push(rel_path);
-        write_file(&p, data)
-    }
-
-    fn remove_config_file(&self, rel_path: &str) -> crate::error::Result<()> {
-        let mut p = PathBuf::from(SPIFFS_BASE);
-        p.push(rel_path);
-        let _ = remove_file(&p);
-        Ok(())
-    }
-
     fn request_restart(&self) {
         unsafe { esp_idf_svc::sys::esp_restart() };
     }
@@ -284,12 +277,68 @@ impl Platform for Esp32Platform {
         }
     }
 
-    fn fade_display_backlight(&self, from: u8, to: u8, duration_ms: u32) -> crate::error::Result<()> {
+    fn fade_display_backlight(
+        &self,
+        from: u8,
+        to: u8,
+        duration_ms: u32,
+    ) -> crate::error::Result<()> {
         let guard = self.display_state.lock().unwrap_or_else(|e| e.into_inner());
         match guard.as_ref() {
             Some(state) => state.fade_brightness(from, to, duration_ms),
             None => Ok(()),
         }
+    }
+
+    fn drive_gpio_out(
+        &self,
+        pins: &crate::config::PinConfig,
+        params: &serde_json::Value,
+    ) -> crate::error::Result<String> {
+        crate::platform::hardware_drivers::drive_gpio_out(pins, params)
+    }
+
+    fn drive_gpio_in(
+        &self,
+        pins: &crate::config::PinConfig,
+        params: &serde_json::Value,
+        options: &serde_json::Value,
+    ) -> crate::error::Result<String> {
+        crate::platform::hardware_drivers::drive_gpio_in(pins, params, options)
+    }
+
+    fn drive_pwm_out(
+        &self,
+        pins: &crate::config::PinConfig,
+        params: &serde_json::Value,
+        options: &serde_json::Value,
+        ledc_channel: u8,
+        ledc_timer_index: u8,
+    ) -> crate::error::Result<String> {
+        crate::platform::hardware_drivers::drive_pwm_out(
+            pins,
+            params,
+            options,
+            ledc_channel,
+            ledc_timer_index,
+        )
+    }
+
+    fn drive_adc_in(
+        &self,
+        pins: &crate::config::PinConfig,
+        params: &serde_json::Value,
+        options: &serde_json::Value,
+    ) -> crate::error::Result<String> {
+        crate::platform::hardware_drivers::drive_adc_in(pins, params, options)
+    }
+
+    fn drive_buzzer(
+        &self,
+        pins: &crate::config::PinConfig,
+        params: &serde_json::Value,
+    ) -> crate::error::Result<String> {
+        crate::platform::hardware_drivers::drive_buzzer(pins, params)
     }
 
     fn i2c_read(&self, addr: u8, register: u8, len: usize) -> crate::error::Result<Vec<u8>> {

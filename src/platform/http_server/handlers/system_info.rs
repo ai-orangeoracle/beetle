@@ -35,7 +35,7 @@ fn current_time_str() -> String {
 fn days_to_ymd(days: u64) -> (u32, u32, u32) {
     let mut d = days;
     let mut y = 1970u32;
-    let is_leap = |y: u32| (y % 4 == 0 && y % 100 != 0) || (y % 400 == 0);
+    let is_leap = |y: u32| (y.is_multiple_of(4) && !y.is_multiple_of(100)) || y.is_multiple_of(400);
     let days_in_year = |y: u32| if is_leap(y) { 366 } else { 365 };
     while d >= days_in_year(y) as u64 {
         d -= days_in_year(y) as u64;
@@ -48,16 +48,16 @@ fn days_to_ymd(days: u64) -> (u32, u32, u32) {
     }
     let mut m = 0usize;
     let mut acc = 0u64;
-    while m < 12 && acc + mon_days[m] as u64 <= d {
-        acc += mon_days[m] as u64;
+    while m < 12 && acc + mon_days[m] <= d {
+        acc += mon_days[m];
         m += 1;
     }
     let (mo, day) = if m >= 12 {
         let dec_start = acc - mon_days[11];
-        (12u32, ((d - dec_start + 1) as u32).min(mon_days[11]))
+        (12u32, ((d - dec_start + 1) as u32).min(mon_days[11] as u32))
     } else {
         let day_raw = (d - acc + 1) as u32;
-        (m as u32 + 1, day_raw.min(mon_days[m]))
+        (m as u32 + 1, day_raw.min(mon_days[m] as u32))
     };
     (y, mo, day)
 }
@@ -70,18 +70,18 @@ pub fn body(ctx: &HandlerContext) -> Result<String, std::io::Error> {
     let last_error = state::get_last_error();
     let inc = ctx.inbound_depth.load(Ordering::Relaxed);
     let out = ctx.outbound_depth.load(Ordering::Relaxed);
-    let system_status =
-        if ctx.wifi_connected && storage_ok && last_error.is_none() && inc <= 6 && out <= 6 {
-            "正常"
-        } else if !ctx.wifi_connected {
-            "WiFi 未连接"
-        } else if !storage_ok {
-            "存储异常"
-        } else if last_error.is_some() {
-            "通道异常"
-        } else {
-            "运行中"
-        };
+    let sta_up = crate::platform::is_wifi_sta_connected();
+    let system_status = if sta_up && storage_ok && last_error.is_none() && inc <= 6 && out <= 6 {
+        "正常"
+    } else if !sta_up {
+        "WiFi 未连接"
+    } else if !storage_ok {
+        "存储异常"
+    } else if last_error.is_some() {
+        "通道异常"
+    } else {
+        "运行中"
+    };
     let product_name = "beetle";
     let current_time = current_time_str();
     let firmware_version = ctx.version.as_ref();

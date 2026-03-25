@@ -202,7 +202,7 @@ Partition table and flash size are chosen by `board_presets.toml` and the board 
 | DingTalk       | `DINGTALK_WEBHOOK_URL`                                                                                                                                                      |
 | WeCom          | `WECOM_CORP_ID`, `WECOM_CORP_SECRET`, `WECOM_AGENT_ID`, `WECOM_DEFAULT_TOUSER`                                                                                              |
 | QQ Channel     | `QQ_CHANNEL_APP_ID`, `QQ_CHANNEL_SECRET`                                                                                                                                    |
-| LLM            | Multi-source: `config/llm.json` (SPIFFS); build-time env for defaults. Keys: provider, api_key, model, api_url, stream, max_tokens; router/worker indices for routing mode. |
+| LLM            | Multi-source: `config/llm.json` (SPIFFS); build-time env for defaults. Keys: provider, api_key, model, api_url, stream, max_tokens; router/worker indices for routing mode. Supported providers: `openai`, `anthropic`, `gemini`, `glm`, `qwen`, `deepseek`, `moonshot`, `ollama`. See [LLM Providers Guide](docs/en-us/llm-providers.md). |
 | Proxy / search | `PROXY_URL`, `SEARCH_KEY`, `TAVILY_KEY`                                                                                                                                     |
 
 Full key names and validation: `src/config.rs`. Runtime config segments (LLM, channels, system) and API: [Config API](docs/en-us/config-api.md). Provisioning: [Configuration](docs/en-us/configuration.md).
@@ -235,12 +235,13 @@ Full key names and validation: `src/config.rs`. Runtime config segments (LLM, ch
 
 | Doc                                                                                 | Description                                                                              |
 | ----------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| [Documentation index](docs/README.md)                                                | Audience-based map (EN/ZH paths) and maintainer conventions                            |
+| [Linux release tarball](docs/en-us/linux-release-rollback.md)                       | musl bundle layout, manual install notes (no one-click yet); systemd sample in tarball   |
 | [Configuration](docs/en-us/configuration.md)                                        | Provisioning, config page, common config                                                 |
 | [Config API contract](docs/en-us/config-api.md)                                     | HTTP API: pairing, config segments, health, OTA, webhook                                 |
-| [Agent tools](docs/en-us/tools.md)                                                  | User-facing guide: what tools the Agent can use (get_time, web_search, board_info, etc.) |
+| [Agent tools](docs/en-us/tools.md)                                                  | User-facing guide: tools registered in firmware (`build_default_registry`)             |
 | [Hardware & resources](docs/en-us/hardware.md)                                      | Boards, memory, PSRAM, watchdog, build options, troubleshooting                          |
-| [Hardware device config & LLM-driven control](docs/en-us/hardware-device-config.md) | Milestone design: JSON config–driven device_control tool for GPIO/PWM/ADC/buzzer         |
-| [Display dashboard](docs/en-us/display.md)                                          | SPI display setup, wiring, configuration, dashboard states, and caveats                  |
+| [Hardware device config](docs/en-us/hardware-device-config.md)                      | `hardware.json` + `device_control` design (GPIO/PWM/ADC/buzzer)                          |
 | [Architecture](docs/en-us/architecture.md)                                          | Modules, data flow, extension                                                            |
 
 ---

@@ -1,27 +1,32 @@
-//! kv_store 工具：持久化键值存储，底层为 SPIFFS JSON 文件。
+//! kv_store 工具：持久化键值存储，底层为状态根下 JSON 文件（经 `StateFs`）。
 //! 提供 get / set / delete / list_keys 四个操作，供 LLM 跨会话记忆用户偏好与状态。
-//! kv_store tool: persistent key-value store over SPIFFS JSON file.
+//! kv_store tool: persistent key-value store via `StateFs` JSON file.
 //! Supports get / set / delete / list_keys; used for cross-session LLM memory.
 
 use crate::constants::{KV_STORE_MAX_ENTRIES, KV_STORE_MAX_KEY_LEN, KV_STORE_MAX_VALUE_LEN};
 use crate::error::{Error, Result};
+use crate::platform::StateFs;
 use crate::tools::{parse_tool_args, Tool, ToolContext};
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::sync::Arc;
 
-/// SPIFFS 路径：memory/kv_store.json。ESP 目标前缀为 /spiffs，host 为 ./spiffs_data。
-fn kv_file_path() -> PathBuf {
-    #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
-    {
-        let mut p = PathBuf::from(crate::platform::SPIFFS_BASE);
-        p.push("memory/kv_store.json");
-        p
+/// 相对状态根路径，与历史 SPIFFS 布局一致。
+const KV_STORE_REL_PATH: &str = "memory/kv_store.json";
+
+/// 从状态根读取 KV map；文件不存在或解析失败时返回空 map（容错）。
+fn load_map(fs: &(dyn StateFs + Send + Sync)) -> HashMap<String, String> {
+    match fs.read(KV_STORE_REL_PATH) {
+        Ok(Some(buf)) if buf.len() > 2 => serde_json::from_slice(&buf).unwrap_or_default(),
+        _ => HashMap::new(),
     }
-    #[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
-    {
-        PathBuf::from("./spiffs_data/memory/kv_store.json")
-    }
+}
+
+/// 将 KV map 序列化并写回状态根。
+fn save_map(fs: &(dyn StateFs + Send + Sync), map: &HashMap<String, String>) -> Result<()> {
+    let json =
+        serde_json::to_vec(map).map_err(|e| Error::config("kv_store_save", e.to_string()))?;
+    fs.write(KV_STORE_REL_PATH, &json)
 }
 
 /// 校验 key：只允许 [a-zA-Z0-9_\-.] 且非空、不超长。
@@ -47,22 +52,16 @@ fn validate_key(key: &str) -> Result<()> {
     Ok(())
 }
 
-/// 从 SPIFFS 读取 KV map；文件不存在或解析失败时返回空 map（容错）。
-fn load_map() -> HashMap<String, String> {
-    match crate::platform::spiffs::read_file(kv_file_path()) {
-        Ok(buf) if buf.len() > 2 => serde_json::from_slice(&buf).unwrap_or_default(),
-        _ => HashMap::new(),
+/// 构造时注入与 [`crate::platform::Platform::state_fs`] 同一套实现。
+pub struct KvStoreTool {
+    state_fs: Arc<dyn StateFs + Send + Sync>,
+}
+
+impl KvStoreTool {
+    pub(crate) fn new(state_fs: Arc<dyn StateFs + Send + Sync>) -> Self {
+        Self { state_fs }
     }
 }
-
-/// 将 KV map 序列化并写回 SPIFFS。
-fn save_map(map: &HashMap<String, String>) -> Result<()> {
-    let json =
-        serde_json::to_vec(map).map_err(|e| Error::config("kv_store_save", e.to_string()))?;
-    crate::platform::spiffs::write_file(kv_file_path(), &json)
-}
-
-pub struct KvStoreTool;
 
 impl Tool for KvStoreTool {
     fn name(&self) -> &str {
@@ -100,6 +99,7 @@ impl Tool for KvStoreTool {
         })
     }
     fn execute(&self, args: &str, _ctx: &mut dyn ToolContext) -> Result<String> {
+        let fs = self.state_fs.as_ref();
         let m = parse_tool_args(args, "kv_store")?;
 
         let op = m
@@ -114,7 +114,7 @@ impl Tool for KvStoreTool {
                     .and_then(|k| k.as_str())
                     .ok_or_else(|| Error::config("kv_store", "missing key"))?;
                 validate_key(key)?;
-                let map = load_map();
+                let map = load_map(fs);
                 match map.get(key) {
                     Some(v) => Ok(v.clone()),
                     None => Ok("key not found".to_string()),
@@ -136,7 +136,7 @@ impl Tool for KvStoreTool {
                         format!("value too long (max {} bytes)", KV_STORE_MAX_VALUE_LEN),
                     ));
                 }
-                let mut map = load_map();
+                let mut map = load_map(fs);
                 // 已有 key 更新不占新配额
                 if !map.contains_key(key) && map.len() >= KV_STORE_MAX_ENTRIES {
                     return Err(Error::config(
@@ -145,7 +145,7 @@ impl Tool for KvStoreTool {
                     ));
                 }
                 map.insert(key.to_string(), value.to_string());
-                save_map(&map)?;
+                save_map(fs, &map)?;
                 Ok("ok".to_string())
             }
             "delete" => {
@@ -154,15 +154,15 @@ impl Tool for KvStoreTool {
                     .and_then(|k| k.as_str())
                     .ok_or_else(|| Error::config("kv_store", "missing key"))?;
                 validate_key(key)?;
-                let mut map = load_map();
+                let mut map = load_map(fs);
                 if map.remove(key).is_none() {
                     return Ok("key not found".to_string());
                 }
-                save_map(&map)?;
+                save_map(fs, &map)?;
                 Ok("ok".to_string())
             }
             "list_keys" => {
-                let map = load_map();
+                let map = load_map(fs);
                 let mut keys: Vec<&str> = map.keys().map(|k| k.as_str()).collect();
                 keys.sort_unstable();
                 Ok(json!(keys).to_string())

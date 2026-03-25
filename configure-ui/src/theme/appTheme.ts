@@ -209,6 +209,7 @@ export function createAppTheme(mode: ThemeMode, brand: ThemeBrand) {
             '--line-height-snug': String(LAYOUT_TOKENS.lineHeightSnug),
             '--line-height-normal': String(LAYOUT_TOKENS.lineHeightNormal),
             '--line-height-relaxed': String(LAYOUT_TOKENS.lineHeightRelaxed),
+            '--line-height-loose': String(LAYOUT_TOKENS.lineHeightLoose),
             ...Object.fromEntries(
               THEME_BRAND_KEYS.map((b) => [`--brand-${b}`, BRAND_COLORS[b]]),
             ),
@@ -246,6 +247,21 @@ export function createAppTheme(mode: ThemeMode, brand: ThemeBrand) {
             },
             '&:active': {
               backgroundColor: 'color-mix(in srgb, var(--primary) 85%, white)',
+              borderTopColor: 'transparent',
+              boxShadow: 'none',
+            },
+          },
+          /** 否则 contained 会盖住 MUI 的 color=error，确认类危险操作无法显示红色 */
+          containedError: {
+            backgroundColor: 'var(--semantic-danger)',
+            color: 'var(--primary-fg)',
+            borderTop: '1px solid color-mix(in srgb, var(--primary-fg) 12%, transparent)',
+            '&:hover': {
+              backgroundColor: 'color-mix(in srgb, var(--semantic-danger) 88%, black)',
+              boxShadow: '0 0 12px color-mix(in srgb, var(--semantic-danger) 28%, transparent)',
+            },
+            '&:active': {
+              backgroundColor: 'color-mix(in srgb, var(--semantic-danger) 80%, black)',
               borderTopColor: 'transparent',
               boxShadow: 'none',
             },

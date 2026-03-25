@@ -1,42 +1,54 @@
 # Agent tools
 
-[中文](../zh-cn/tools.md) | **English**
+[中文](../zh-cn/tools.md) | **English** | [Doc index](../README.md)
 
-This doc is for **users of a Beetle device**: it describes the **tools** the on-device AI Agent can use during a conversation, what each does, and the limits. You do not call these tools yourself—the Agent decides when to use one based on your message. If a call fails (e.g. network error, invalid args), the Agent reports it in natural language.
+Tools the on-device **Agent may invoke automatically** during chat (you do not call them manually). On failure, the Agent explains in plain language.
+
+The list follows firmware registration order in [`build_default_registry`](../../src/tools/registry.rs). Tools that appear only when config conditions are met are labeled separately.
 
 ---
 
-## Overview
+## Always registered
 
-| Tool | What it does | When the Agent might use it |
-|------|----------------|-----------------------------|
-| **get_time** | Returns current UTC time (date, weekday, time). | You ask for the time, today’s date, or when something should run. |
-| **cron** | Parses a 5-field cron expression and returns the next run time in UTC. | You ask “when will this cron run?” or “next trigger time for …”. |
-| **files** | Lists or reads files from device storage (SPIFFS). Paths are under the storage root; no `..` allowed. | You ask to list or read a file/folder (e.g. skills, config, memory). |
-| **web_search** | Searches the web for a query and returns a short summary. | You ask for recent info, facts, or “search for …”. |
-| **analyze_image** | Analyzes an image from a URL using vision AI. | You send an image URL and ask what’s in it or to describe it. |
-| **fetch_url** | Fetches a URL with HTTP GET and returns the response body (text, truncated). Only http(s). | You ask to “open this link” or “get content from URL”. |
-| **http_post** | Sends an HTTP POST to a URL with a body and returns the response. Only http(s). | You ask to trigger a webhook, call an API (e.g. Home Assistant, IFTTT, n8n), or push data somewhere. |
-| **remind_at** | Schedules a reminder. At the given time you get a message with the reminder text. | You say “remind me at …” or “at 3pm tell me …”. |
-| **kv_store** | Persistent key-value store (survives reboot). Operations: get, set, delete, list_keys. Keys: letters, numbers, `_`, `-`, `.`; max 64 chars. Values: max 512 bytes. Max 64 entries. | You ask to “remember X”, “save my preference”, “what did I set for …”, or “list what you’ve stored”. |
-| **update_session_summary** | Writes a short summary of the conversation so far for future context. | The Agent uses it at natural breaks in long chats so it can refer back later. |
-| **board_info** | Returns device status: chip model, free heap/PSRAM, uptime, IDF version, resource pressure, WiFi connected or not, SPIFFS storage (total/used/free). | You ask “device status”, “how much memory”, “is WiFi connected”, “storage space”, or “what chip”. |
+| Tool | Summary | When the Agent might use it |
+|------|---------|----------------------------|
+| **get_time** | Current UTC time (date, weekday, time). | “What time is it?”, dates. |
+| **files** | List or **read** files under storage root; no `..`. | List/read skills, notes, etc. (read-only). |
+| **web_search** | Web search with a short summary. | Recent facts, “search for …”. |
+| **analyze_image** | Vision model over an image URL. | Describe what’s in a linked image. |
+| **remind_at** | Schedule a reminder (ISO8601 or Unix seconds + text); fires on the same channel. | “Remind me at …”. |
+| **remind_list** | Upcoming reminders for the current chat (optional limit). | “What reminders did I set?”. |
+| **update_session_summary** | Short summary of the chat for later context. | Used by the Agent at natural breaks. |
+| **board_info** | Chip, heap/PSRAM, uptime, pressure, WiFi, SPIFFS, etc. | “Device status”, memory, storage. |
+| **kv_store** | Persistent KV: `get`/`set`/`delete`/`list_keys`; keys/values/entry caps apply. | “Remember …”, “what keys are stored?”. |
+| **memory_manage** | Long-term memory, soul/user text, daily notes: `get_memory`/`set_memory`, soul/user ops, daily note CRUD, etc. | Managing memory and notes (distinct from config-UI SOUL/USER flows; behavior follows tool ops). |
+| **http_request** | HTTP **GET/POST/PUT/DELETE/PATCH** with optional headers/body. **Private/internal URLs are blocked** (SSRF). | Public APIs, webhooks, integrations. |
+| **session_manage** | Sessions: `list`/`info`/`clear`/`delete`. | Inspect or clear session history. |
+| **file_write** | **Write** under storage root (overwrite/append); **protected paths** (e.g. `config/llm.json`, `config/SOUL.md`) cannot be written. | User notes and other non-protected paths. |
+| **system_control** | `restart` (needs `confirm=true`), `spiffs_usage`. | Restart, storage usage (dangerous ops need confirmation). |
+| **cron_manage** | Persistent scheduled tasks (cron + action); evaluated by the device cron loop. | Recurring automated messages. |
+| **proxy_config** | Get/set/clear HTTP proxy in NVS; **effective after reboot**. | Change proxy when allowed. |
+| **model_config** | Read/update model-related fields in `config/llm.json` (**api_key not shown**); **effective after reboot**. | Switch model/URL when allowed. |
+| **network_scan** | `wifi_scan`, `wifi_status`, `connectivity_check`; scans are **rate-limited**. | WiFi / basic connectivity checks. |
 
-**Optional (feature `gpio`):**
+---
 
-| Tool | What it does | When the Agent might use it |
-|------|----------------|-----------------------------|
-| **gpio_read** | Reads GPIO pin level (0 or 1). Only pins 2 and 13 are allowed. | You ask to “read pin X” or “is the pin high”. |
-| **gpio_write** | Sets GPIO pin output level (0 or 1). Only pins 2 and 13. | You ask to “set pin X high/low” or “turn on/off pin”. |
+## Conditional registration
+
+| Tool | When registered | Summary |
+|------|-----------------|---------|
+| **device_control** | `hardware.json` loaded with a non-empty device list | GPIO/PWM/ADC/buzzer by configured `device_id`; see [Hardware device config](hardware-device-config.md). |
+| **sensor_watch** | Same, and sensor devices (`adc_in`/`gpio_in`) exist | Threshold watches: `add`/`list`/`remove`/`update`; tied to the cron loop. |
+| **i2c_device** | `i2c_bus` + `i2c_devices` present in config | I2C register read/write per configured devices (schema from config). |
 
 ---
 
 ## Limits and behavior
 
-- **Time**: On the device, time is only correct after NTP/RTC sync. Use **get_time** to check.
-- **Storage (files)**: Read-only for the files tool; paths must not leave the storage root. List returns at most 256 entries; read content is truncated.
-- **Reminders**: Stored on device; at the set time a message is sent to you in the same channel. Number of reminders is limited.
-- **Web / HTTP**: Under low memory the Agent may avoid or delay network tools (web_search, fetch_url, http_post, analyze_image) to keep the device stable.
-- **board_info**: Gives a snapshot of memory, pressure, WiFi, and SPIFFS so you can see if the device is healthy or under load.
+- **Time**: Accurate after NTP/RTC sync; use **get_time** to verify.
+- **files**: Read-only; paths must stay under the storage root; list/read limits apply (see code constants).
+- **Reminders**: Stored on device, capped count; delivered on the **same channel/session**.
+- **Network tools**: May be deferred under resource pressure (orchestrator gating).
+- **http_request**: **RFC1918 / local targets are rejected**—do not use for LAN probing.
 
-To control on-board hardware (GPIO, PWM, buzzer, etc.) via config and have the Agent call it by meaning, see [Hardware device config](hardware-device-config.md) and the “Hardware” section in the config page.
+For JSON-driven onboard hardware and the `device_control` tool, see [Hardware device config](hardware-device-config.md) and the hardware section of the config UI.

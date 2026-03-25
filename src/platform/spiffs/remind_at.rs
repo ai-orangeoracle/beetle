@@ -6,7 +6,7 @@ use crate::memory::RemindAtStore;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-use super::{read_file, write_file, SPIFFS_BASE};
+use super::{read_file, state_path_join, write_file};
 
 const REL_PATH_REMIND_AT: &str = "memory/remind_at.json";
 
@@ -19,9 +19,7 @@ struct RemindEntry {
 }
 
 fn full_path() -> PathBuf {
-    let mut p = PathBuf::from(SPIFFS_BASE);
-    p.push(REL_PATH_REMIND_AT);
-    p
+    state_path_join(REL_PATH_REMIND_AT)
 }
 
 fn truncate_context(s: &str) -> String {
@@ -120,8 +118,8 @@ impl RemindAtStore for SpiffsRemindAtStore {
         if buf.len() <= 2 {
             return Ok(Vec::new());
         }
-        let list: Vec<RemindEntry> =
-            serde_json::from_slice(&buf).map_err(|e| Error::config("remind_at_list", e.to_string()))?;
+        let list: Vec<RemindEntry> = serde_json::from_slice(&buf)
+            .map_err(|e| Error::config("remind_at_list", e.to_string()))?;
         let mut out = Vec::new();
         for e in list {
             if e.channel == channel && e.chat_id == chat_id && e.at_unix_secs >= now_unix_secs {

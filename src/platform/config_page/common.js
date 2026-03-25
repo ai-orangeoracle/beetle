@@ -1,6 +1,7 @@
 (function(){
   var G=typeof window!=='undefined'?window:typeof self!=='undefined'?self:this;
   var BASE='';
+  var csrfToken=null;
   var T={
     zh:{
       pairing_title:'配对码设置', pairing_h2:'设置 6 位配对码', pairing_desc:'首次使用请设置配对码，后续执行保存、重启等操作时需输入此码。',
@@ -50,9 +51,32 @@
         var code=(codeIn.value||'').trim();
         if(code.length!==6||!/^\d+$/.test(code))return;
         closeModal();
-        var opts={method:method,headers:{'X-Pairing-Code':code}};
-        if(body){ opts.headers['Content-Type']='application/json'; opts.body=body; }
-        fetch(BASE+url,opts).then(function(r){ return r.json().then(function(j){ return {ok:r.ok,j:j}; }); }).then(done).catch(function(){ done({ok:false,j:{error:G.PC.t('pairing_network')}}); });
+        var csrfRetry=0;
+        function send(){
+          var opts={method:method,headers:{'X-Pairing-Code':code}};
+          if(csrfToken) opts.headers['X-CSRF-Token']=csrfToken;
+          if(body){ opts.headers['Content-Type']='application/json'; opts.body=body; }
+          fetch(BASE+url,opts).then(function(r){
+            return r.json().then(function(j){ return {ok:r.ok,j:j,status:r.status}; });
+          }).then(function(x){
+            if(!x.ok && x.status===403 && x.j && x.j.error && String(x.j.error).indexOf('CSRF')>=0 && csrfRetry<1){
+              csrfRetry++;
+              return fetch(BASE+'/api/csrf_token').then(function(r){ return r.json(); }).then(function(j){
+                csrfToken=j.csrf_token||null;
+                send();
+              });
+            }
+            done({ok:x.ok,j:x.j});
+          }).catch(function(){ done({ok:false,j:{error:G.PC.t('pairing_network')}}); });
+        }
+        function ensureCsrfThenSend(){
+          if(csrfToken){ send(); return; }
+          fetch(BASE+'/api/csrf_token').then(function(r){ return r.json(); }).then(function(j){
+            csrfToken=j.csrf_token||null;
+            send();
+          }).catch(function(){ done({ok:false,j:{error:G.PC.t('pairing_network')}}); });
+        }
+        ensureCsrfThenSend();
       }
       ok.onclick=doReq;
     };
@@ -125,6 +149,7 @@
       nav.appendChild(a);
     });
     createPairingModal();
+    fetch(BASE+'/api/csrf_token').then(function(r){ return r.json(); }).then(function(j){ csrfToken=j.csrf_token||null; }).catch(function(){});
   }
   applyT();
 })();

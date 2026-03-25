@@ -125,6 +125,8 @@ export const LAYOUT_TOKENS = {
   lineHeightNormal: 1.5,
   /** 行高：略松（长正文、副标题） */
   lineHeightRelaxed: 1.6,
+  /** 行高：更松（长说明、法律/风险提示类段落） */
+  lineHeightLoose: 1.75,
 } as const
 
 /** 主题 Token：所有 UI 颜色必须由此映射，禁止在组件内硬编码色值。 */

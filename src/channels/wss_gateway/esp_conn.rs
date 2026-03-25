@@ -4,7 +4,9 @@
 
 #![cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 
-use crate::channels::wss_gateway::connection::{WssConnection, WssEvent};
+use crate::channels::wss_gateway::connection::{
+    WssConnection, WssEvent, DEFAULT_WSS_BUFFER_SIZE, MAX_WSS_SEND_PAYLOAD_BYTES,
+};
 use crate::error::{Error, Result};
 use esp_idf_svc::handle::RawHandle;
 use esp_idf_svc::ws::client::WebSocketEventType;
@@ -13,8 +15,6 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 const CONNECT_TIMEOUT_MS: u64 = 10_000;
-const DEFAULT_BUFFER_SIZE: usize = 4096;
-const MAX_SEND_PAYLOAD: usize = DEFAULT_BUFFER_SIZE - 32;
 const DEFAULT_WS_TIMEOUT_MS: u64 = 30_000;
 /// pingpong 超时：配合 TCP keep-alive 更快发现死连接（原 120s 太慢）。
 const DEFAULT_PINGPONG_TIMEOUT_SEC: u64 = 60;
@@ -85,14 +85,14 @@ impl EspWssConnection {
 
 impl WssConnection for EspWssConnection {
     fn send_binary(&mut self, data: &[u8]) -> Result<()> {
-        if data.len() > MAX_SEND_PAYLOAD {
+        if data.len() > MAX_WSS_SEND_PAYLOAD_BYTES {
             return Err(Error::Other {
                 source: Box::new(std::io::Error::new(
                     std::io::ErrorKind::InvalidInput,
                     format!(
                         "wss payload too large: {} > {}",
                         data.len(),
-                        MAX_SEND_PAYLOAD
+                        MAX_WSS_SEND_PAYLOAD_BYTES
                     ),
                 )),
                 stage: "wss_esp_send",
@@ -124,7 +124,7 @@ pub fn connect_esp_wss(url: &str) -> Result<EspWssConnection> {
     // 与 `platform/http_client.rs` 一致：仅用 `crt_bundle_attach` 挂接证书包；勿与 `use_global_ca_store` 同时开启，
     // 否则 esp-tls 可能在校验阶段异常，表现为 CONNECTED 未到即 DISCONNECTED / 回调里 `WebSocketEvent::new` 失败。
     let config = esp_idf_svc::ws::client::EspWebSocketClientConfig {
-        buffer_size: DEFAULT_BUFFER_SIZE,
+        buffer_size: DEFAULT_WSS_BUFFER_SIZE,
         transport: esp_idf_svc::ws::client::EspWebSocketTransport::TransportOverSSL,
         use_global_ca_store: false,
         disable_auto_reconnect: true,
@@ -184,7 +184,10 @@ pub fn connect_esp_wss(url: &str) -> Result<EspWssConnection> {
         stage: "wss_esp_connect",
     })?;
     let raw_handle = client.handle() as *mut core::ffi::c_void;
-    log::info!("wss client started (handshake runs asynchronously), url_len={}", url.len());
+    log::info!(
+        "wss client started (handshake runs asynchronously), url_len={}",
+        url.len()
+    );
     Ok(EspWssConnection {
         client: ManuallyDrop::new(client),
         raw_handle,

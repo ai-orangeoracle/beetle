@@ -3,17 +3,31 @@
 //! ESP-IDF VFS/SPIFFS 多线程并发会引发 fd 错用或死锁，故所有通过本模块的 SPIFFS 访问在 ESP 下由 SPIFFS_MUTEX 串行化。
 
 use crate::error::{Error, Result};
-use std::ffi::CString;
-use std::io::{Read, Write};
-use std::path::Path;
+use crate::platform::state_root::state_mount_path;
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+use std::ffi::CString;
+use std::io::Read;
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+use std::io::Write;
+use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
-/// SPIFFS 挂载点。
-pub const SPIFFS_BASE: &str = "/spiffs";
+/// 兼容旧名：状态根路径字符串。ESP 上为 `/spiffs`；host 上为 `state_mount_path()` 的运行时值。
+/// Legacy name for state root path string.
+pub fn spiffs_base_string() -> String {
+    state_mount_path().to_string_lossy().into_owned()
+}
+
+/// 与 `state_mount_path().join(rel)` 相同；供各 `Spiffs*` 存储拼接路径。
+pub(crate) fn state_path_join(rel: impl AsRef<Path>) -> PathBuf {
+    state_mount_path().join(rel.as_ref())
+}
 
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 static SPIFFS_MUTEX: OnceLock<Mutex<()>> = OnceLock::new();
+
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+static HOST_SPIFFS_MUTEX: OnceLock<Mutex<()>> = OnceLock::new();
 
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 fn lock_spiffs() -> std::sync::MutexGuard<'static, ()> {
@@ -23,44 +37,77 @@ fn lock_spiffs() -> std::sync::MutexGuard<'static, ()> {
         .unwrap_or_else(|e| e.into_inner())
 }
 
-/// 单次写入最大字节数，避免写满分区。
-const MAX_WRITE_SIZE: usize = 256 * 1024;
-
-/// 挂载 SPIFFS。partition_label=None 表示默认 "storage"；format_if_mount_failed=true。
-pub fn init_spiffs() -> Result<()> {
-    let base = CString::new(SPIFFS_BASE).map_err(|e| Error::config("spiffs", e.to_string()))?;
-    let conf = esp_idf_svc::sys::esp_vfs_spiffs_conf_t {
-        base_path: base.as_ptr(),
-        partition_label: std::ptr::null(),
-        max_files: 10,
-        format_if_mount_failed: true,
-    };
-    let err = unsafe { esp_idf_svc::sys::esp_vfs_spiffs_register(&conf) };
-    if err != 0 {
-        return Err(Error::esp("spiffs_register", err));
-    }
-    let mut total: usize = 0;
-    let mut used: usize = 0;
-    unsafe { esp_idf_svc::sys::esp_spiffs_info(std::ptr::null(), &mut total, &mut used) };
-    log::info!(
-        "[platform::spiffs] mounted base={} total={} used={}",
-        SPIFFS_BASE,
-        total,
-        used
-    );
-    Ok(())
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+fn lock_host_spiffs() -> std::sync::MutexGuard<'static, ()> {
+    HOST_SPIFFS_MUTEX
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
 }
 
-/// 返回 SPIFFS 总字节数与已用字节数；用于启动自检或运维。失败返回 None（如未挂载）。
+/// 单次写入最大字节数：ESP 与 SPIFFS 分区一致；host/Linux 放宽至 1MiB（仍与 orchestrator 上界策略独立）。
+/// Max write size: ESP SPIFFS bound; host allows 1MiB single-file writes (still bounded).
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+pub(crate) const MAX_WRITE_SIZE: usize = 256 * 1024;
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+pub(crate) const MAX_WRITE_SIZE: usize = 1024 * 1024;
+
+/// 挂载 SPIFFS（ESP）或创建状态根目录（host）。partition_label=None 表示默认 "storage"；format_if_mount_failed=true。
+pub fn init_spiffs() -> Result<()> {
+    #[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+    {
+        crate::platform::state_root::init_host_state_root()?;
+        let root = state_mount_path();
+        log::info!("[platform::spiffs] host state root ready: {:?}", root);
+        Ok(())
+    }
+    #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+    {
+        let root = state_mount_path();
+        let base_str = root
+            .to_str()
+            .ok_or_else(|| Error::config("spiffs", "invalid state mount path"))?;
+        let base = CString::new(base_str).map_err(|e| Error::config("spiffs", e.to_string()))?;
+        let conf = esp_idf_svc::sys::esp_vfs_spiffs_conf_t {
+            base_path: base.as_ptr(),
+            partition_label: std::ptr::null(),
+            max_files: 10,
+            format_if_mount_failed: true,
+        };
+        let err = unsafe { esp_idf_svc::sys::esp_vfs_spiffs_register(&conf) };
+        if err != 0 {
+            return Err(Error::esp("spiffs_register", err));
+        }
+        let mut total: usize = 0;
+        let mut used: usize = 0;
+        unsafe { esp_idf_svc::sys::esp_spiffs_info(std::ptr::null(), &mut total, &mut used) };
+        log::info!(
+            "[platform::spiffs] mounted base={} total={} used={}",
+            base_str,
+            total,
+            used
+        );
+        Ok(())
+    }
+}
+
+/// 返回 SPIFFS 总字节数与已用字节数；用于启动自检或运维。失败返回 None（如未挂载）。host 返回 None。
 pub fn spiffs_usage() -> Option<(usize, usize)> {
     #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
-    let _guard = lock_spiffs();
-    let mut total: usize = 0;
-    let mut used: usize = 0;
-    let ret = unsafe { esp_idf_svc::sys::esp_spiffs_info(std::ptr::null(), &mut total, &mut used) };
-    if ret == 0 {
-        Some((total, used))
-    } else {
+    {
+        let _guard = lock_spiffs();
+        let mut total: usize = 0;
+        let mut used: usize = 0;
+        let ret =
+            unsafe { esp_idf_svc::sys::esp_spiffs_info(std::ptr::null(), &mut total, &mut used) };
+        if ret == 0 {
+            Some((total, used))
+        } else {
+            None
+        }
+    }
+    #[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+    {
         None
     }
 }
@@ -70,6 +117,8 @@ pub fn spiffs_usage() -> Option<(usize, usize)> {
 pub fn read_file(path: impl AsRef<Path>) -> Result<Vec<u8>> {
     #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
     let _guard = lock_spiffs();
+    #[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+    let _guard = lock_host_spiffs();
     let p = path.as_ref();
     let path_str = p
         .to_str()
@@ -88,14 +137,18 @@ pub fn read_file(path: impl AsRef<Path>) -> Result<Vec<u8>> {
     };
     f.read_to_end(&mut buf)
         .map_err(|e| Error::io("spiffs_read", e))?;
+    if buf.len() > MAX_WRITE_SIZE {
+        return Err(Error::config(
+            "spiffs_read",
+            format!("file size {} exceeds {}", buf.len(), MAX_WRITE_SIZE),
+        ));
+    }
     Ok(buf)
 }
 
 /// 写字节到文件。超过 MAX_WRITE_SIZE 返回错误。
-/// Direct overwrite: SPIFFS 不支持可靠的 rename，直接覆盖写入。
+/// ESP：SPIFFS 不支持可靠 rename，直接覆盖。host：同目录 tmp + fsync + rename（原子替换）。
 pub fn write_file(path: impl AsRef<Path>, data: &[u8]) -> Result<()> {
-    #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
-    let _guard = lock_spiffs();
     if data.len() > MAX_WRITE_SIZE {
         return Err(Error::config(
             "spiffs_write",
@@ -103,19 +156,30 @@ pub fn write_file(path: impl AsRef<Path>, data: &[u8]) -> Result<()> {
         ));
     }
     let p = path.as_ref();
-    let path_str = p
-        .to_str()
-        .ok_or_else(|| Error::config("spiffs_write", "invalid path"))?;
-
-    let mut f = std::fs::File::create(path_str).map_err(|e| Error::io("spiffs_write", e))?;
-    f.write_all(data).map_err(|e| Error::io("spiffs_write", e))?;
-    Ok(())
+    #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+    {
+        let path_str = p
+            .to_str()
+            .ok_or_else(|| Error::config("spiffs_write", "invalid path"))?;
+        let _guard = lock_spiffs();
+        let mut f = std::fs::File::create(path_str).map_err(|e| Error::io("spiffs_write", e))?;
+        f.write_all(data)
+            .map_err(|e| Error::io("spiffs_write", e))?;
+        Ok(())
+    }
+    #[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+    {
+        let _guard = lock_host_spiffs();
+        crate::platform::fs_atomic::atomic_write(p, data)
+    }
 }
 
 /// 删除文件。仅删除文件，不删目录。用于技能删除等。
 pub fn remove_file(path: impl AsRef<Path>) -> Result<()> {
     #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
     let _guard = lock_spiffs();
+    #[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+    let _guard = lock_host_spiffs();
     let p = path.as_ref();
     let path_str = p
         .to_str()
@@ -128,6 +192,8 @@ pub fn remove_file(path: impl AsRef<Path>) -> Result<()> {
 pub fn list_dir(path: impl AsRef<Path>) -> Result<Vec<String>> {
     #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
     let _guard = lock_spiffs();
+    #[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+    let _guard = lock_host_spiffs();
     let p = path.as_ref();
     let path_str = p
         .to_str()

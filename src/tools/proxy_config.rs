@@ -83,7 +83,10 @@ impl Tool for ProxyConfigTool {
                 if url.is_empty() {
                     return Err(Error::config("tool_proxy_config", "url cannot be empty"));
                 }
-                if !url.starts_with("http://") && !url.starts_with("https://") && !url.starts_with("socks5://") {
+                if !url.starts_with("http://")
+                    && !url.starts_with("https://")
+                    && !url.starts_with("socks5://")
+                {
                     return Err(Error::config(
                         "tool_proxy_config",
                         "url must start with http://, https://, or socks5://",

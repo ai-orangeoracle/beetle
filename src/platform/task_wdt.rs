@@ -2,12 +2,29 @@
 //! Task watchdog: add current task to TWDT so feed/reset during HTTP or idle recv_timeout is valid.
 
 /// 将当前任务加入任务看门狗。在运行 agent 循环（会发起长时间 HTTP）的线程中调用一次即可。
-/// 若已加入（ESP_ERR_INVALID_STATE）或 TWDT 未启用则忽略返回值。
+/// 幂等：同一任务多次调用安全。IDF 5+ 先查 `esp_task_wdt_status`，已订阅则不再 `add`，避免 IDF 侧
+/// `task is already subscribed`（`esp_task_wdt_add` 返回 `ESP_ERR_INVALID_ARG` / 258）。IDF 4 无 status API
+/// 时仅调用 `add`，并对 `INVALID_ARG`、`INVALID_STATE` 静默。
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 pub fn register_current_task_to_task_wdt() {
+    const ESP_OK: i32 = 0;
+    const ESP_ERR_INVALID_ARG: i32 = 0x102;
     const ESP_ERR_INVALID_STATE: i32 = 0x103;
+    const ESP_ERR_NOT_FOUND: i32 = 0x105;
+
+    #[cfg(not(esp_idf_version_major = "4"))]
+    {
+        let st = unsafe { esp_idf_svc::sys::esp_task_wdt_status(core::ptr::null_mut()) };
+        if st == ESP_OK {
+            return;
+        }
+        if st != ESP_ERR_NOT_FOUND && st != ESP_ERR_INVALID_STATE {
+            log::warn!("[platform::task_wdt] esp_task_wdt_status failed: {}", st);
+        }
+    }
+
     let ret = unsafe { esp_idf_svc::sys::esp_task_wdt_add(core::ptr::null_mut()) };
-    if ret != 0 && ret != ESP_ERR_INVALID_STATE {
+    if ret != ESP_OK && ret != ESP_ERR_INVALID_ARG && ret != ESP_ERR_INVALID_STATE {
         log::warn!("[platform::task_wdt] esp_task_wdt_add failed: {}", ret);
     }
 }

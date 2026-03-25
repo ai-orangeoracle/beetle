@@ -20,7 +20,6 @@ const BIND_HINT_NOT_IN_LIST: &str =
 pub struct TelegramCommandCtx {
     pub outbound_tx: OutboundTx,
     pub session_store: Arc<dyn SessionStore + Send + Sync>,
-    pub wifi_connected: bool,
     pub inbound_depth: Arc<std::sync::atomic::AtomicUsize>,
     pub outbound_depth: Arc<std::sync::atomic::AtomicUsize>,
     pub set_group_activation: Box<dyn Fn(&str) -> Result<()> + Send>,
@@ -209,7 +208,7 @@ pub fn poll_telegram_once<H: ChannelHttpClient>(
                             true
                         }
                         ["/status"] => {
-                            let wifi = if ctx.wifi_connected {
+                            let wifi = if crate::platform::is_wifi_sta_connected() {
                                 "connected"
                             } else {
                                 "disconnected"
@@ -236,8 +235,8 @@ pub fn poll_telegram_once<H: ChannelHttpClient>(
             };
             let _ = set_message_reaction(http, token, &chat_id, msg.message_id, "👍");
             let pc = PcMsg {
-                channel: "telegram".to_string(),
-                chat_id,
+                channel: Arc::from("telegram"),
+                chat_id: Arc::from(chat_id.as_str()),
                 content,
                 is_group,
             };
@@ -259,7 +258,6 @@ pub fn run_telegram_poll_loop<H, F>(
     inbound_tx: InboundTx,
     outbound_tx: OutboundTx,
     session_store: Arc<dyn SessionStore + Send + Sync>,
-    wifi_connected: bool,
     inbound_depth: Arc<std::sync::atomic::AtomicUsize>,
     outbound_depth: Arc<std::sync::atomic::AtomicUsize>,
     config_store: Arc<dyn crate::platform::ConfigStore>,
@@ -276,7 +274,6 @@ pub fn run_telegram_poll_loop<H, F>(
     let cmd_ctx = TelegramCommandCtx {
         outbound_tx,
         session_store,
-        wifi_connected,
         inbound_depth,
         outbound_depth,
         set_group_activation: Box::new(move |v| {

@@ -1,8 +1,8 @@
 # 硬件与资源
 
-[English](../en-us/hardware.md) | **中文**
+[English](../en-us/hardware.md) | **中文** | [文档索引](../README.md)
 
-本文档面向**选型与排错的用户与开发者**，说明支持的板型、内存与编译选项、可观测方式，以及可配置硬件设备（GPIO/PWM/ADC/蜂鸣器）的文档入口。
+本文档面向**选型与排错的用户与开发者**，说明支持的板型、内存与编译选项、可观测入口，以及可配置硬件的文档引用（`hardware.json` 的细节不在此重复展开）。
 
 ---
 
@@ -37,16 +37,15 @@
 
 ## 可观测性
 
-- **Heartbeat**：周期打印内部堆/PSRAM/总空闲堆，便于观察趋势。
-- **CLI**（feature `cli`）：串口下可执行 `heap_info` 查看 Internal free、PSRAM free、Total free。
-
-通过日志或 CLI 可验证内存使用是否在预期范围内。
+- **HTTP**：`GET /api/health` 与 `GET /api/resource` 的字段说明见 [config-api](config-api.md)（与 orchestrator 快照一致）。
+- **日志**：heartbeat 周期性输出基线，便于对照趋势。
+- **CLI**（feature `cli`）：串口 `heap_info` 等命令查看堆与 PSRAM 摘要。
 
 ---
 
 ## 可配置硬件设备
 
-通过 `config/hardware.json` 可配置 GPIO 输出/输入、PWM、ADC、蜂鸣器等设备，由 `device_control` 工具供 LLM 调用。设计说明见 [硬件设备配置与 LLM 驱动设计](hardware-device-config.md)；配置方式与校验规则见 [配置 API - GET/POST /api/config/hardware](config-api.md)。
+见 [硬件设备配置](hardware-device-config.md)（设计约束）与 [config-api /api/config/hardware](config-api.md)（HTTP 契约）；Agent 侧工具名为 **`device_control`**（注册条件见 [tools](tools.md)）。
 
 ---
 

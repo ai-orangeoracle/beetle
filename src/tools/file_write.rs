@@ -1,10 +1,12 @@
-//! file_write 工具：向 SPIFFS 写入文件，支持覆写与追加。
-//! file_write tool: write files to SPIFFS storage with overwrite or append mode.
+//! file_write 工具：向状态根写入文件，支持覆写与追加（经 StateFs）。
+//! file_write tool: write files under state root via StateFs (overwrite / append).
 
 use crate::constants::FILE_WRITE_MAX_CONTENT_LEN;
 use crate::error::{Error, Result};
+use crate::platform::state_fs::normalize_state_rel_path;
 use crate::tools::{parse_tool_args, Tool, ToolContext};
 use serde_json::json;
+use std::sync::Arc;
 
 /// 受保护路径黑名单：禁止通过工具写入的关键配置文件。
 const PROTECTED_PATHS: &[&str] = &[
@@ -16,7 +18,15 @@ const PROTECTED_PATHS: &[&str] = &[
     "memory/MEMORY.md",
 ];
 
-pub struct FileWriteTool;
+pub struct FileWriteTool {
+    state_fs: Arc<dyn crate::platform::StateFs + Send + Sync>,
+}
+
+impl FileWriteTool {
+    pub(crate) fn new(state_fs: Arc<dyn crate::platform::StateFs + Send + Sync>) -> Self {
+        Self { state_fs }
+    }
+}
 
 impl Tool for FileWriteTool {
     fn name(&self) -> &str {
@@ -46,10 +56,7 @@ impl Tool for FileWriteTool {
             .get("content")
             .and_then(|x| x.as_str())
             .ok_or_else(|| Error::config("tool_file_write", "missing content"))?;
-        let append = obj
-            .get("append")
-            .and_then(|x| x.as_bool())
-            .unwrap_or(false);
+        let append = obj.get("append").and_then(|x| x.as_bool()).unwrap_or(false);
 
         if content.len() > FILE_WRITE_MAX_CONTENT_LEN {
             return Err(Error::config(
@@ -58,35 +65,34 @@ impl Tool for FileWriteTool {
             ));
         }
 
-        // Check protected paths
         let normalized = path_arg.trim().trim_start_matches('/');
         for &protected in PROTECTED_PATHS {
             if normalized == protected {
                 return Err(Error::config(
                     "tool_file_write",
-                    format!("path '{}' is protected and cannot be written via this tool", protected),
+                    format!(
+                        "path '{}' is protected and cannot be written via this tool",
+                        protected
+                    ),
                 ));
             }
         }
 
-        let full = super::files::resolve_path(path_arg)?;
+        let rel = normalize_state_rel_path(path_arg)
+            .map_err(|_| Error::config("tool_file_write", "invalid path"))?;
 
-        let final_content = if append {
-            let existing = std::fs::read_to_string(&full).unwrap_or_default();
-            format!("{}{}", existing, content)
+        let final_bytes = if append {
+            let existing = self
+                .state_fs
+                .read(&rel)?
+                .map(|v| String::from_utf8_lossy(&v).into_owned())
+                .unwrap_or_default();
+            format!("{}{}", existing, content).into_bytes()
         } else {
-            content.to_string()
+            content.as_bytes().to_vec()
         };
 
-        // Ensure parent directory exists
-        if let Some(parent) = full.parent() {
-            if !parent.exists() {
-                std::fs::create_dir_all(parent).map_err(|e| Error::io("tool_file_write", e))?;
-            }
-        }
-
-        std::fs::write(&full, final_content.as_bytes())
-            .map_err(|e| Error::io("tool_file_write", e))?;
+        self.state_fs.write(&rel, &final_bytes)?;
 
         Ok(json!({
             "path": path_arg,

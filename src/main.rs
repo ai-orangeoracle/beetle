@@ -2,28 +2,37 @@
 //! Firmware version is embedded for OTA and ops.
 //! Startup order: NVS → SPIFFS → config → WiFi → memory/session stores → MessageBus → self-check → cron/heartbeat/sinks/dispatch/CLI → agent_loop.
 //! ESP32: no graceful shutdown; process runs until power off.
-#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
-use beetle::channels::connect_esp_wss;
+use beetle::channels::connect_wss;
 use beetle::config;
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+use beetle::constants::SOFTAP_DEFAULT_IPV4;
 use beetle::memory::{MemoryStore, SessionStore};
 #[cfg(feature = "feishu")]
 use beetle::run_feishu_ws_loop;
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+use beetle::LinuxPlatform;
 use beetle::Platform;
 use beetle::PlatformHttpClient;
 use beetle::{
-    parse_allowed_chat_ids, run_agent_loop, run_dispatch, send_chat_action, AppConfig,
+    parse_allowed_chat_ids, run_agent_loop, run_dispatch, send_chat_action, AppConfig, MessageBus,
+    DEFAULT_CAPACITY,
+};
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+use beetle::{
     DisplayChannelStatus, DisplayCommand, DisplayPressureLevel, DisplaySystemState, Esp32Platform,
-    MessageBus, DEFAULT_CAPACITY,
 };
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 const TAG: &str = "beetle";
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// 从 orchestrator snapshot 的 internal 堆空闲字节数估算已用百分比。
 /// ESP32-S3 internal DRAM 约 390KB；取 400KB 作为近似总量。非 ESP 返回 0。
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 fn heap_used_percent(snapshot: &beetle::orchestrator::ResourceSnapshot) -> u8 {
     const INTERNAL_TOTAL_APPROX: u32 = 400 * 1024;
     let free = snapshot.heap_free_internal;
@@ -57,91 +66,14 @@ fn ensure_storage_ready(memory_store: &dyn MemoryStore) {
     }
 }
 
-/// HTTP 工厂：与 `Platform::create_http_client` 一致（含代理），供流式编辑等独立连接使用。
-type HttpFactory = Box<dyn Fn() -> beetle::Result<Box<dyn PlatformHttpClient>> + Send + Sync>;
-
-/// Telegram 流式编辑器：LLM 流式输出期间，按需创建独立 HTTP 连接发送/编辑消息。
-struct TelegramStreamEditor {
-    token: String,
-    create_http: HttpFactory,
-}
-
-impl beetle::StreamEditor for TelegramStreamEditor {
-    fn send_initial(&self, chat_id: &str, content: &str) -> beetle::Result<Option<String>> {
-        let mut http = (self.create_http)()?;
-        beetle::tg_send_and_get_id(&mut http, &self.token, chat_id, content)
-    }
-    fn edit(&self, chat_id: &str, message_id: &str, content: &str) -> beetle::Result<()> {
-        let mut http = (self.create_http)()?;
-        beetle::tg_edit_message_text(&mut http, &self.token, chat_id, message_id, content)
-    }
-}
-
-/// 飞书流式编辑器：按需获取 tenant_access_token 并发送/编辑消息。
-struct FeishuStreamEditor {
-    app_id: String,
-    app_secret: String,
-    create_http: HttpFactory,
-}
-
-impl beetle::StreamEditor for FeishuStreamEditor {
-    fn send_initial(&self, chat_id: &str, content: &str) -> beetle::Result<Option<String>> {
-        let mut http = (self.create_http)()?;
-        let token = beetle::feishu_acquire_token(&mut http, &self.app_id, &self.app_secret)
-            .ok_or_else(|| {
-                beetle::Error::config("feishu_stream", "failed to acquire tenant_token")
-            })?;
-        beetle::feishu_send_and_get_id(&mut http, &token, chat_id, content)
-    }
-    fn edit(&self, _chat_id: &str, message_id: &str, content: &str) -> beetle::Result<()> {
-        let mut http = (self.create_http)()?;
-        let token = beetle::feishu_acquire_token(&mut http, &self.app_id, &self.app_secret)
-            .ok_or_else(|| {
-                beetle::Error::config("feishu_stream", "failed to acquire tenant_token")
-            })?;
-        beetle::feishu_edit_message(&mut http, &token, message_id, content)
-    }
-}
-
-/// F2: 根据当前状态计算下一轮显示刷新间隔（秒）。
-fn compute_refresh_secs(
-    state: DisplaySystemState,
-    backlight_off: bool,
-    last_activity_at: &std::time::Instant,
-) -> u64 {
-    use beetle::constants::*;
-    if backlight_off {
-        return DISPLAY_REFRESH_SLEEP_SECS;
-    }
-    match state {
-        DisplaySystemState::Busy => DISPLAY_REFRESH_BUSY_SECS,
-        DisplaySystemState::Idle | DisplaySystemState::NoWifi => {
-            if last_activity_at.elapsed().as_secs() >= DISPLAY_IDLE_LONG_THRESHOLD_SECS {
-                DISPLAY_REFRESH_IDLE_LONG_SECS
-            } else {
-                DISPLAY_REFRESH_IDLE_SECS
-            }
-        }
-        _ => DISPLAY_REFRESH_IDLE_SECS,
-    }
-}
-
-fn main() {
-    let platform: Arc<dyn Platform> = Arc::new(Esp32Platform::new());
-    if let Err(e) = platform.init() {
-        // init 失败时日志可能未初始化，尝试 eprintln 兜底
-        eprintln!("[{}] platform init failed: {}", TAG, e);
-        log::error!("[{}] platform init failed: {}", TAG, e);
-        return;
-    }
-    log::info!("========================================");
-    log::info!("  甲壳虫 beetle v{}", VERSION);
-    log::info!("========================================");
-
+/// 共享：加载配置、校验、WiFi 连接；ESP 侧含启动进度条与 display 初始化（与 Linux 同路径，无重复 main 逻辑）。
+fn bootstrap_config_and_wifi(platform: &Arc<dyn Platform>) -> (Arc<AppConfig>, bool) {
     let config_store = platform.config_store();
-    let config_file_store = config::PlatformConfigFileStore(Arc::clone(&platform));
-
-    let config = AppConfig::load(config_store.as_ref(), Some(&config_file_store));
+    let config_file_store = config::PlatformConfigFileStore(Arc::clone(platform));
+    let config = Arc::new(AppConfig::load(
+        config_store.as_ref(),
+        Some(&config_file_store),
+    ));
     if let Err(e) = config.validate_proxy() {
         log::warn!("[{}] config validate_proxy: {}", TAG, e);
     }
@@ -160,36 +92,53 @@ fn main() {
             log::warn!("[{}] config validate_for_wifi: {}", TAG, e);
         }
     }
-    // F8: 启动进度条 stage=1（WiFi 前发送）
+    #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
     if platform.display_available() {
         let _ = platform.display_command(DisplayCommand::UpdateBootProgress { stage: 1 });
     }
-    let wifi_connected = match platform.connect_wifi(&config) {
+    let wifi_init_ok = match platform.connect_wifi(config.as_ref()) {
         Ok(()) => {
             log::info!(
-                "[{}] WiFi ready (SoftAP up, STA connected if configured)",
+                "[{}] WiFi stack ready (SoftAP + scan; STA may still be negotiating)",
                 TAG
             );
-            platform.init_sntp();
-            // F8: 启动进度条 stage=2（SNTP 后）
-            if platform.display_available() {
-                let _ = platform.display_command(DisplayCommand::UpdateBootProgress { stage: 2 });
+            #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+            {
+                platform.init_sntp();
+                if platform.display_available() {
+                    let _ =
+                        platform.display_command(DisplayCommand::UpdateBootProgress { stage: 2 });
+                }
             }
             true
         }
         Err(e) => {
-            log::warn!("[{}] WiFi failed: {}", TAG, e);
+            log::warn!("[{}] WiFi init failed: {}", TAG, e);
             false
         }
     };
 
+    // HTTP config API (all targets): CSRF must be initialized regardless of WiFi outcome.
+    beetle::platform::csrf::init();
+
+    #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+    esp_boot_display_after_wifi(platform, &config, wifi_init_ok);
+
+    (config, wifi_init_ok)
+}
+
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+fn esp_boot_display_after_wifi(
+    platform: &Arc<dyn Platform>,
+    config: &Arc<AppConfig>,
+    wifi_init_ok: bool,
+) {
     if let Some(display_cfg) = config.display.as_ref() {
         if display_cfg.enabled {
             if let Err(e) = platform.init_display(display_cfg) {
                 log::warn!("[{}] display init failed (degraded): {}", TAG, e);
             } else {
                 log::info!("[{}] display initialized", TAG);
-                // F8: 启动进度条 stage=0（WiFi 前）
                 let _ = platform.display_command(DisplayCommand::UpdateBootProgress { stage: 0 });
                 let _ = platform.display_command(DisplayCommand::RefreshDashboard {
                     state: DisplaySystemState::Booting,
@@ -240,19 +189,189 @@ fn main() {
             }
         }
     }
-    if wifi_connected && platform.display_available() {
-        // F8: 启动进度条 stage=1（WiFi 后，已在上方 connect_wifi 成功时发送 stage=2）
+    if wifi_init_ok && platform.display_available() {
         let ip = platform
             .wifi_sta_ip()
-            .unwrap_or_else(|| "192.168.4.1".to_string());
+            .unwrap_or_else(|| SOFTAP_DEFAULT_IPV4.to_string());
         let _ = platform.display_command(DisplayCommand::UpdateIp { ip });
     }
+}
 
-    run_app(platform, Arc::new(config), wifi_connected);
+/// HTTP 工厂：与 `Platform::create_http_client` 一致（含代理），供流式编辑等独立连接使用。
+type HttpFactory = Box<dyn Fn() -> beetle::Result<Box<dyn PlatformHttpClient>> + Send + Sync>;
+
+/// Telegram 流式编辑器：复用同一 TLS 连接，避免每次 edit 重新握手。
+struct TelegramStreamEditor {
+    token: String,
+    create_http: HttpFactory,
+    http: Mutex<Option<Box<dyn PlatformHttpClient>>>,
+}
+
+impl beetle::StreamEditor for TelegramStreamEditor {
+    fn send_initial(&self, chat_id: &str, content: &str) -> beetle::Result<Option<String>> {
+        let mut g = self.http.lock().unwrap_or_else(|e| e.into_inner());
+        if g.is_none() {
+            *g = Some((self.create_http)()?);
+        }
+        let http = g.as_mut().unwrap();
+        let r = beetle::tg_send_and_get_id(http, &self.token, chat_id, content);
+        if r.is_err() {
+            *g = None;
+        }
+        r
+    }
+    fn edit(&self, chat_id: &str, message_id: &str, content: &str) -> beetle::Result<()> {
+        let mut g = self.http.lock().unwrap_or_else(|e| e.into_inner());
+        if g.is_none() {
+            *g = Some((self.create_http)()?);
+        }
+        let http = g.as_mut().unwrap();
+        let r = beetle::tg_edit_message_text(http, &self.token, chat_id, message_id, content);
+        if r.is_err() {
+            *g = None;
+        }
+        r
+    }
+}
+
+/// 飞书流式编辑器：复用 HTTP + tenant_access_token（与 sender 线程相同 TTL 策略）。
+struct FeishuStreamState {
+    http: Option<Box<dyn PlatformHttpClient>>,
+    token: Option<(String, Instant)>,
+}
+
+/// 飞书 tenant_access_token 缓存 TTL（与 `feishu/send` sender 一致：2h − 300s）。
+const FEISHU_STREAM_TOKEN_TTL: Duration = Duration::from_secs(7200 - 300);
+
+struct FeishuStreamEditor {
+    app_id: String,
+    app_secret: String,
+    create_http: HttpFactory,
+    state: Mutex<FeishuStreamState>,
+}
+
+impl FeishuStreamEditor {
+    fn ensure_token(&self, state: &mut FeishuStreamState) -> beetle::Result<String> {
+        let http = state
+            .http
+            .as_mut()
+            .ok_or_else(|| beetle::Error::config("feishu_stream", "http not initialized"))?;
+        let need_refresh = match &state.token {
+            Some((_, acquired)) => acquired.elapsed() >= FEISHU_STREAM_TOKEN_TTL,
+            None => true,
+        };
+        if need_refresh {
+            let t = beetle::feishu_acquire_token(http, &self.app_id, &self.app_secret)
+                .ok_or_else(|| {
+                    beetle::Error::config("feishu_stream", "failed to acquire tenant_token")
+                })?;
+            state.token = Some((t.clone(), Instant::now()));
+            Ok(t)
+        } else {
+            Ok(state.token.as_ref().unwrap().0.clone())
+        }
+    }
+}
+
+impl beetle::StreamEditor for FeishuStreamEditor {
+    fn send_initial(&self, chat_id: &str, content: &str) -> beetle::Result<Option<String>> {
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        if state.http.is_none() {
+            state.http = Some((self.create_http)()?);
+        }
+        let token = self.ensure_token(&mut state)?;
+        let http = state.http.as_mut().unwrap();
+        let r = beetle::feishu_send_and_get_id(http, &token, chat_id, content);
+        if r.is_err() {
+            state.http = None;
+            state.token = None;
+        }
+        r
+    }
+
+    fn edit(&self, _chat_id: &str, message_id: &str, content: &str) -> beetle::Result<()> {
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        if state.http.is_none() {
+            state.http = Some((self.create_http)()?);
+        }
+        let token = self.ensure_token(&mut state)?;
+        let http = state.http.as_mut().unwrap();
+        let r = beetle::feishu_edit_message(http, &token, message_id, content);
+        if r.is_err() {
+            state.http = None;
+            state.token = None;
+        }
+        r
+    }
+}
+
+/// F2: 根据当前状态计算下一轮显示刷新间隔（秒）。
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+fn compute_refresh_secs(
+    state: DisplaySystemState,
+    backlight_off: bool,
+    last_activity_at: &std::time::Instant,
+) -> u64 {
+    use beetle::constants::*;
+    if backlight_off {
+        return DISPLAY_REFRESH_SLEEP_SECS;
+    }
+    match state {
+        DisplaySystemState::Busy => DISPLAY_REFRESH_BUSY_SECS,
+        DisplaySystemState::Idle | DisplaySystemState::NoWifi => {
+            if last_activity_at.elapsed().as_secs() >= DISPLAY_IDLE_LONG_THRESHOLD_SECS {
+                DISPLAY_REFRESH_IDLE_LONG_SECS
+            } else {
+                DISPLAY_REFRESH_IDLE_SECS
+            }
+        }
+        _ => DISPLAY_REFRESH_IDLE_SECS,
+    }
+}
+
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+fn main() {
+    if env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+        .try_init()
+        .is_err()
+    {
+        eprintln!("[beetle] env_logger init failed (logging may be incomplete)");
+    }
+    let platform: Arc<dyn Platform> = Arc::new(LinuxPlatform::new());
+    if let Err(e) = platform.init() {
+        eprintln!("[{}] platform init failed: {}", TAG, e);
+        std::process::exit(1);
+    }
+    log::info!("========================================");
+    log::info!("  甲壳虫 beetle v{}", VERSION);
+    log::info!("========================================");
+    let (config, wifi_init_ok) = bootstrap_config_and_wifi(&platform);
+    run_app(platform, config, wifi_init_ok);
+}
+
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+fn main() {
+    let platform: Arc<dyn Platform> = Arc::new(Esp32Platform::new());
+    if let Err(e) = platform.init() {
+        // init 失败时日志可能未初始化，尝试 eprintln 兜底
+        eprintln!("[{}] platform init failed: {}", TAG, e);
+        log::error!("[{}] platform init failed: {}", TAG, e);
+        return;
+    }
+    log::info!("========================================");
+    log::info!("  甲壳虫 beetle v{}", VERSION);
+    log::info!("========================================");
+
+    let (config, wifi_init_ok) = bootstrap_config_and_wifi(&platform);
+    run_app(platform, config, wifi_init_ok);
 }
 
 /// 启动编排：存储与总线 → 自检 → 后台任务与通道 → agent 循环与 flush。与 main 解耦便于单文件内可读性。
-fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_connected: bool) {
+fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_init_ok: bool) {
+    beetle::orchestrator::register_memory_snapshot_provider(Arc::new({
+        let p = Arc::clone(&platform);
+        move || p.memory_snapshot()
+    }));
     let config_store = platform.config_store();
     let skill_storage = platform.skill_storage();
     let skill_meta_store = platform.skill_meta_store();
@@ -306,19 +425,17 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
         );
         return;
     }
-    let wifi_status = if wifi_connected {
-        "connected"
-    } else {
-        "disconnected"
-    };
+    let wifi_init_status = if wifi_init_ok { "ok" } else { "failed" };
+    let sta_up = beetle::platform::is_wifi_sta_connected();
     let spiffs_info = platform
         .spiffs_usage()
         .map(|(total, used)| format!("{} free", total.saturating_sub(used)))
         .unwrap_or_else(|| "N/A".to_string());
     log::info!(
-        "[{}] startup self-check ok (storage readable, wifi={}, spiffs={})",
+        "[{}] startup self-check ok (storage readable, wifi_init={}, sta_up={}, spiffs={})",
         TAG,
-        wifi_status,
+        wifi_init_status,
+        sta_up,
         spiffs_info
     );
     #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
@@ -331,13 +448,11 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
         let out = Arc::clone(&outbound_depth);
         let memory_http = Arc::clone(&memory_store);
         let session_http = Arc::clone(&session_store);
-        let w = wifi_connected;
         let http_inbound_tx = inbound_tx.clone();
         let http_qq_cache = Arc::clone(&qq_msg_id_cache);
         beetle::util::spawn_guarded("http_server", move || {
             if let Err(e) = beetle::platform::http_server::run(
                 platform_http,
-                w,
                 inc,
                 out,
                 memory_http,
@@ -348,8 +463,15 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
                 log::warn!("[{}] HTTP config API server error: {}", TAG, e);
             }
         });
+        #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
         log::info!(
-            "[{}] HTTP config API server started (SoftAP: 192.168.4.1)",
+            "[{}] HTTP config API server started (SoftAP: {})",
+            TAG,
+            SOFTAP_DEFAULT_IPV4
+        );
+        #[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+        log::info!(
+            "[{}] HTTP config API server started (config API on LAN; BEETLE_CONFIG_HTTP_LISTEN, default 0.0.0.0:80)",
             TAG
         );
     }
@@ -358,6 +480,7 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
         inbound_tx.clone(),
         beetle::cron::DEFAULT_CRON_INTERVAL_SECS,
         Some(Arc::clone(&memory_store)),
+        Some((Arc::clone(&platform), config.hardware_devices.clone())),
     );
     beetle::heartbeat::run_heartbeat_loop_with_tasks(
         VERSION,
@@ -367,8 +490,14 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
         Arc::clone(&inbound_depth),
         Arc::clone(&outbound_depth),
         Arc::clone(&session_store),
+        Arc::clone(&platform),
     );
 
+    // 出站前等待 STA + 编排器初始化：须在 `create_http_client` 成功判定之前，以便 Linux 在 HTTP 桩返回 Err 时仍能 init orchestrator。
+    beetle::platform::wait_for_network_ready();
+    beetle::orchestrator::init();
+
+    #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
     if platform.display_available() {
         let display_platform = Arc::clone(&platform);
         let display_config = Arc::clone(&config);
@@ -421,14 +550,14 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
                             DisplayPressureLevel::Critical
                         }
                     };
-                    let wifi_connected = beetle::platform::is_wifi_sta_connected();
+                    let sta_connected = beetle::platform::is_wifi_sta_connected();
                     let busy = snapshot.inbound_depth > 0
                         || snapshot.outbound_depth > 0
                         || snapshot.active_http_count > 0;
                     let state =
                         if snapshot.pressure == beetle::orchestrator::PressureLevel::Critical {
                             DisplaySystemState::Fault
-                        } else if !wifi_connected {
+                        } else if !sta_connected {
                             DisplaySystemState::NoWifi
                         } else if busy {
                             DisplaySystemState::Busy
@@ -437,7 +566,7 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
                         };
                     let ip = display_platform
                         .wifi_sta_ip()
-                        .unwrap_or_else(|| "192.168.4.1".to_string());
+                        .unwrap_or_else(|| SOFTAP_DEFAULT_IPV4.to_string());
 
                     // F5: 通道状态含 consecutive_failures
                     let channels = [
@@ -522,10 +651,9 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
                     // Detect any dirty region change as "activity".
                     let state_changed = last_state != Some(state);
                     let ip_changed = last_ip.as_str() != ip.as_str();
-                    let channels_changed = channels
-                        .iter()
-                        .enumerate()
-                        .any(|(i, ch)| last_channels[i] != (ch.enabled, ch.healthy, ch.consecutive_failures));
+                    let channels_changed = channels.iter().enumerate().any(|(i, ch)| {
+                        last_channels[i] != (ch.enabled, ch.healthy, ch.consecutive_failures)
+                    });
                     let pressure_changed = last_pressure.as_ref() != Some(&pressure);
                     let heap_changed = last_heap.abs_diff(heap_percent) >= 2;
                     let msg_changed = msg_in != last_msg_in || msg_out != last_msg_out;
@@ -574,7 +702,7 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
                     if state_changed {
                         let cmd = DisplayCommand::RefreshDashboard {
                             state,
-                            wifi_connected,
+                            wifi_connected: sta_connected,
                             ip_address: Some(ip.clone()),
                             channels: channels.clone(),
                             pressure: pressure.clone(),
@@ -603,7 +731,8 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
                         last_llm_ms = llm_ms;
 
                         // F2: 计算下一轮刷新间隔
-                        refresh_secs = compute_refresh_secs(state, backlight_off, &last_activity_at);
+                        refresh_secs =
+                            compute_refresh_secs(state, backlight_off, &last_activity_at);
                         continue;
                     }
 
@@ -623,7 +752,8 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
                         }
                     }
                     // 2% hysteresis on heap to avoid progress bar flicker
-                    if pressure_changed || heap_changed || msg_changed || llm_changed || show_flash {
+                    if pressure_changed || heap_changed || msg_changed || llm_changed || show_flash
+                    {
                         let _ = display_platform.display_command(DisplayCommand::UpdatePressure {
                             level: pressure.clone(),
                             heap_percent,
@@ -652,6 +782,7 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
     let (sinks, mut channel_rx_set) =
         beetle::channels::build_channel_sinks(config.as_ref(), &qq_msg_id_cache);
     // F8: 启动进度条 stage=3（channel sinks 后）
+    #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
     if platform.display_available() {
         let _ = platform.display_command(DisplayCommand::UpdateBootProgress { stage: 3 });
     }
@@ -668,10 +799,7 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
         }
     );
 
-    #[cfg(all(
-        feature = "feishu",
-        any(target_arch = "xtensa", target_arch = "riscv32")
-    ))]
+    #[cfg(feature = "feishu")]
     if let Some(ref c) = channel_rx_set.feishu {
         let tx = inbound_tx.clone();
         let id = c.app_id.clone();
@@ -686,22 +814,18 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
                 allowed,
                 tx,
                 move || pf.create_http_client(cfg.as_ref()),
-                connect_esp_wss,
+                connect_wss,
             )
         });
         log::info!("[{}] Feishu WS loop started", TAG);
     } else if enabled_channel == "feishu" {
-        #[cfg(all(
-            feature = "feishu",
-            any(target_arch = "xtensa", target_arch = "riscv32")
-        ))]
+        #[cfg(feature = "feishu")]
         log::warn!(
             "[{}] Feishu WS not started: app_id or app_secret empty (check channels config)",
             TAG
         );
     }
 
-    #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
     if enabled_channel == "qq_channel" {
         if let Some(ref c) = channel_rx_set.qq_channel {
             if !c.app_id.trim().is_empty() && !c.app_secret.trim().is_empty() {
@@ -718,7 +842,7 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
                         qq_tx,
                         qq_cache_ws,
                         move || pf.create_http_client(cfg.as_ref()),
-                        connect_esp_wss,
+                        connect_wss,
                     )
                 });
                 log::info!("[{}] QQ WS loop started", TAG);
@@ -730,9 +854,6 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
     if let Ok(mut http_client) = platform.create_http_client(config.as_ref()) {
         #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
         beetle::platform::task_wdt::register_current_task_to_task_wdt();
-        // 总控唯一入口：出站网络未就绪时不启动 WSS/通道/Agent 等对外请求，阻塞直到 STA 就绪（轮询+喂狗）
-        beetle::platform::wait_for_network_ready();
-        beetle::orchestrator::init();
         let outbound_rx_for_dispatch = outbound_rx;
         let sinks_clone = Arc::clone(&sinks);
         beetle::util::spawn_guarded("dispatch", move || {
@@ -746,7 +867,6 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
             let tg_inbound_tx = inbound_tx.clone();
             let tg_outbound_tx = outbound_tx.clone();
             let tg_session_store = Arc::clone(&session_store);
-            let tg_wifi = wifi_connected;
             let tg_inbound_depth = Arc::clone(&inbound_depth);
             let tg_outbound_depth = Arc::clone(&outbound_depth);
             let tg_config_store = Arc::clone(&config_store);
@@ -760,7 +880,6 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
                     tg_inbound_tx,
                     tg_outbound_tx,
                     tg_session_store,
-                    tg_wifi,
                     tg_inbound_depth,
                     tg_outbound_depth,
                     tg_config_store,
@@ -811,6 +930,7 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
                     Some(StreamEditorImpl::Telegram(TelegramStreamEditor {
                         token: config.tg_token.clone(),
                         create_http: make_http,
+                        http: Mutex::new(None),
                     }))
                 }
                 "feishu" if !config.feishu_app_id.trim().is_empty() => {
@@ -818,6 +938,10 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
                         app_id: config.feishu_app_id.clone(),
                         app_secret: config.feishu_app_secret.clone(),
                         create_http: make_http,
+                        state: Mutex::new(FeishuStreamState {
+                            http: None,
+                            token: None,
+                        }),
                     }))
                 }
                 _ => None,
@@ -854,7 +978,6 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
                 Arc::clone(&memory_store),
                 Arc::clone(&session_store),
                 Arc::clone(&platform),
-                wifi_connected,
                 Some(Arc::clone(&inbound_depth)),
                 Some(Arc::clone(&outbound_depth)),
             );
@@ -875,6 +998,7 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
         beetle::channels::spawn_sender_threads(&mut channel_rx_set, &config.tg_token, create_http);
 
         // F8: 启动进度条 stage=4（agent 前）
+        #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
         if platform.display_available() {
             let _ = platform.display_command(DisplayCommand::UpdateBootProgress { stage: 4 });
         }
@@ -894,7 +1018,10 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
             beetle::state::set_last_error(&e);
         }
     } else {
-        log::warn!("[{}] create_http_client failed, agent not started", TAG);
+        log::warn!(
+            "[{}] HTTP client not available (create_http_client failed): dispatch, agent, Telegram poll, and outbound sender threads were not started. On Linux, ensure ureq/rustls stack and network; see dev-docs/linux-migration-plan.md.",
+            TAG
+        );
     }
 
     loop {

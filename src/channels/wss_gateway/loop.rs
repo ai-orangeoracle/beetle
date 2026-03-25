@@ -18,6 +18,7 @@ const DEFAULT_HEARTBEAT_INTERVAL_MS: u64 = 120_000;
 /// 避免长心跳间隔通道（如飞书 120s）在空闲时触发看门狗。
 const WDT_RECV_CHUNK_SECS: u64 = 25;
 /// WiFi 就绪等待上限（秒）；运行中网络断开后重连时，超出后仍尝试连接。
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 const WIFI_WAIT_MAX_SECS: u64 = 60;
 
 /// 阻塞等待 WiFi STA 就绪，每 2s 轮询，最多 `WIFI_WAIT_MAX_SECS`。返回 true 表示已就绪，false 表示超时仍继续尝试。

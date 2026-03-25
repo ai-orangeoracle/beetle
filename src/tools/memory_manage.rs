@@ -100,10 +100,7 @@ impl Tool for MemoryManageTool {
                 Ok(json!({"op": "set_user", "ok": true}).to_string())
             }
             "list_daily_notes" => {
-                let recent_n = obj
-                    .get("recent_n")
-                    .and_then(|x| x.as_u64())
-                    .unwrap_or(10) as usize;
+                let recent_n = obj.get("recent_n").and_then(|x| x.as_u64()).unwrap_or(10) as usize;
                 let recent_n = recent_n.min(crate::constants::DAILY_NOTE_MAX_LIST);
                 let names = self.store.list_daily_note_names(recent_n)?;
                 Ok(json!({"op": "list_daily_notes", "names": names}).to_string())
@@ -127,10 +124,7 @@ impl Tool for MemoryManageTool {
                     .get("content")
                     .and_then(|x| x.as_str())
                     .ok_or_else(|| Error::config("tool_memory_manage", "missing content"))?;
-                let append = obj
-                    .get("append")
-                    .and_then(|x| x.as_bool())
-                    .unwrap_or(false);
+                let append = obj.get("append").and_then(|x| x.as_bool()).unwrap_or(false);
                 let final_content = if append {
                     let existing = self.store.get_daily_note(name).unwrap_or_default();
                     if existing.is_empty() {
@@ -142,7 +136,10 @@ impl Tool for MemoryManageTool {
                     content.to_string()
                 };
                 self.store.write_daily_note(name, &final_content)?;
-                Ok(json!({"op": "write_daily_note", "name": name, "ok": true, "append": append}).to_string())
+                Ok(
+                    json!({"op": "write_daily_note", "name": name, "ok": true, "append": append})
+                        .to_string(),
+                )
             }
             _ => Err(Error::config(
                 "tool_memory_manage",

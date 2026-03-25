@@ -9,6 +9,9 @@ mod r#loop;
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 mod esp_conn;
 
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+mod linux_conn;
+
 #[allow(unused_imports)]
 pub use connection::{WssConnection, WssEvent};
 pub use driver::{WssGatewayDriver, WssRecvAction, WssSessionState};
@@ -17,3 +20,17 @@ pub use r#loop::run_wss_gateway_loop;
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 #[allow(unused_imports)]
 pub use esp_conn::{connect_esp_wss, EspWssConnection};
+
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+pub use linux_conn::{connect_linux_wss, LinuxWssConnection};
+
+/// 平台 WSS 建连：ESP 用 `esp-idf` websocket；Linux 用 `tungstenite`+rustls。供 `run_*_ws_loop` 注入。
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+pub fn connect_wss(url: &str) -> crate::error::Result<esp_conn::EspWssConnection> {
+    esp_conn::connect_esp_wss(url)
+}
+
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+pub fn connect_wss(url: &str) -> crate::error::Result<linux_conn::LinuxWssConnection> {
+    linux_conn::connect_linux_wss(url)
+}

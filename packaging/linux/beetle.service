@@ -1,0 +1,25 @@
+[Unit]
+Description=Beetle agent (甲壳虫)
+# Self-managed WiFi/AP: do not order after network-online (NM wait-online can deadlock).
+After=local-fs.target
+Wants=network-pre.target
+
+[Service]
+Type=simple
+# Create a dedicated user on the device and set User=/Group= here (see README.txt).
+# User=beetle
+# Group=beetle
+WorkingDirectory=/opt/beetle/current
+ExecStart=/opt/beetle/current/beetle
+# Recover from crashes; cap bursts so a broken binary does not spin forever.
+Restart=on-failure
+RestartSec=5
+StartLimitIntervalSec=300
+StartLimitBurst=5
+# State and SPIFFS-emulation paths (host): see README.txt for BEETLE_STATE_ROOT.
+# Optional: EnvironmentFile=-/etc/default/beetle
+ReadWritePaths=/var/lib/beetle /data/beetle
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target

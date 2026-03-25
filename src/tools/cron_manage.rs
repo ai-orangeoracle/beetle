@@ -45,7 +45,9 @@ impl CronManageTool {
     fn save_tasks(&self, tasks: &[CronTask]) -> Result<()> {
         let data = serde_json::to_string_pretty(tasks)
             .map_err(|e| Error::config("tool_cron_manage", e.to_string()))?;
-        self.store.write_daily_note(CRON_TASKS_REL_PATH, &data)
+        self.store.write_daily_note(CRON_TASKS_REL_PATH, &data)?;
+        crate::cron::mark_cron_persisted_tasks_dirty();
+        Ok(())
     }
 }
 
@@ -226,9 +228,7 @@ fn validate_cron_expr(expr: &str) -> Result<()> {
 
 /// Load persisted cron tasks from SPIFFS (for use by cron loop).
 /// Returns empty vec on any error.
-pub fn load_persisted_cron_tasks(
-    store: &dyn MemoryStore,
-) -> Vec<CronTask> {
+pub fn load_persisted_cron_tasks(store: &dyn MemoryStore) -> Vec<CronTask> {
     match store.get_daily_note(CRON_TASKS_REL_PATH) {
         Ok(s) if !s.is_empty() => serde_json::from_str(&s).unwrap_or_default(),
         _ => Vec::new(),

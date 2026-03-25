@@ -7,6 +7,8 @@ import type {
   SystemConfigSegment,
 } from '../types/appConfig'
 import type { DisplayConfig } from '../types/displayConfig'
+import type { HardwareSegment } from '../types/hardwareConfig'
+import { ensureHardwareDeviceIds } from '../util/hardwareDeviceId'
 import { ConfigContext } from './ConfigContext'
 import { useDeviceApi } from '../hooks/useDeviceApi'
 import { markDeviceReachable } from '../store/deviceStatusStore'
@@ -37,12 +39,17 @@ export function ConfigProvider({ children }: { children: React.ReactNode }) {
   const [displayConfig, setDisplayConfig] = useState<DisplayConfig | null>(null)
   const [displayLoading, setDisplayLoading] = useState(false)
   const [displayError, setDisplayError] = useState<string | null>(null)
+  const [hardwareSegment, setHardwareSegment] = useState<HardwareSegment | null>(null)
+  const [hardwareLoading, setHardwareLoading] = useState(false)
+  const [hardwareError, setHardwareError] = useState<string | null>(null)
 
   const clearCachedConfig = useCallback(() => {
     setConfig(null)
     setError(null)
     setDisplayConfig(null)
     setDisplayError(null)
+    setHardwareSegment(null)
+    setHardwareError(null)
   }, [])
 
   const loadConfig = useCallback(async () => {
@@ -165,6 +172,52 @@ export function ConfigProvider({ children }: { children: React.ReactNode }) {
     [api.display],
   )
 
+  const loadHardwareConfig = useCallback(async () => {
+    if (!ready) {
+      setHardwareError(ERROR_KEY_NO_BASE)
+      return
+    }
+    setHardwareLoading(true)
+    setHardwareError(null)
+    const res = await api.hardware.get()
+    setHardwareLoading(false)
+    if (res.ok && res.data != null && typeof res.data === 'object') {
+      const d = res.data as HardwareSegment
+      const list = Array.isArray(d.hardware_devices) ? d.hardware_devices : []
+      setHardwareSegment({
+        hardware_devices: ensureHardwareDeviceIds(list),
+        i2c_bus: d.i2c_bus ?? undefined,
+        i2c_devices: Array.isArray(d.i2c_devices) ? d.i2c_devices : undefined,
+      })
+    } else {
+      setHardwareError(
+        res.error === API_ERROR.NO_BASE_URL
+          ? ERROR_KEY_NO_BASE
+          : isDeviceOrPairingHint(res.error ?? '')
+            ? null
+            : ERROR_KEY_LOAD_FAILED,
+      )
+      setHardwareSegment(null)
+    }
+  }, [api.hardware, ready])
+
+  const saveHardwareConfig = useCallback(
+    async (
+      body: HardwareSegment,
+    ): Promise<{ ok: boolean; error?: string; restartRequired?: boolean }> => {
+      const res = await api.hardware.save(body)
+      if (res.ok) setHardwareSegment(body)
+      const err =
+        res.error === API_ERROR.PAIRING_REQUIRED ? 'device.pairingCodeRequired' : res.error
+      return {
+        ok: res.ok ?? false,
+        error: err,
+        restartRequired: Boolean(res.ok),
+      }
+    },
+    [api.hardware],
+  )
+
   const value = useMemo(
     () => ({
       config,
@@ -181,6 +234,11 @@ export function ConfigProvider({ children }: { children: React.ReactNode }) {
       displayError,
       loadDisplayConfig,
       saveDisplayConfig,
+      hardwareSegment,
+      hardwareLoading,
+      hardwareError,
+      loadHardwareConfig,
+      saveHardwareConfig,
     }),
     [
       config,
@@ -197,6 +255,11 @@ export function ConfigProvider({ children }: { children: React.ReactNode }) {
       displayError,
       loadDisplayConfig,
       saveDisplayConfig,
+      hardwareSegment,
+      hardwareLoading,
+      hardwareError,
+      loadHardwareConfig,
+      saveHardwareConfig,
     ],
   )
 

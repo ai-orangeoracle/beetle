@@ -114,21 +114,24 @@ pub fn build_default_registry(
 ) -> ToolRegistry {
     let mut registry = ToolRegistry::new();
     registry.register(Box::new(super::GetTimeTool));
-    registry.register(Box::new(super::FilesTool));
+    registry.register(Box::new(super::FilesTool::new(platform.state_fs())));
     registry.register(Box::new(super::WebSearchTool::new(config)));
     registry.register(Box::new(super::AnalyzeImageTool::new(config)));
     let remind_at_store_for_list = Arc::clone(&remind_at_store);
     registry.register(Box::new(super::RemindAtTool::new(remind_at_store)));
-    registry.register(Box::new(super::RemindListTool::new(remind_at_store_for_list)));
+    registry.register(Box::new(super::RemindListTool::new(
+        remind_at_store_for_list,
+    )));
     registry.register(Box::new(super::UpdateSessionSummaryTool::new(
         session_summary_store,
         Arc::clone(&session_store),
     )));
     registry.register(Box::new(super::BoardInfoTool::new(Arc::clone(&platform))));
-    registry.register(Box::new(super::KvStoreTool));
+    registry.register(Box::new(super::KvStoreTool::new(platform.state_fs())));
     if !config.hardware_devices.is_empty() {
         registry.register(Box::new(super::DeviceControlTool::new(
             config.hardware_devices.clone(),
+            Arc::clone(&platform),
         )));
     }
     // --- New tools ---
@@ -137,7 +140,7 @@ pub fn build_default_registry(
     ))));
     registry.register(Box::new(super::HttpRequestTool));
     registry.register(Box::new(super::SessionManageTool::new(session_store)));
-    registry.register(Box::new(super::FileWriteTool));
+    registry.register(Box::new(super::FileWriteTool::new(platform.state_fs())));
     registry.register(Box::new(super::SystemControlTool::new(Arc::clone(
         &platform,
     ))));

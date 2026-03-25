@@ -2,7 +2,9 @@
 //! i2c_device tool: I2C bus communication.
 
 use crate::config::I2cDeviceEntry;
-use crate::constants::{I2C_MAX_READ_LEN, I2C_MAX_WRITE_LEN, I2C_READ_MIN_INTERVAL_MS, I2C_WRITE_MIN_INTERVAL_MS};
+use crate::constants::{
+    I2C_MAX_READ_LEN, I2C_MAX_WRITE_LEN, I2C_READ_MIN_INTERVAL_MS, I2C_WRITE_MIN_INTERVAL_MS,
+};
 use crate::error::{Error, Result};
 use crate::platform::Platform;
 use crate::tools::{parse_tool_args, Tool, ToolContext};
@@ -199,10 +201,7 @@ impl Tool for I2cDeviceTool {
             .ok_or_else(|| Error::config("i2c_device", "missing device_id"))?;
 
         let idx = *self.device_map.get(device_id).ok_or_else(|| {
-            Error::config(
-                "i2c_device",
-                format!("unknown device_id '{}'", device_id),
-            )
+            Error::config("i2c_device", format!("unknown device_id '{}'", device_id))
         })?;
 
         let op = obj
@@ -227,10 +226,7 @@ impl Tool for I2cDeviceTool {
 
         let result = match op {
             "read" => {
-                let len = obj
-                    .get("len")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(1) as usize;
+                let len = obj.get("len").and_then(|v| v.as_u64()).unwrap_or(1) as usize;
                 if len == 0 || len > I2C_MAX_READ_LEN {
                     return Err(Error::config(
                         "i2c_device",
@@ -266,14 +262,11 @@ impl Tool for I2cDeviceTool {
                     .map(|v| {
                         v.as_u64()
                             .and_then(|n| if n <= 255 { Some(n as u8) } else { None })
-                            .ok_or_else(|| {
-                                Error::config("i2c_device", "data bytes must be 0-255")
-                            })
+                            .ok_or_else(|| Error::config("i2c_device", "data bytes must be 0-255"))
                     })
                     .collect::<Result<Vec<u8>>>()?;
 
-                self.platform
-                    .i2c_write(dev.addr, register as u8, &data)?;
+                self.platform.i2c_write(dev.addr, register as u8, &data)?;
                 Ok(json!({
                     "op": "write",
                     "device_id": device_id,

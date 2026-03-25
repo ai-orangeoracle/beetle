@@ -64,8 +64,7 @@ impl SensorWatchTool {
     fn save_watches(&self, watches: &[SensorWatch]) -> Result<()> {
         let data = serde_json::to_string_pretty(watches)
             .map_err(|e| Error::config("tool_sensor_watch", e.to_string()))?;
-        self.store
-            .write_daily_note(SENSOR_WATCHES_REL_PATH, &data)
+        self.store.write_daily_note(SENSOR_WATCHES_REL_PATH, &data)
     }
 
     fn is_valid_sensor_device(&self, device_id: &str) -> bool {
@@ -172,10 +171,7 @@ impl Tool for SensorWatchTool {
                 if alert_message.len() > SENSOR_WATCH_MAX_ALERT_LEN {
                     return Err(Error::config(
                         "tool_sensor_watch",
-                        format!(
-                            "alert_message exceeds {} bytes",
-                            SENSOR_WATCH_MAX_ALERT_LEN
-                        ),
+                        format!("alert_message exceeds {} bytes", SENSOR_WATCH_MAX_ALERT_LEN),
                     ));
                 }
 
@@ -296,10 +292,7 @@ impl Tool for SensorWatchTool {
                     if msg.len() > SENSOR_WATCH_MAX_ALERT_LEN {
                         return Err(Error::config(
                             "tool_sensor_watch",
-                            format!(
-                                "alert_message exceeds {} bytes",
-                                SENSOR_WATCH_MAX_ALERT_LEN
-                            ),
+                            format!("alert_message exceeds {} bytes", SENSOR_WATCH_MAX_ALERT_LEN),
                         ));
                     }
                     watch.alert_message = msg.to_string();
@@ -347,6 +340,8 @@ pub fn save_sensor_watches(store: &dyn MemoryStore, watches: &[SensorWatch]) {
 pub(crate) fn check_sensor_watches(
     store: &dyn MemoryStore,
     inbound_tx: &crate::bus::InboundTx,
+    platform: &dyn crate::platform::Platform,
+    devices: &[DeviceEntry],
 ) {
     let mut watches = load_sensor_watches(store);
     if watches.is_empty() {
@@ -364,8 +359,7 @@ pub(crate) fn check_sensor_watches(
             continue;
         }
 
-        // Read sensor value via hardware_drivers
-        let read_result = read_sensor_value(&watch.device_id);
+        let read_result = read_sensor_value(&watch.device_id, platform, devices);
         let value = match read_result {
             Ok(v) => v,
             Err(e) => {
@@ -419,11 +413,7 @@ pub(crate) fn check_sensor_watches(
                     }
                 }
                 Err(e) => {
-                    log::warn!(
-                        "[sensor_watch] PcMsg::new for {} failed: {}",
-                        watch.id,
-                        e
-                    );
+                    log::warn!("[sensor_watch] PcMsg::new for {} failed: {}", watch.id, e);
                 }
             }
         }
@@ -438,23 +428,43 @@ pub(crate) fn check_sensor_watches(
     }
 }
 
-/// 读取传感器值：根据 device_id 查找设备配置并调用对应硬件驱动。
-/// 因为 cron 循环无法访问完整的 DeviceEntry 列表，这里直接调用硬件驱动的 stub/real 实现。
-/// 注意：此函数假定 device_id 对应的设备在 hardware.json 中已配置。
-fn read_sensor_value(device_id: &str) -> Result<f64> {
-    // We cannot access the full device config here in the cron context.
-    // Instead, we store enough info. For now, return a placeholder that will be
-    // properly implemented when the cron loop passes device configs.
-    // This is a minimal stub that logs the attempt.
-    log::debug!(
-        "[sensor_watch] reading sensor value for device '{}'",
-        device_id
-    );
-    Err(Error::config(
-        "sensor_watch",
-        format!(
-            "direct sensor read for '{}' not yet wired (requires device config from cron context)",
-            device_id
-        ),
-    ))
+/// 读取传感器值：按 `device_id` 查配置，经 [`Platform`] 委托 GPIO/ADC（与 `device_control` 一致）。
+fn read_sensor_value(
+    device_id: &str,
+    platform: &dyn crate::platform::Platform,
+    devices: &[DeviceEntry],
+) -> Result<f64> {
+    let dev = devices.iter().find(|d| d.id == device_id).ok_or_else(|| {
+        Error::config("sensor_watch", format!("unknown device_id '{}'", device_id))
+    })?;
+    let empty = json!({});
+    match dev.device_type.as_str() {
+        "gpio_in" => {
+            let s = platform.drive_gpio_in(&dev.pins, &empty, &dev.options)?;
+            let v: Value = serde_json::from_str(&s)
+                .map_err(|e| Error::config("sensor_watch", format!("gpio_in JSON: {}", e)))?;
+            let n = v
+                .get("value")
+                .and_then(|x| x.as_f64())
+                .or_else(|| v.get("value").and_then(|x| x.as_i64()).map(|i| i as f64))
+                .or_else(|| v.get("value").and_then(|x| x.as_u64()).map(|u| u as f64))
+                .unwrap_or(0.0);
+            Ok(n)
+        }
+        "adc_in" => {
+            let s = platform.drive_adc_in(&dev.pins, &empty, &dev.options)?;
+            let v: Value = serde_json::from_str(&s)
+                .map_err(|e| Error::config("sensor_watch", format!("adc_in JSON: {}", e)))?;
+            let raw = v
+                .get("raw")
+                .and_then(|x| x.as_f64())
+                .or_else(|| v.get("raw").and_then(|x| x.as_i64()).map(|i| i as f64))
+                .unwrap_or(0.0);
+            Ok(raw)
+        }
+        _ => Err(Error::config(
+            "sensor_watch",
+            format!("device '{}' is not gpio_in or adc_in", device_id),
+        )),
+    }
 }

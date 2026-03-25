@@ -9,6 +9,7 @@ use crate::error::Result;
 use crate::llm::Message;
 use crate::memory::{build_system_prompt, ImportantMessageStore, MemoryStore, SessionStore};
 use crate::state;
+use std::collections::HashSet;
 
 pub use crate::constants::{DEFAULT_MESSAGES_MAX_LEN, DEFAULT_SYSTEM_MAX_LEN};
 /// 从 SessionStore 加载的最近条数。
@@ -74,29 +75,36 @@ pub fn build_context(p: &ContextParams<'_>) -> Result<(String, Vec<Message>)> {
         .system_max_len
         .saturating_sub(p.tool_descriptions.len().min(tools_max));
     let system_base = build_system_prompt(&soul, &user, &mem, &daily_contents, base_max);
-    let mut system = system_base;
+    let mut system = String::with_capacity(p.system_max_len);
+    system.push_str(&system_base);
     if !p.tool_descriptions.is_empty() {
         let remain = p.system_max_len.saturating_sub(system.len());
         if remain > 0 {
-            let t = if p.tool_descriptions.len() <= remain {
-                p.tool_descriptions.to_string()
-            } else {
-                crate::util::truncate_to_byte_len(p.tool_descriptions, remain)
-            };
             system.push_str("\n\n## Tools\n");
-            system.push_str(&t);
+            if p.tool_descriptions.len() <= remain {
+                system.push_str(p.tool_descriptions);
+            } else {
+                let mut end = remain;
+                while end > 0 && !p.tool_descriptions.is_char_boundary(end) {
+                    end -= 1;
+                }
+                system.push_str(&p.tool_descriptions[..end]);
+            }
         }
     }
     if !p.skill_descriptions.is_empty() {
         let remain = p.system_max_len.saturating_sub(system.len());
         if remain > 0 {
-            let s = if p.skill_descriptions.len() <= remain {
-                p.skill_descriptions.to_string()
-            } else {
-                crate::util::truncate_to_byte_len(p.skill_descriptions, remain)
-            };
             system.push_str("\n\n## Skills\n");
-            system.push_str(&s);
+            if p.skill_descriptions.len() <= remain {
+                system.push_str(p.skill_descriptions);
+            } else {
+                let mut end = remain;
+                while end > 0 && !p.skill_descriptions.is_char_boundary(end) {
+                    end -= 1;
+                }
+                system.push_str(&p.skill_descriptions[..end]);
+            }
         }
     }
     if p.msg.is_group {
@@ -232,9 +240,15 @@ fn truncate_messages_to_len(
         total = total.saturating_sub(sz);
         indices_to_remove.push(i);
     }
-    for i in indices_to_remove.into_iter().rev() {
-        messages.remove(i);
+    let remove: HashSet<usize> = indices_to_remove.into_iter().collect();
+    let drained = std::mem::take(messages);
+    let mut kept = Vec::with_capacity(drained.len().saturating_sub(remove.len()));
+    for (i, m) in drained.into_iter().enumerate() {
+        if !remove.contains(&i) {
+            kept.push(m);
+        }
     }
+    *messages = kept;
     merge_consecutive_same_role(messages);
 }
 

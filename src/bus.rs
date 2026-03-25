@@ -11,13 +11,37 @@ pub use crate::constants::{DEFAULT_CAPACITY, MAX_CONTENT_LEN};
 pub use crate::util::{truncate_content_to_max, truncate_to_byte_len};
 
 /// 总线消息。入队前需校验 `content.len() <= MAX_CONTENT_LEN`。可序列化供 pending_retry 持久化。
+/// channel/chat_id 用 Arc<str> 减少 clone 开销。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PcMsg {
-    pub channel: String,
-    pub chat_id: String,
+    #[serde(
+        serialize_with = "serialize_arc_str",
+        deserialize_with = "deserialize_arc_str"
+    )]
+    pub channel: Arc<str>,
+    #[serde(
+        serialize_with = "serialize_arc_str",
+        deserialize_with = "deserialize_arc_str"
+    )]
+    pub chat_id: Arc<str>,
     pub content: String,
     /// 是否来自群组（group/supergroup）；用于 system 注入与 SILENT 约定。
     pub is_group: bool,
+}
+
+fn serialize_arc_str<S>(arc: &Arc<str>, serializer: S) -> std::result::Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    serializer.serialize_str(arc)
+}
+
+fn deserialize_arc_str<'de, D>(deserializer: D) -> std::result::Result<Arc<str>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let s = String::deserialize(deserializer)?;
+    Ok(Arc::from(s.as_str()))
 }
 
 impl PcMsg {
@@ -49,8 +73,8 @@ impl PcMsg {
             ));
         }
         Ok(PcMsg {
-            channel: channel.into(),
-            chat_id: chat_id.into(),
+            channel: Arc::from(channel.into().as_str()),
+            chat_id: Arc::from(chat_id.into().as_str()),
             content,
             is_group,
         })

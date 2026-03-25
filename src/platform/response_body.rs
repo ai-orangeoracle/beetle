@@ -1,6 +1,7 @@
 //! HTTP 响应体句柄：PSRAM 路径不 to_vec，仅持 (ptr,len) 并在 Drop 时释放，消除双缓冲。
 //! Response body handle: PSRAM path holds (ptr, len) and frees on Drop; no heap copy.
 
+#[cfg(target_arch = "xtensa")]
 use crate::platform::heap::free_spiram_buffer;
 
 /// 响应体：Heap 为堆上 Vec；PSRAM 仅 xtensa 存在，Drop 时释放 PSRAM。

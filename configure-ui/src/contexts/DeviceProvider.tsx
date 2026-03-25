@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { getPairingCode } from '../api/endpoints/pairingCode'
+import { fetchCsrfToken } from '../api/client'
 import { setDeviceStatus, updateRestartState } from '../store/deviceStatusStore'
 import {
   DeviceContext,
@@ -41,6 +42,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       if (res.ok && res.data != null) {
         setDeviceStatus('reachable', res.data.code_set)
         updateRestartState('reachable')
+        fetchCsrfToken(url)
       } else {
         setDeviceStatus('unreachable', null)
         updateRestartState('unreachable')
@@ -60,6 +62,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
         if (res.ok && res.data != null) {
           setDeviceStatus('reachable', res.data.code_set)
           updateRestartState('reachable')
+          fetchCsrfToken(url)
         } else {
           setDeviceStatus('unreachable', null)
           updateRestartState('unreachable')

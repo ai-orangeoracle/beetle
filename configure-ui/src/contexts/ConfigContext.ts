@@ -6,6 +6,7 @@ import type {
   SystemConfigSegment,
 } from '../types/appConfig'
 import type { DisplayConfig } from '../types/displayConfig'
+import type { HardwareSegment } from '../types/hardwareConfig'
 
 export interface ConfigContextValue {
   config: AppConfig | null
@@ -23,6 +24,13 @@ export interface ConfigContextValue {
   loadDisplayConfig: () => Promise<void>
   saveDisplayConfig: (
     body: DisplayConfig,
+  ) => Promise<{ ok: boolean; error?: string; restartRequired?: boolean }>
+  hardwareSegment: HardwareSegment | null
+  hardwareLoading: boolean
+  hardwareError: string | null
+  loadHardwareConfig: () => Promise<void>
+  saveHardwareConfig: (
+    body: HardwareSegment,
   ) => Promise<{ ok: boolean; error?: string; restartRequired?: boolean }>
 }
 

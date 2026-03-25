@@ -3,6 +3,7 @@
 
 // 32 位目标（xtensa/riscv32）无 AtomicU64，统一用 AtomicU32；快照仍以 u64 暴露。
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Mutex, OnceLock};
 
 /// 已知 stage 的错误计数（与 Error::stage() 对齐）；其他 stage 归入 other。
 const STAGE_AGENT_ROUTER: &str = "agent_router";
@@ -25,6 +26,11 @@ static WDT_FEEDS: AtomicU32 = AtomicU32::new(0);
 static DISPATCH_SEND_OK: AtomicU32 = AtomicU32::new(0);
 static DISPATCH_SEND_FAIL: AtomicU32 = AtomicU32::new(0);
 static LAST_ACTIVE_EPOCH_SECS: AtomicU32 = AtomicU32::new(0);
+
+/// Linux 嵌入式 WiFi：wpa 守护恢复、AP 栈重启计数；失败 stage 摘要（脱敏，固定长度）。
+static WIFI_RECONNECT_TOTAL: AtomicU32 = AtomicU32::new(0);
+static WIFI_AP_RESTART_TOTAL: AtomicU32 = AtomicU32::new(0);
+static WIFI_LAST_FAILURE_STAGE: OnceLock<Mutex<String>> = OnceLock::new();
 
 static ERRORS_AGENT_ROUTER: AtomicU32 = AtomicU32::new(0);
 static ERRORS_AGENT_CHAT: AtomicU32 = AtomicU32::new(0);
@@ -93,6 +99,34 @@ pub fn record_dispatch_send(ok: bool) {
 }
 
 /// 按 stage 记录错误，用于故障画像 TopN；已知 stage 用常量匹配，其余归入 other。
+/// wpa_supplicant 由看门狗重新拉起（PID 丢失或进程死亡）。
+/// wpa_supplicant re-ensured by watchdog (missing PID or dead process).
+#[inline]
+pub fn record_wifi_reconnect() {
+    WIFI_RECONNECT_TOTAL.fetch_add(1, Ordering::Relaxed);
+}
+
+/// hostapd/dnsmasq 看门狗检测到 AP 栈失效并执行重启尝试（无论是否成功）。
+/// Watchdog detected AP stack down and attempted restart (counted per attempt).
+#[inline]
+pub fn record_wifi_ap_restart() {
+    WIFI_AP_RESTART_TOTAL.fetch_add(1, Ordering::Relaxed);
+}
+
+/// 记录最近一次 WiFi 路径失败 stage（仅 [a-zA-Z0-9_]，最长 64，无密钥/SSID）。
+/// Records last WiFi-path failure stage (alphanumeric + `_`, max 64; no secrets/SSID).
+pub fn record_wifi_failure_stage(stage: &str) {
+    let sanitized: String = stage
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '_')
+        .take(64)
+        .collect();
+    let m = WIFI_LAST_FAILURE_STAGE.get_or_init(|| Mutex::new(String::new()));
+    if let Ok(mut g) = m.lock() {
+        *g = sanitized;
+    }
+}
+
 pub fn record_error_by_stage(stage: &str) {
     let c = match stage {
         STAGE_AGENT_ROUTER => &ERRORS_AGENT_ROUTER,
@@ -131,6 +165,13 @@ pub fn snapshot() -> MetricsSnapshot {
         errors_session_append: ERRORS_SESSION_APPEND.load(Ordering::Relaxed) as u64,
         errors_other: ERRORS_OTHER.load(Ordering::Relaxed) as u64,
         last_active_epoch_secs: LAST_ACTIVE_EPOCH_SECS.load(Ordering::Relaxed) as u64,
+        wifi_reconnect_total: WIFI_RECONNECT_TOTAL.load(Ordering::Relaxed) as u64,
+        wifi_ap_restart_total: WIFI_AP_RESTART_TOTAL.load(Ordering::Relaxed) as u64,
+        wifi_last_failure_stage: WIFI_LAST_FAILURE_STAGE
+            .get()
+            .and_then(|m| m.lock().ok())
+            .map(|g| g.clone())
+            .unwrap_or_default(),
     }
 }
 
@@ -156,17 +197,20 @@ pub struct MetricsSnapshot {
     pub errors_session_append: u64,
     pub errors_other: u64,
     pub last_active_epoch_secs: u64,
+    pub wifi_reconnect_total: u64,
+    pub wifi_ap_restart_total: u64,
+    pub wifi_last_failure_stage: String,
 }
 
 impl MetricsSnapshot {
     /// 结构化单行日志，便于基线对比（key=value，无敏感信息）。
     pub fn to_baseline_log_line(&self) -> String {
         use std::fmt::Write;
-        // Pre-allocate: typical line ~220 bytes.
-        let mut buf = String::with_capacity(256);
+        // Pre-allocate: typical line ~320 bytes (incl. WiFi counters).
+        let mut buf = String::with_capacity(384);
         let _ = write!(
             buf,
-            "metrics msg_in={} msg_out={} llm_calls={} llm_err={} llm_last_ms={} tool_calls={} tool_err={} wdt_feeds={} dispatch_ok={} dispatch_fail={} err_router={} err_chat={} err_ctx={} err_tool={} err_llm_req={} err_llm_parse={} err_dispatch={} err_session={} err_other={} last_active_epoch={}",
+            "metrics msg_in={} msg_out={} llm_calls={} llm_err={} llm_last_ms={} tool_calls={} tool_err={} wdt_feeds={} dispatch_ok={} dispatch_fail={} err_router={} err_chat={} err_ctx={} err_tool={} err_llm_req={} err_llm_parse={} err_dispatch={} err_session={} err_other={} last_active_epoch={} wifi_reconn={} wifi_ap_restart={} wifi_last_fail_stage={}",
             self.messages_in,
             self.messages_out,
             self.llm_calls,
@@ -186,7 +230,10 @@ impl MetricsSnapshot {
             self.errors_channel_dispatch,
             self.errors_session_append,
             self.errors_other,
-            self.last_active_epoch_secs
+            self.last_active_epoch_secs,
+            self.wifi_reconnect_total,
+            self.wifi_ap_restart_total,
+            self.wifi_last_failure_stage
         );
         buf
     }

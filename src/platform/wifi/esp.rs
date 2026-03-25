@@ -3,6 +3,7 @@
 //! 支持通过通道向 WiFi 线程请求扫描，供 GET /api/wifi/scan 使用。
 
 use crate::config::AppConfig;
+use crate::constants::{WIFI_ESP_CONNECT_MAIN_WAIT_SECS, WIFI_SCAN_TIMEOUT_SECS};
 use crate::error::{Error, Result};
 use embedded_svc::wifi::{
     AccessPointConfiguration, AuthMethod, ClientConfiguration, Configuration,
@@ -17,8 +18,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 const TAG: &str = "platform::wifi";
-const CONNECT_TIMEOUT_SECS: u64 = 15;
-const SCAN_RESP_TIMEOUT: Duration = Duration::from_secs(15);
+const SCAN_RESP_TIMEOUT: Duration = Duration::from_secs(WIFI_SCAN_TIMEOUT_SECS);
 const SCAN_RETRY: u32 = 3;
 const SCAN_RETRY_DELAY: Duration = Duration::from_millis(400);
 /// STA 状态轮询间隔（毫秒）。
@@ -46,8 +46,11 @@ pub fn wifi_sta_ip() -> Option<String> {
 
 /// 阻塞直到出站网络就绪（STA 已连接）；轮询 2s 并喂狗。仅 ESP 生效，host 立即返回。
 /// 供 WSS、通道发送、Agent 等对外请求入口在发起请求前调用，避免无网时无意义请求与资源耗尽。
+///
+/// 须在首次 `feed_current_task` 前将当前任务加入 TWDT（`main` 中本函数早于 `register_current_task_to_task_wdt` 的其它调用点）。
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 pub fn wait_for_network_ready() {
+    crate::platform::task_wdt::register_current_task_to_task_wdt();
     while !is_wifi_sta_connected() {
         crate::platform::task_wdt::feed_current_task();
         std::thread::sleep(Duration::from_secs(2));
@@ -91,9 +94,7 @@ impl WifiScan for WifiScanHandle {
     fn request_scan(&self) -> Result<Vec<WifiApEntry>> {
         let _ = self.req_tx.send(());
         let guard = self.resp_rx.lock().map_err(|e| Error::Other {
-            source: Box::new(std::io::Error::other(
-                e.to_string(),
-            )),
+            source: Box::new(std::io::Error::other(e.to_string())),
             stage: "wifi_scan_lock",
         })?;
         match guard.recv_timeout(SCAN_RESP_TIMEOUT) {
@@ -112,7 +113,8 @@ impl WifiScan for WifiScanHandle {
 }
 
 /// 启动 WiFi：始终开 SoftAP（SSID Beetle）；若 config 中 wifi_ssid 非空则同时连 STA。
-/// 返回 Ok(()) 表示 AP 已起；返回 Ok(Some(handle)) 时 handle 可用于请求 WiFi 扫描；有 wifi_ssid 时 STA 连接超时或失败返回 Err。
+/// 返回 `Ok(Some(handle))` 表示 SoftAP 已就绪且可请求扫描；STA 失败或超时仍返回 `Some`，
+/// 以便用户连热点改配；`is_wifi_sta_connected()` 反映 STA 是否真正连上。
 pub fn connect(config: &AppConfig) -> Result<Option<WifiScanHandle>> {
     let ssid = config.wifi_ssid.clone();
     let pass = config.wifi_pass.clone();
@@ -124,7 +126,7 @@ pub fn connect(config: &AppConfig) -> Result<Option<WifiScanHandle>> {
         do_connect(ssid.as_str(), pass.as_str(), tx, scan_req_rx, scan_resp_tx);
     });
 
-    let result = match rx.recv_timeout(Duration::from_secs(CONNECT_TIMEOUT_SECS)) {
+    let result = match rx.recv_timeout(Duration::from_secs(WIFI_ESP_CONNECT_MAIN_WAIT_SECS)) {
         Ok(Ok(())) => {
             log::info!("[{}] WiFi ready (AP up, STA connected if configured)", TAG);
             Ok(Some(WifiScanHandle {
@@ -135,13 +137,16 @@ pub fn connect(config: &AppConfig) -> Result<Option<WifiScanHandle>> {
         Ok(Err(e)) => Err(e),
         Err(mpsc::RecvTimeoutError::Timeout) => {
             log::warn!(
-                "[{}] WiFi STA connect timeout ({}s), AP is up",
+                "[{}] WiFi main thread wait exhausted ({}s) before first ready signal; AP may still be up in worker",
                 TAG,
-                CONNECT_TIMEOUT_SECS
+                WIFI_ESP_CONNECT_MAIN_WAIT_SECS
             );
             Err(Error::config(
                 "wifi_connect",
-                format!("STA timeout after {}s", CONNECT_TIMEOUT_SECS),
+                format!(
+                    "main thread wait {}s for WiFi ready signal",
+                    WIFI_ESP_CONNECT_MAIN_WAIT_SECS
+                ),
             ))
         }
         Err(mpsc::RecvTimeoutError::Disconnected) => Err(Error::Other {
@@ -335,7 +340,7 @@ fn do_connect(
         }) {
             return send_err(e);
         }
-        if let Err(e) = crate::platform::softap_ip::set_softap_ip_192_168_4_1() {
+        if let Err(e) = crate::platform::softap_ip::set_softap_ip() {
             log::warn!("[{}] SoftAP IP set failed: {}", TAG, e);
         }
         log::info!("[{}] SoftAP started (SSID: {})", TAG, SOFTAP_SSID);
@@ -398,7 +403,7 @@ fn do_connect(
     }) {
         return send_err(e);
     }
-    if let Err(e) = crate::platform::softap_ip::set_softap_ip_192_168_4_1() {
+    if let Err(e) = crate::platform::softap_ip::set_softap_ip() {
         log::warn!("[{}] SoftAP IP set failed: {}", TAG, e);
     }
     log::info!(
@@ -410,13 +415,29 @@ fn do_connect(
         source: Box::new(e),
         stage: "wifi_connect",
     }) {
-        return send_err(e);
+        log::warn!(
+            "[{}] STA connect failed (SoftAP stays up for provisioning): {}",
+            TAG,
+            e
+        );
+        clear_sta_ip_cache();
+        let _ = result_tx.send(Ok(()));
+        run_scan_loop(&mut wifi, &scan_req_rx, &scan_resp_tx, true);
+        return;
     }
     if let Err(e) = wifi.wait_netif_up().map_err(|e| Error::Other {
         source: Box::new(e),
         stage: "wifi_wait_netif",
     }) {
-        return send_err(e);
+        log::warn!(
+            "[{}] STA netif not up (SoftAP stays up for provisioning): {}",
+            TAG,
+            e
+        );
+        clear_sta_ip_cache();
+        let _ = result_tx.send(Ok(()));
+        run_scan_loop(&mut wifi, &scan_req_rx, &scan_resp_tx, true);
+        return;
     }
     WIFI_STA_CONNECTED.store(true, Ordering::Relaxed);
     update_sta_ip_cache();
@@ -432,8 +453,13 @@ fn update_sta_ip_cache() {
     }
 }
 
-#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
-fn update_sta_ip_cache() {}
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+fn clear_sta_ip_cache() {
+    WIFI_STA_CONNECTED.store(false, Ordering::Relaxed);
+    if let Ok(mut g) = WIFI_STA_IP.get_or_init(|| Mutex::new(None)).lock() {
+        *g = None;
+    }
+}
 
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 fn read_sta_ipv4_string() -> Option<String> {
