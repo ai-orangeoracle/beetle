@@ -7,9 +7,8 @@ use crate::tools::{Tool, ToolContext};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Instant;
-
-use crate::platform::hardware_drivers;
 
 /// 输出类设备最小操作间隔（ms）。
 const DEVICE_MIN_INTERVAL_MS: u64 = 2000;
@@ -66,11 +65,12 @@ pub struct DeviceControlTool {
     pwm_channels: HashMap<String, (u8, u8)>,
     description: String,
     schema: Value,
+    platform: Arc<dyn crate::platform::Platform>,
 }
 
 impl DeviceControlTool {
     /// 从配置构造。`devices` 为空时不应调用（调用方在注册前检查）。
-    pub fn new(devices: Vec<DeviceEntry>) -> Self {
+    pub fn new(devices: Vec<DeviceEntry>, platform: Arc<dyn crate::platform::Platform>) -> Self {
         let device_map: HashMap<String, usize> = devices
             .iter()
             .enumerate()
@@ -101,6 +101,7 @@ impl DeviceControlTool {
             pwm_channels,
             description,
             schema,
+            platform,
         }
     }
 
@@ -182,8 +183,8 @@ impl DeviceControlTool {
 
     fn dispatch(&self, dev: &DeviceEntry, params: &Value) -> Result<String> {
         match dev.device_type.as_str() {
-            "gpio_out" => hardware_drivers::drive_gpio_out(&dev.pins, params),
-            "gpio_in" => hardware_drivers::drive_gpio_in(&dev.pins, params, &dev.options),
+            "gpio_out" => self.platform.drive_gpio_out(&dev.pins, params),
+            "gpio_in" => self.platform.drive_gpio_in(&dev.pins, params, &dev.options),
             "pwm_out" => {
                 let (ch, timer_idx) = *self.pwm_channels.get(&dev.id).ok_or_else(|| {
                     Error::config(
@@ -191,10 +192,11 @@ impl DeviceControlTool {
                         "no LEDC channel allocated for this pwm_out device",
                     )
                 })?;
-                hardware_drivers::drive_pwm_out(&dev.pins, params, &dev.options, ch, timer_idx)
+                self.platform
+                    .drive_pwm_out(&dev.pins, params, &dev.options, ch, timer_idx)
             }
-            "adc_in" => hardware_drivers::drive_adc_in(&dev.pins, params, &dev.options),
-            "buzzer" => hardware_drivers::drive_buzzer(&dev.pins, params),
+            "adc_in" => self.platform.drive_adc_in(&dev.pins, params, &dev.options),
+            "buzzer" => self.platform.drive_buzzer(&dev.pins, params),
             other => Err(Error::config(
                 "device_control",
                 format!(

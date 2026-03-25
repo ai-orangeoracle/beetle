@@ -52,10 +52,7 @@ impl Tool for SessionManageTool {
                     .get("chat_id")
                     .and_then(|x| x.as_str())
                     .ok_or_else(|| Error::config("tool_session_manage", "missing chat_id"))?;
-                let recent_n = obj
-                    .get("recent_n")
-                    .and_then(|x| x.as_u64())
-                    .unwrap_or(10) as usize;
+                let recent_n = obj.get("recent_n").and_then(|x| x.as_u64()).unwrap_or(10) as usize;
                 let recent_n = recent_n.min(50);
                 let messages = self.store.load_recent(chat_id, recent_n)?;
                 let msg_list: Vec<serde_json::Value> = messages

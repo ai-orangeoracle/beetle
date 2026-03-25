@@ -8,7 +8,7 @@ use crate::error::{Error, Result};
 use crate::llm::types::MAX_REQUEST_BODY_LEN;
 use crate::llm::types::{AnthropicResponse, StopReason, ToolCall};
 use crate::llm::{LlmClient, LlmHttpClient, LlmResponse, Message, ToolSpec};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json;
 
 const TAG: &str = "llm::anthropic";
@@ -16,6 +16,7 @@ const API_BASE: &str = "https://api.anthropic.com/v1/messages";
 const DEFAULT_MAX_TOKENS: u32 = 1024;
 
 /// Anthropic Messages API 客户端；持 config 只读，HTTP 由 chat 时注入。
+/// `api_base` 为完整 Messages URL（构造时解析），请求路径零额外分配。
 pub struct AnthropicClient {
     model: String,
     api_key: String,
@@ -155,7 +156,11 @@ fn build_request_body(
     let req = AnthropicRequestRef {
         model,
         max_tokens,
-        system: if system.is_empty() { None } else { Some(system) },
+        system: if system.is_empty() {
+            None
+        } else {
+            Some(system)
+        },
         messages: messages
             .iter()
             .map(|m| AnthropicRequestMessageRef {
@@ -231,6 +236,45 @@ fn do_request(
 
 // ---------- SSE streaming ----------
 
+#[derive(Deserialize)]
+struct AnthropicContentBlockStart<'a> {
+    #[serde(borrow)]
+    content_block: Option<AnthropicContentBlock<'a>>,
+}
+
+#[derive(Deserialize)]
+struct AnthropicContentBlock<'a> {
+    #[serde(rename = "type")]
+    block_type: &'a str,
+    id: Option<&'a str>,
+    name: Option<&'a str>,
+}
+
+#[derive(Deserialize)]
+struct AnthropicContentBlockDeltaEvent<'a> {
+    #[serde(borrow)]
+    delta: Option<AnthropicDeltaInner<'a>>,
+}
+
+#[derive(Deserialize)]
+struct AnthropicDeltaInner<'a> {
+    #[serde(rename = "type")]
+    delta_type: &'a str,
+    text: Option<&'a str>,
+    partial_json: Option<&'a str>,
+}
+
+#[derive(Deserialize)]
+struct AnthropicMessageDeltaEvent<'a> {
+    #[serde(borrow)]
+    delta: Option<AnthropicMessageDelta<'a>>,
+}
+
+#[derive(Deserialize)]
+struct AnthropicMessageDelta<'a> {
+    stop_reason: Option<&'a str>,
+}
+
 /// Anthropic SSE 流式累加器：逐事件拼接 content / tool_calls，最终产出 LlmResponse。
 struct AnthropicStreamAccumulator {
     content: String,
@@ -254,54 +298,35 @@ impl AnthropicStreamAccumulator {
         }
     }
 
-    /// 处理单条 SSE 事件（event type + JSON data），返回 text_delta 供进度回调。
-    fn handle_event_value(
-        &mut self,
-        event_type: &str,
-        data: Option<&serde_json::Value>,
-    ) -> Option<String> {
-        let mut delta_text: Option<String> = None;
+    /// 处理单条 SSE 事件（event type + JSON data），返回 text_delta 借用供进度回调（零分配）。
+    fn handle_event_value<'a>(&mut self, event_type: &str, data: &'a str) -> Option<&'a str> {
         match event_type {
             "content_block_start" => {
-                // content_block_start: 新增 text 或 tool_use block。
-                if let Some(val) = data {
-                    if let Some(cb) = val.get("content_block") {
-                        let block_type = cb.get("type").and_then(|v| v.as_str()).unwrap_or("");
-                        if block_type == "tool_use" {
-                            let id = cb
-                                .get("id")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("")
-                                .to_string();
-                            let name = cb
-                                .get("name")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("")
-                                .to_string();
+                if let Ok(v) = serde_json::from_str::<AnthropicContentBlockStart>(data) {
+                    if let Some(cb) = v.content_block {
+                        if cb.block_type == "tool_use" {
                             self.tool_calls.push(ToolCallBuilder {
-                                id,
-                                name,
+                                id: cb.id.unwrap_or("").to_string(),
+                                name: cb.name.unwrap_or("").to_string(),
                                 input_json: String::new(),
                             });
                         }
                     }
                 }
+                None
             }
             "content_block_delta" => {
-                if let Some(val) = data {
-                    if let Some(delta) = val.get("delta") {
-                        let delta_type = delta.get("type").and_then(|v| v.as_str()).unwrap_or("");
-                        match delta_type {
+                if let Ok(v) = serde_json::from_str::<AnthropicContentBlockDeltaEvent>(data) {
+                    if let Some(delta) = v.delta {
+                        match delta.delta_type {
                             "text_delta" => {
-                                if let Some(text) = delta.get("text").and_then(|v| v.as_str()) {
+                                if let Some(text) = delta.text {
                                     self.content.push_str(text);
-                                    delta_text = Some(text.to_string());
+                                    return Some(text);
                                 }
                             }
                             "input_json_delta" => {
-                                if let Some(partial) =
-                                    delta.get("partial_json").and_then(|v| v.as_str())
-                                {
+                                if let Some(partial) = delta.partial_json {
                                     if let Some(tc) = self.tool_calls.last_mut() {
                                         tc.input_json.push_str(partial);
                                     }
@@ -311,11 +336,12 @@ impl AnthropicStreamAccumulator {
                         }
                     }
                 }
+                None
             }
             "message_delta" => {
-                if let Some(val) = data {
-                    if let Some(delta) = val.get("delta") {
-                        if let Some(sr) = delta.get("stop_reason").and_then(|v| v.as_str()) {
+                if let Ok(v) = serde_json::from_str::<AnthropicMessageDeltaEvent>(data) {
+                    if let Some(d) = v.delta {
+                        if let Some(sr) = d.stop_reason {
                             self.stop_reason = match sr {
                                 "end_turn" => StopReason::EndTurn,
                                 "tool_use" => StopReason::ToolUse,
@@ -325,10 +351,9 @@ impl AnthropicStreamAccumulator {
                         }
                     }
                 }
+                None
             }
-            _ => {
-                // message_start, content_block_stop, message_stop, ping: 忽略。
-            }
+            _ => None,
         }
         delta_text
     }
@@ -385,10 +410,9 @@ fn do_request_streaming(
         .do_post_streaming(url, &headers, body, &mut |chunk| {
             sse_reader.feed(chunk);
             while let Some(event) = sse_reader.next_event() {
-                let parsed = serde_json::from_str::<serde_json::Value>(&event.data).ok();
-                let delta_text = accumulator.handle_event_value(&event.event, parsed.as_ref());
+                let delta_text = accumulator.handle_event_value(&event.event, &event.data);
 
-                if let (Some(ref delta), Some(ref mut cb)) = (&delta_text, &mut progress_cb) {
+                if let (Some(delta), Some(ref mut cb)) = (delta_text, &mut progress_cb) {
                     cb(delta, &accumulator.content);
                 }
             }

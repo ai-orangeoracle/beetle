@@ -22,9 +22,40 @@ export interface MetricsSnapshotData {
   errors_channel_dispatch?: number
   errors_session_append?: number
   errors_other?: number
+  last_active_epoch_secs?: number
+  wifi_reconnect_total?: number
+  wifi_ap_restart_total?: number
+  wifi_last_failure_stage?: string
 }
 
-/** 与固件 `orchestrator::ResourceSnapshot` 对齐的子集；完整嵌套见设备 JSON。 */
+/** 与固件 `orchestrator::ChannelHealthSnapshot` 一致。 */
+export interface ChannelHealthSnapshotData {
+  consecutive_failures?: number
+  total_failures?: number
+  total_successes?: number
+  healthy?: boolean
+}
+
+/** 与固件 `orchestrator::ChannelsHealthSnapshot` 一致（具名通道）。 */
+export interface ChannelsHealthSnapshotData {
+  telegram?: ChannelHealthSnapshotData
+  feishu?: ChannelHealthSnapshotData
+  dingtalk?: ChannelHealthSnapshotData
+  wecom?: ChannelHealthSnapshotData
+  qq_channel?: ChannelHealthSnapshotData
+}
+
+/** 与固件 `orchestrator::ResourceBudget` 一致（嵌套在 resource 内）。 */
+export interface ResourceBudgetData {
+  level?: string
+  system_prompt_max?: number
+  messages_max?: number
+  response_body_max?: number
+  reconnect_backoff_secs?: number
+  llm_hint?: string
+}
+
+/** 与固件 `orchestrator::ResourceSnapshot` 一致。 */
 export interface ResourceSnapshotData {
   pressure?: string
   heap_free_internal?: number
@@ -33,6 +64,16 @@ export interface ResourceSnapshotData {
   active_http_count?: number
   inbound_depth?: number
   outbound_depth?: number
+  budget?: ResourceBudgetData
+  channels?: ChannelsHealthSnapshotData
+  session_count?: number
+  storage_used_kb?: number
+  storage_total_kb?: number
+}
+
+/** 与固件 `handlers/health.rs` 中 `DisplayHealth` 一致。 */
+export interface HealthDisplayData {
+  available?: boolean
 }
 
 export interface HealthData {
@@ -40,6 +81,7 @@ export interface HealthData {
   inbound_depth?: number
   outbound_depth?: number
   last_error?: string
+  display?: HealthDisplayData
   /** 运行指标快照（与旧版仅扁平 metrics 键名不同：现为 `messages_in` 等）。 */
   metrics?: MetricsSnapshotData
   /** 编排器资源快照，与 `GET /api/resource` 一致。 */

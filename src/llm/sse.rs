@@ -2,6 +2,7 @@
 //! SSE line parser shared by Anthropic and OpenAI streaming formats.
 
 use crate::constants::SSE_LINE_BUF_SIZE;
+use std::collections::VecDeque;
 
 /// 单条 SSE 事件（event + data）。
 #[derive(Debug)]
@@ -22,7 +23,13 @@ pub struct SseLineReader {
     /// 当前正在累积的 data 行。
     current_data: String,
     /// 已完成待取走的事件队列（通常只有 0-1 个）。
-    pending: Vec<SseEvent>,
+    pending: VecDeque<SseEvent>,
+}
+
+impl Default for SseLineReader {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Default for SseLineReader {
@@ -38,7 +45,7 @@ impl SseLineReader {
             pos: 0,
             current_event: String::new(),
             current_data: String::new(),
-            pending: Vec::new(),
+            pending: VecDeque::new(),
         }
     }
 
@@ -63,11 +70,7 @@ impl SseLineReader {
 
     /// 取出下一个已完成的 SSE 事件；无则返回 None。
     pub fn next_event(&mut self) -> Option<SseEvent> {
-        if self.pending.is_empty() {
-            None
-        } else {
-            Some(self.pending.remove(0))
-        }
+        self.pending.pop_front()
     }
 
     /// 处理缓冲区中的一行（不含终止换行符）。
@@ -77,7 +80,7 @@ impl SseLineReader {
         // 空行 = 事件分隔符：若有累积 data 则生成事件。
         if line.is_empty() {
             if !self.current_data.is_empty() || !self.current_event.is_empty() {
-                self.pending.push(SseEvent {
+                self.pending.push_back(SseEvent {
                     event: core::mem::take(&mut self.current_event),
                     data: core::mem::take(&mut self.current_data),
                 });

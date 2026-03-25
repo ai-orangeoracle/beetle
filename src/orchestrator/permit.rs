@@ -1,8 +1,10 @@
 //! HTTP 准入令牌：优先级 + TLS 单并发 + 堆检查，合并 tls_admission.rs 功能。
 //! HTTP admission permit: priority + TLS single-concurrency + heap check, merging tls_admission.rs.
 
+use crate::constants::MAX_CONCURRENT_HTTP;
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 use crate::constants::{
-    MAX_CONCURRENT_HTTP, TLS_ADMISSION_MIN_INTERNAL_BYTES, TLS_ADMISSION_MIN_LARGEST_BLOCK_BYTES,
+    TLS_ADMISSION_MIN_INTERNAL_BYTES, TLS_ADMISSION_MIN_LARGEST_BLOCK_BYTES,
     TLS_ADMISSION_NO_PSRAM_MIN_BYTES,
 };
 use crate::error::{Error, Result};
@@ -76,9 +78,7 @@ pub fn request_http_permit(
         match tls_permit.try_lock() {
             Ok(guard) => break guard,
             Err(std::sync::TryLockError::Poisoned(e)) => {
-                log::warn!(
-                    "[orchestrator::permit] TLS permit mutex was poisoned, recovering"
-                );
+                log::warn!("[orchestrator::permit] TLS permit mutex was poisoned, recovering");
                 tls_permit.clear_poison();
                 break e.into_inner();
             }
@@ -114,12 +114,10 @@ pub fn request_http_permit(
 /// Check if internal heap meets TLS admission requirements (live heap query, not cached).
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 fn check_internal_heap_for_tls(_state: &OrchestratorState) -> Result<()> {
-    use crate::platform::heap::{
-        heap_free_internal, heap_free_spiram, heap_largest_free_block_internal,
-    };
-    let free = heap_free_internal() as u32;
-    let largest = heap_largest_free_block_internal() as u32;
-    let spiram = heap_free_spiram() as u32;
+    let snap = super::memory_snapshot_live();
+    let free = snap.heap_free_internal;
+    let largest = snap.heap_largest_block;
+    let spiram = snap.heap_free_spiram;
     let min_free = if spiram > 0 {
         TLS_ADMISSION_MIN_INTERNAL_BYTES as u32
     } else {

@@ -4,11 +4,9 @@
 use crate::config::{self, AppConfig};
 use crate::error::Error;
 use crate::memory::{MemoryStore, SessionStore, REL_PATH_SESSIONS_DIR};
-use crate::platform::spiffs::{list_dir, SPIFFS_BASE};
 use crate::platform::ConfigStore;
 use crate::state;
 use std::io::{self, BufRead, Write};
-use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
@@ -26,7 +24,6 @@ pub struct CliContext {
     pub memory: Arc<dyn MemoryStore + Send + Sync>,
     pub session: Arc<dyn SessionStore + Send + Sync>,
     pub platform: Arc<dyn crate::platform::Platform>,
-    pub wifi_connected: bool,
     /// 入站/出站队列深度（实时读取）；None 表示 bus 未暴露深度。
     pub inbound_depth: Option<Arc<std::sync::atomic::AtomicUsize>>,
     pub outbound_depth: Option<Arc<std::sync::atomic::AtomicUsize>>,
@@ -40,7 +37,6 @@ impl CliContext {
         memory: Arc<dyn MemoryStore + Send + Sync>,
         session: Arc<dyn SessionStore + Send + Sync>,
         platform: Arc<dyn crate::platform::Platform>,
-        wifi_connected: bool,
         inbound_depth: Option<Arc<std::sync::atomic::AtomicUsize>>,
         outbound_depth: Option<Arc<std::sync::atomic::AtomicUsize>>,
     ) -> Self {
@@ -50,7 +46,6 @@ impl CliContext {
             memory,
             session,
             platform,
-            wifi_connected,
             inbound_depth,
             outbound_depth,
         }
@@ -82,7 +77,7 @@ pub fn run_command(ctx: &CliContext, line: &str) -> String {
         "memory_write" => cmd_memory_write(ctx, args),
         "session_list" => cmd_session_list(ctx),
         "session_clear" => cmd_session_clear(ctx, args),
-        "heap_info" => cmd_heap_info(),
+        "heap_info" => cmd_heap_info(ctx),
         "restart" => cmd_restart(ctx),
         "health" => cmd_health(ctx),
         "config_show" => cmd_config_show(ctx),
@@ -97,9 +92,13 @@ pub fn run_command(ctx: &CliContext, line: &str) -> String {
     out
 }
 
-fn cmd_wifi_status(ctx: &CliContext) -> String {
-    let status = if ctx.wifi_connected { "yes" } else { "no" };
-    format!("WiFi connected: {}\n", status)
+fn cmd_wifi_status(_ctx: &CliContext) -> String {
+    let status = if crate::platform::is_wifi_sta_connected() {
+        "yes"
+    } else {
+        "no"
+    };
+    format!("WiFi STA connected: {}\n", status)
 }
 
 fn cmd_memory_read(ctx: &CliContext) -> String {
@@ -134,11 +133,9 @@ fn cmd_memory_write(ctx: &CliContext, args: Vec<&str>) -> String {
     }
 }
 
-fn cmd_session_list(_ctx: &CliContext) -> String {
-    let mut path = PathBuf::from(SPIFFS_BASE);
-    path.push(REL_PATH_SESSIONS_DIR);
+fn cmd_session_list(ctx: &CliContext) -> String {
     let mut out = "Sessions:\n".to_string();
-    match list_dir(&path) {
+    match ctx.platform.state_fs().list_dir(REL_PATH_SESSIONS_DIR) {
         Ok(names) => {
             let sessions: Vec<_> = names
                 .into_iter()
@@ -173,13 +170,12 @@ fn cmd_session_clear(ctx: &CliContext, args: Vec<&str>) -> String {
     }
 }
 
-fn cmd_heap_info() -> String {
-    let internal = crate::platform::heap::heap_free_internal();
-    let spiram = crate::platform::heap::heap_free_spiram();
-    let total = crate::platform::heap::heap_free_total();
+fn cmd_heap_info(ctx: &CliContext) -> String {
+    let s = ctx.platform.memory_snapshot();
+    let total = s.heap_free_internal.saturating_add(s.heap_free_spiram);
     format!(
         "Internal free: {} bytes\nPSRAM free:    {} bytes\nTotal free:    {} bytes\n",
-        internal, spiram, total
+        s.heap_free_internal, s.heap_free_spiram, total
     )
 }
 
@@ -210,8 +206,8 @@ fn cmd_config_reset(ctx: &CliContext, args: Vec<&str>) -> String {
     }
 }
 
-fn cmd_health(ctx: &CliContext) -> String {
-    let wifi = if ctx.wifi_connected {
+fn cmd_health(_ctx: &CliContext) -> String {
+    let wifi = if crate::platform::is_wifi_sta_connected() {
         "connected"
     } else {
         "disconnected"

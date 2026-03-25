@@ -5,9 +5,8 @@ use crate::agent::context::build_context;
 use crate::bus::{InboundTx, OutboundTx, PcMsg, MAX_CONTENT_LEN};
 use crate::constants::{
     AGENT_MARKER_MARK_IMPORTANT, AGENT_MARKER_SIGNAL_COMFORT, AGENT_MARKER_STOP,
-    AGENT_RETRY_BASE_MS, AGENT_RETRY_MAX_MS, INBOUND_RECV_TIMEOUT_SECS,
-    MAX_DEFER_RETRIES, MAX_TOOL_RESULTS_USER_MESSAGE_LEN,
-    TASK_CONTINUATION_CONTINUE_THRESHOLD_LEN,
+    AGENT_RETRY_BASE_MS, AGENT_RETRY_MAX_MS, INBOUND_RECV_TIMEOUT_SECS, MAX_DEFER_RETRIES,
+    MAX_TOOL_RESULTS_USER_MESSAGE_LEN, TASK_CONTINUATION_CONTINUE_THRESHOLD_LEN,
 };
 use crate::error::Result;
 use crate::llm::{LlmClient, LlmHttpClient, Message, StopReason, ToolSpec};
@@ -31,6 +30,13 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 /// 最大 ReAct 轮数（含首轮 chat），防止无限 tool 循环。
 const MAX_REACT_ROUNDS: usize = 10;
+
+/// 工具结果 user 消息前缀；与 `compact_early_tool_rounds` / 摘要逻辑一致。
+const TOOL_RESULTS_PREFIX: &str = "Tool results:\n";
+
+/// ReAct 轮间保留完整内容的最近轮数（每轮 assistant + user 各 1 条 = 4 条）。
+const REACT_FULL_ROUNDS_KEPT: usize = 2;
+const REACT_FULL_MSGS_KEPT: usize = REACT_FULL_ROUNDS_KEPT * 2;
 
 /// 路由用短 system；回复约定：REPLY: <内容> 或 WORKER。
 const ROUTER_SYSTEM: &str =
@@ -64,6 +70,75 @@ fn push_bounded_utf8(dst: &mut String, text: &str, max_bytes: usize) -> bool {
         dst.push_str(&text[..end]);
     }
     true
+}
+
+/// 对 (tool_name, args) 做稳定哈希，用于重复工具调用检测。
+fn hash_tool_call(name: &str, args: &str) -> u64 {
+    let mut h = DefaultHasher::new();
+    name.hash(&mut h);
+    0x9e37_79b9_7f4a_7c15u64.hash(&mut h);
+    args.hash(&mut h);
+    h.finish()
+}
+
+/// 将早期轮次的工具结果压缩为「每调用一行字节数」摘要，保留语义锚点、不丢轮次结构。
+fn summarize_tool_results(content: &str) -> String {
+    use std::fmt::Write;
+
+    let body = content.strip_prefix(TOOL_RESULTS_PREFIX).unwrap_or(content);
+    let lines: Vec<&str> = body.lines().collect();
+    let mut out = String::with_capacity(256);
+    out.push_str("Tool results (prior round):\n");
+    let mut i = 0usize;
+    let mut wrote_any = false;
+    while i < lines.len() {
+        let line = lines[i];
+        if let Some(idx) = line.find("]: ") {
+            let id_part = &line[..idx + 3];
+            let mut val_len = line[idx + 3..].len();
+            i += 1;
+            while i < lines.len() {
+                let next = lines[i];
+                if next.contains("]: ") && next.starts_with('[') {
+                    break;
+                }
+                val_len = val_len.saturating_add(1).saturating_add(next.len());
+                i += 1;
+            }
+            let _ = writeln!(out, "{}[{} bytes]", id_part, val_len);
+            wrote_any = true;
+        } else {
+            i += 1;
+        }
+    }
+    if !wrote_any {
+        let _ = writeln!(out, "[{} bytes total, format not parsed]", body.len());
+    }
+    out
+}
+
+/// 滑动窗口：保留最近 `REACT_FULL_MSGS_KEPT` 条 ReAct 追加消息完整，更早的 assistant / tool 结果做机械摘要。
+fn compact_early_tool_rounds(messages: &mut [Message], initial_count: usize) {
+    let react_start = initial_count;
+    let react_end = messages.len();
+    let react_count = react_end.saturating_sub(react_start);
+    if react_count <= REACT_FULL_MSGS_KEPT {
+        return;
+    }
+    let compact_end = react_end - REACT_FULL_MSGS_KEPT;
+    for msg in messages[react_start..compact_end].iter_mut() {
+        if msg.content.starts_with(TOOL_RESULTS_PREFIX) && msg.content.len() > 128 {
+            let s = summarize_tool_results(&msg.content);
+            msg.content = s;
+        } else if msg.role == "assistant" && msg.content.len() > 200 {
+            let mut end = 150;
+            while end > 0 && !msg.content.is_char_boundary(end) {
+                end -= 1;
+            }
+            msg.content.truncate(end);
+            msg.content.push_str("…[compressed]");
+        }
+    }
 }
 
 /// 在 run_worker_path 内包装 http，注入当前 msg 的 chat_id/channel，供 remind_at 等工具使用。
@@ -273,7 +348,8 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
                         let should_log = low_mem_defer_log
                             .as_ref()
                             .map(|(id, t)| {
-                                id.as_ref() != chat_id.as_ref() || t.elapsed() >= LOW_MEM_DEFER_LOG_INTERVAL
+                                id.as_ref() != chat_id.as_ref()
+                                    || t.elapsed() >= LOW_MEM_DEFER_LOG_INTERVAL
                             })
                             .unwrap_or(true);
                         if should_log {
@@ -301,7 +377,9 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
                 let now = Instant::now();
                 let should_log = low_mem_defer_log
                     .as_ref()
-                    .map(|(id, t)| id.as_ref() != reason || t.elapsed() >= LOW_MEM_DEFER_LOG_INTERVAL)
+                    .map(|(id, t)| {
+                        id.as_ref() != reason || t.elapsed() >= LOW_MEM_DEFER_LOG_INTERVAL
+                    })
                     .unwrap_or(true);
                 if should_log {
                     log::warn!("[agent] inbound rejected: {}", reason);
@@ -483,7 +561,9 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
         }
 
         // SILENT 或 cron 空回复不写 session，直接跳过。
-        if reply_content.trim() == "SILENT" || (msg.channel.as_ref() == "cron" && reply_content.is_empty()) {
+        if reply_content.trim() == "SILENT"
+            || (msg.channel.as_ref() == "cron" && reply_content.is_empty())
+        {
             llm_failure_count.remove(&msg_key);
             defer_tracker.remove(&msg_key);
             continue;
@@ -600,6 +680,11 @@ fn run_worker_path<H: PlatformHttpClient>(
     })
     .map_err(|e| e.with_stage("agent_context"))?;
 
+    // ReAct 追加消息起始下标；用于滑动窗口压缩早期轮次。
+    let initial_msg_count = messages.len();
+    // 跨轮次检测相同 (tool, args) 重复调用，在结果中注入提示而非硬中断。
+    let mut tool_call_repeat: HashMap<u64, u8> = HashMap::new();
+
     let mut final_content = String::with_capacity(4096);
     // 流式编辑状态（跨 ReAct 轮次共享）。
     let editor = if config.llm_stream {
@@ -629,6 +714,9 @@ fn run_worker_path<H: PlatformHttpClient>(
                     break;
                 }
             }
+        }
+        if _round >= 2 {
+            compact_early_tool_rounds(&mut messages, initial_msg_count);
         }
         let t0 = metrics::record_llm_call_start();
         let response = if config.llm_stream {
@@ -761,14 +849,31 @@ fn run_worker_path<H: PlatformHttpClient>(
                     response.content
                 },
             });
-            let mut user_content_raw = String::with_capacity(
-                MAX_TOOL_RESULTS_USER_MESSAGE_LEN.min(tool_calls.len() * 192),
-            );
+            let mut cap = MAX_TOOL_RESULTS_USER_MESSAGE_LEN.min(tool_calls.len().saturating_mul(192));
+            cap = cap.max(TOOL_RESULTS_PREFIX.len());
+            let mut user_content_raw = String::with_capacity(cap);
+            user_content_raw.push_str(TOOL_RESULTS_PREFIX);
             let mut truncated = false;
             for (i, tc) in tool_calls.iter().enumerate() {
+                // 流式编辑：进入每个工具前更新进度（Telegram typing ~5s 过期；此处用 edit 续期可见活跃状态）。
+                if let (Some(ref mid), Some(ed)) = (&stream_msg_id, editor) {
+                    if !stream_edit_disabled {
+                        let progress = if tool_calls.len() == 1 {
+                            format!("正在执行 {}…", tc.name)
+                        } else {
+                            format!(
+                                "正在执行 {} ({}/{})…",
+                                tc.name,
+                                i + 1,
+                                tool_calls.len()
+                            )
+                        };
+                        let _ = ed.edit(&msg.chat_id, mid, &progress);
+                    }
+                }
                 // 工具执行门控
                 let needs_net = registry.is_network_tool(&tc.name);
-                let result = match crate::orchestrator::can_execute_tool_pub(&tc.name, needs_net) {
+                let mut result = match crate::orchestrator::can_execute_tool_pub(&tc.name, needs_net) {
                     ToolDecision::Deny { reason } => {
                         log::info!("[agent_tool] {} denied: {}", tc.name, reason);
                         serde_json::json!({ "error": reason }).to_string()
@@ -794,6 +899,23 @@ fn run_worker_path<H: PlatformHttpClient>(
                         }
                     }
                 };
+                let call_key = hash_tool_call(&tc.name, &tc.input);
+                let n = tool_call_repeat.entry(call_key).or_insert(0);
+                *n = (*n).saturating_add(1);
+                if *n >= 2 {
+                    let note = if *n >= 3 {
+                        format!(
+                            "[NOTE: identical tool call #{} — try a different approach or explain the blocker to the user.]\n",
+                            n
+                        )
+                    } else {
+                        format!(
+                            "[NOTE: identical tool call #{} — if the outcome is unchanged, try another strategy.]\n",
+                            n
+                        )
+                    };
+                    result = format!("{}{}", note, result);
+                }
                 crate::platform::task_wdt::feed_current_task();
                 if i > 0
                     && push_bounded_utf8(
@@ -835,12 +957,8 @@ fn run_worker_path<H: PlatformHttpClient>(
             }
             messages.push(Message {
                 role: "user".to_string(),
-                content: format!("Tool results:\n{}", user_content_raw),
+                content: user_content_raw,
             });
-            // 流式编辑：tool_use 轮进入下一轮前，更新消息提示用户正在处理中。
-            if let (Some(ref mid), Some(ed)) = (&stream_msg_id, editor) {
-                let _ = ed.edit(&msg.chat_id, mid, "正在处理中…");
-            }
             continue;
         }
 
@@ -864,7 +982,7 @@ fn run_worker_path<H: PlatformHttpClient>(
         final_content = content;
         break;
     }
-    // 流式编辑：最终确认发送完整内容（tool_use 轮后 "正在处理中…" 需更新，或最终追加截断文字）。
+    // 流式编辑：最终确认发送完整内容（工具执行中已通过 per-tool 进度 edit 续期可见性）。
     let streamed = if let (Some(ref mid), Some(ed)) = (&stream_msg_id, editor) {
         if !final_content.is_empty() {
             let _ = ed.edit(&msg.chat_id, mid, &final_content);

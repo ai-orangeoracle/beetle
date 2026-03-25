@@ -9,10 +9,8 @@ import RouterRounded from "@mui/icons-material/RouterRounded";
 import ChatRounded from "@mui/icons-material/ChatRounded";
 import InfoOutlined from "@mui/icons-material/InfoOutlined";
 import RefreshRounded from "@mui/icons-material/RefreshRounded";
-import CheckCircleOutlined from "@mui/icons-material/CheckCircleOutlined";
-import ErrorOutlined from "@mui/icons-material/ErrorOutlined";
-import RemoveCircleOutlined from "@mui/icons-material/RemoveCircleOutlined";
 import { InlineAlert, SaveFeedback } from "../components/form";
+import { ChannelConnectivityPanel } from "../components/ChannelConnectivityPanel";
 import { SettingsSection } from "../components/SettingsSection";
 import { BeetleIcon } from "../components/BeetleIcon";
 import { useDeviceApi } from "../hooks/useDeviceApi";
@@ -22,30 +20,10 @@ import {
   type ChannelConnectivityItem,
   type HealthData,
 } from "../api/endpoints/system";
+import { SystemStatusPanel } from "../components/SystemStatusPanel";
+import { SectionLoadProgress } from "../components/SectionLoadProgress";
 
 const DEFAULT_DEVICE_BASE_URL = "http://192.168.4.1";
-
-function formatBytes(value: number): string {
-  if (!Number.isFinite(value) || value < 0) return String(value);
-  if (value < 1024) return `${value} B`;
-  const kb = value / 1024;
-  if (kb < 1024) return `${kb.toFixed(1)} KB`;
-  const mb = kb / 1024;
-  return `${mb.toFixed(1)} MB`;
-}
-
-function pressureColor(pressure?: string): string {
-  switch (pressure) {
-    case "Normal":
-      return "var(--semantic-success)";
-    case "Cautious":
-      return "var(--semantic-warning)";
-    case "Critical":
-      return "var(--semantic-danger)";
-    default:
-      return "var(--text-primary)";
-  }
-}
 
 export function DevicePage() {
   const { t } = useTranslation();
@@ -318,214 +296,148 @@ export function DevicePage() {
         <Box
           sx={{
             display: "grid",
-            gridTemplateColumns: "repeat(3, 1fr)",
+            gridTemplateColumns: { xs: "1fr", lg: "repeat(4, minmax(0, 1fr))" },
             gap: 2,
+            alignItems: "stretch",
           }}
         >
-          <SettingsSection
-            icon={<ChatRounded sx={{ fontSize: "var(--icon-size-md)" }} />}
-            label={t("device.sectionChannelConnectivity")}
-            accessory={
-              <Button
-                variant="outlined"
-                size="small"
-                startIcon={<RefreshRounded />}
-                onClick={reloadChannelConnectivity}
-                disabled={channelLoading}
-                sx={{ borderRadius: "var(--radius-control)" }}
-              >
-                {t("device.channelRefresh")}
-              </Button>
-            }
-          >
-            {channelLoading && (
-              <Typography variant="body2" sx={{ color: "var(--muted)" }}>
-                {t("common.loading")}
-              </Typography>
-            )}
-            {channelError && !channelList.length && (
-              <InlineAlert
-                message={
-                  channelError === "channel connectivity unavailable"
-                    ? t("device.channelConnectivityUnavailable")
-                    : channelError
-                }
-                onRetry={reloadChannelConnectivity}
-              />
-            )}
-            {channelList.length > 0 && (
-              <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }}>
-                {channelList.map((ch) => (
-                  <ChannelRow
-                    key={ch.id}
-                    label={t(`device.${channelNameKey[ch.id] ?? ch.id}`)}
-                    configured={ch.configured}
-                    ok={ch.ok}
-                    message={ch.message}
-                    t={t}
-                  />
-                ))}
-                {channelError && (
-                  <Typography variant="caption" sx={{ color: "var(--semantic-danger)" }}>
-                    {channelError === "channel connectivity unavailable"
-                      ? t("device.channelConnectivityUnavailable")
-                      : channelError}
-                  </Typography>
-                )}
-                <Typography
-                  variant="caption"
-                  sx={{ color: "var(--muted)", display: "block", mt: 0.5 }}
+          <Box sx={{ gridColumn: { xs: "span 1", lg: "span 1" }, minWidth: 0 }}>
+            <SettingsSection
+              icon={<ChatRounded sx={{ fontSize: "var(--icon-size-md)" }} />}
+              label={t("device.sectionChannelConnectivity")}
+              accessory={
+                <Button
+                  variant="outlined"
+                  size="small"
+                  startIcon={<RefreshRounded />}
+                  onClick={reloadChannelConnectivity}
+                  disabled={channelLoading}
+                  sx={{ borderRadius: "var(--radius-control)" }}
                 >
-                  {t("device.channelConnectivityNote")}
-                </Typography>
-              </Box>
-            )}
-          </SettingsSection>
-
-          <SettingsSection
-            icon={<BeetleIcon sx={{ width: "var(--icon-size-md)", height: "var(--icon-size-md)" }} />}
-            label={t("device.sectionSystemStatus")}
-            accessory={
-              <Button
-                variant="outlined"
-                size="small"
-                startIcon={<RefreshRounded />}
-                onClick={reloadHealth}
-                disabled={healthLoading}
-                sx={{ borderRadius: "var(--radius-control)" }}
-              >
-                {t("device.channelRefresh")}
-              </Button>
-            }
-          >
-            {healthLoading && (
-              <Typography variant="body2" sx={{ color: "var(--muted)" }}>
-                {t("common.loading")}
-              </Typography>
-            )}
-            {healthError && !healthData && (
-              <InlineAlert
-                message={`${t("device.systemStatusLoadFail")}: ${healthError}`}
-                onRetry={reloadHealth}
+                  {t("device.channelRefresh")}
+                </Button>
+              }
+            >
+              <ChannelConnectivityPanel
+                channels={channelList}
+                loading={channelLoading}
+                error={channelError}
+                onRetry={reloadChannelConnectivity}
+                channelLabel={(id) => t(`device.${channelNameKey[id] ?? id}`)}
+                t={t}
               />
-            )}
-            {healthData && (
-              <Box
-                sx={{
-                  display: "grid",
-                  gridTemplateColumns: "repeat(2, 1fr)",
-                  gap: 1.5,
-                }}
-              >
-                {healthData.resource?.pressure && (
-                  <Row
-                    label={t("device.systemStatusPressure")}
-                    value={healthData.resource.pressure}
-                    valueColor={pressureColor(healthData.resource.pressure)}
-                  />
-                )}
-                {healthData.resource?.heap_free_internal != null && (
-                  <Row
-                    label={t("device.systemStatusHeapInternal")}
-                    value={formatBytes(healthData.resource.heap_free_internal)}
-                  />
-                )}
-                {healthData.resource?.heap_free_spiram != null && (
-                  <Row
-                    label={t("device.systemStatusHeapSpiram")}
-                    value={formatBytes(healthData.resource.heap_free_spiram)}
-                  />
-                )}
-                {healthData.resource?.heap_largest_block_internal != null && (
-                  <Row
-                    label={t("device.systemStatusHeapLargest")}
-                    value={formatBytes(healthData.resource.heap_largest_block_internal)}
-                  />
-                )}
-                {healthData.resource?.active_http_count != null && (
-                  <Row
-                    label={t("device.systemStatusActiveHttp")}
-                    value={String(healthData.resource.active_http_count)}
-                  />
-                )}
-                {healthData.resource?.inbound_depth != null && (
-                  <Row
-                    label={t("device.systemStatusInboundDepth")}
-                    value={String(healthData.resource.inbound_depth)}
-                  />
-                )}
-                {healthData.resource?.outbound_depth != null && (
-                  <Row
-                    label={t("device.systemStatusOutboundDepth")}
-                    value={String(healthData.resource.outbound_depth)}
-                  />
-                )}
-                {healthData.metrics?.llm_errors != null && (
-                  <Row
-                    label={t("device.systemStatusLlmErrors")}
-                    value={String(healthData.metrics.llm_errors)}
-                  />
-                )}
-                {healthData.metrics?.errors_agent_chat != null && (
-                  <Row
-                    label={t("device.systemStatusChatErrors")}
-                    value={String(healthData.metrics.errors_agent_chat)}
-                  />
-                )}
-                {healthData.metrics?.dispatch_send_fail != null && (
-                  <Row
-                    label={t("device.systemStatusDispatchFail")}
-                    value={String(healthData.metrics.dispatch_send_fail)}
-                  />
-                )}
-              </Box>
-            )}
-          </SettingsSection>
+            </SettingsSection>
+          </Box>
 
-          <SettingsSection
-            icon={<InfoOutlined sx={{ fontSize: "var(--icon-size-md)" }} />}
-            label={t("device.sectionDeviceInfo")}
-          >
-            {systemInfoLoading && (
-              <Typography variant="body2" sx={{ color: "var(--muted)" }}>
-                {t("common.loading")}
-              </Typography>
-            )}
-            {systemInfoError && !systemInfo && (
-              <InlineAlert
-                message={`${t("device.deviceInfoLoadFail")}: ${systemInfoError}`}
-                onRetry={reloadSystemInfo}
-              />
-            )}
-            {systemInfo && (
-              <Box
-                sx={{
-                  display: "grid",
-                  gridTemplateColumns: "repeat(2, 1fr)",
-                  gap: 1.5,
-                }}
-              >
-                <Row label={t("device.deviceInfoProduct")} value={systemInfo.product_name} />
-                <Row label={t("device.deviceInfoFirmware")} value={systemInfo.firmware_version} />
-                <Row label={t("device.deviceInfoStatus")} value={systemInfo.system_status} />
-                {systemInfo.board_id && (
-                  <Row label={t("device.deviceInfoBoardId")} value={systemInfo.board_id} />
-                )}
-                {systemInfo.locale != null && (
-                  <Row label={t("device.deviceInfoLocale")} value={systemInfo.locale} />
-                )}
-                {systemInfo.ota_available != null && (
-                  <Row
-                    label={t("device.deviceInfoOtaAvailable")}
-                    value={systemInfo.ota_available ? t("common.yes") : t("common.no")}
+          <Box sx={{ gridColumn: { xs: "span 1", lg: "span 1" }, minWidth: 0 }}>
+            <SettingsSection
+              icon={<InfoOutlined sx={{ fontSize: "var(--icon-size-md)" }} />}
+              label={t("device.sectionDeviceInfo")}
+            >
+              <Box sx={{ display: "flex", flexDirection: "column", gap: 1.75 }}>
+                <SectionLoadProgress
+                  loading={systemInfoLoading}
+                  idleHint={!systemInfo ? t("device.deviceInfoLoading") : undefined}
+                />
+                {systemInfoError && !systemInfo && !systemInfoLoading && (
+                  <InlineAlert
+                    message={`${t("device.deviceInfoLoadFail")}: ${systemInfoError}`}
+                    onRetry={reloadSystemInfo}
                   />
                 )}
-                {systemInfo.current_time && (
-                  <Row label={t("device.deviceInfoCurrentTime")} value={systemInfo.current_time} />
+                {systemInfo && (
+                  <Box
+                    sx={{
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 1.5,
+                      opacity: systemInfoLoading ? 0.72 : 1,
+                      transition: "opacity var(--transition-duration) var(--ease-emphasized)",
+                      pointerEvents: systemInfoLoading ? "none" : "auto",
+                    }}
+                  >
+                    <Row
+                      label={t("device.deviceInfoProduct")}
+                      value={systemInfo.product_name}
+                      breakWords
+                    />
+                    {systemInfo.board_id && (
+                      <Row
+                        label={t("device.deviceInfoBoardId")}
+                        value={systemInfo.board_id}
+                        breakWords
+                      />
+                    )}
+                    <Box
+                      sx={{
+                        display: "grid",
+                        gridTemplateColumns: "repeat(2, 1fr)",
+                        gap: 1.5,
+                      }}
+                    >
+                      <Row label={t("device.deviceInfoFirmware")} value={systemInfo.firmware_version} />
+                      <Row label={t("device.deviceInfoStatus")} value={systemInfo.system_status} />
+                      {systemInfo.locale != null && (
+                        <Row label={t("device.deviceInfoLocale")} value={systemInfo.locale} />
+                      )}
+                      {systemInfo.ota_available != null && (
+                        <Row
+                          label={t("device.deviceInfoOtaAvailable")}
+                          value={systemInfo.ota_available ? t("common.yes") : t("common.no")}
+                        />
+                      )}
+                      {systemInfo.current_time && (
+                        <Row label={t("device.deviceInfoCurrentTime")} value={systemInfo.current_time} />
+                      )}
+                    </Box>
+                  </Box>
                 )}
               </Box>
-            )}
-          </SettingsSection>
+            </SettingsSection>
+          </Box>
+
+          <Box sx={{ gridColumn: { xs: "span 1", lg: "span 2" }, minWidth: 0 }}>
+            <SettingsSection
+              icon={<BeetleIcon sx={{ width: "var(--icon-size-md)", height: "var(--icon-size-md)" }} />}
+              label={t("device.sectionSystemStatus")}
+              accessory={
+                <Button
+                  variant="outlined"
+                  size="small"
+                  startIcon={<RefreshRounded />}
+                  onClick={reloadHealth}
+                  disabled={healthLoading}
+                  sx={{ borderRadius: "var(--radius-control)" }}
+                >
+                  {t("device.channelRefresh")}
+                </Button>
+              }
+            >
+              <Box sx={{ display: "flex", flexDirection: "column", gap: 1.75 }}>
+                <SectionLoadProgress
+                  loading={healthLoading}
+                  idleHint={!healthData ? t("device.systemStatusLoading") : undefined}
+                />
+                {healthError && !healthData && !healthLoading && (
+                  <InlineAlert
+                    message={`${t("device.systemStatusLoadFail")}: ${healthError}`}
+                    onRetry={reloadHealth}
+                  />
+                )}
+                {healthData && (
+                  <Box
+                    sx={{
+                      opacity: healthLoading ? 0.72 : 1,
+                      transition: "opacity var(--transition-duration) var(--ease-emphasized)",
+                      pointerEvents: healthLoading ? "none" : "auto",
+                    }}
+                  >
+                    <SystemStatusPanel healthData={healthData} t={t} />
+                  </Box>
+                )}
+              </Box>
+            </SettingsSection>
+          </Box>
         </Box>
       )}
     </Box>
@@ -536,58 +448,39 @@ function Row({
   label,
   value,
   valueColor = "var(--text-primary)",
+  wide,
+  breakWords,
 }: {
   label: string;
   value: string;
   valueColor?: string;
+  /** 占满两列（与 `gridTemplateColumns: repeat(2, 1fr)` 父级配合）。 */
+  wide?: boolean;
+  breakWords?: boolean;
 }) {
   return (
-    <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.5, alignItems: "baseline" }}>
+    <Box
+      sx={{
+        gridColumn: wide ? "1 / -1" : undefined,
+        display: "flex",
+        flexWrap: "wrap",
+        gap: 0.5,
+        alignItems: "baseline",
+      }}
+    >
       <Typography variant="body2" sx={{ color: "var(--muted)", minWidth: 100 }}>
         {label}:
       </Typography>
-      <Typography variant="body2" sx={{ fontFamily: "var(--font-mono)", color: valueColor }}>
+      <Typography
+        variant="body2"
+        sx={{
+          fontFamily: "var(--font-mono)",
+          color: valueColor,
+          wordBreak: breakWords ? "break-word" : undefined,
+        }}
+      >
         {value}
       </Typography>
-    </Box>
-  );
-}
-
-function ChannelRow({
-  label,
-  configured,
-  ok,
-  message,
-  t,
-}: {
-  label: string;
-  configured: boolean;
-  ok: boolean;
-  message?: string | null;
-  t: (key: string) => string;
-}) {
-  const statusText = configured
-    ? ok
-      ? t("device.channelOk")
-      : message ?? t("device.channelFail")
-    : t("device.channelNotConfigured");
-  const statusColor = configured
-    ? ok
-      ? "var(--semantic-success)"
-      : "var(--semantic-danger)"
-    : "var(--muted)";
-  const StatusIcon = configured ? (ok ? CheckCircleOutlined : ErrorOutlined) : RemoveCircleOutlined;
-  return (
-    <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-      <Typography variant="body2" sx={{ color: "var(--muted)", minWidth: 80 }}>
-        {label}:
-      </Typography>
-      <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, marginLeft: "auto", justifyContent: "flex-end" }}>
-        <StatusIcon sx={{ fontSize: "var(--icon-size-sm)", color: statusColor }} aria-hidden />
-        <Typography variant="body2" sx={{ color: statusColor }}>
-          {statusText}
-        </Typography>
-      </Box>
     </Box>
   );
 }

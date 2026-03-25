@@ -50,8 +50,8 @@ pub fn build_llm_clients(config: &AppConfig) -> (Option<Box<dyn LlmClient>>, Box
         })
         .map(|s| -> Box<dyn LlmClient> {
             match s.provider.as_str() {
-                "openai" | "openai_compatible" | "gemini" | "glm" | "qwen"
-                | "deepseek" | "moonshot" | "ollama" => {
+                "openai" | "openai_compatible" | "gemini" | "glm" | "qwen" | "deepseek"
+                | "moonshot" | "ollama" => {
                     Box::new(OpenAiCompatibleClient::from_source(s, global_stream))
                 }
                 _ => Box::new(AnthropicClient::from_source(s, global_stream)),
@@ -82,8 +82,8 @@ pub fn build_llm_clients(config: &AppConfig) -> (Option<Box<dyn LlmClient>>, Box
         let idx = config.llm_router_source_index.unwrap_or(0) as usize;
         let s = &config.llm_sources[idx];
         Some(match s.provider.as_str() {
-            "openai" | "openai_compatible" | "gemini" | "glm" | "qwen"
-            | "deepseek" | "moonshot" | "ollama" => {
+            "openai" | "openai_compatible" | "gemini" | "glm" | "qwen" | "deepseek"
+            | "moonshot" | "ollama" => {
                 Box::new(OpenAiCompatibleClient::from_source(s, global_stream))
             }
             _ => Box::new(AnthropicClient::from_source(s, global_stream)),

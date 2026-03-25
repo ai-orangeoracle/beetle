@@ -1,13 +1,56 @@
 #!/usr/bin/env bash
-# One-shot: env check, install espup/ldproxy/toolchain, then release build.
-# Usage: ./build.sh  or  ./build.sh --target xtensa-esp32s3-espidf
-#        ./build.sh clean            clean project target dir
-#        ./build.sh --flash          build then flash (prompt y/N erase; if no port, scan and select)
-#        ESPFLASH_PORT=/dev/ttyUSB0 ./build.sh --flash   skip port selection
-# Logic aligned with build.ps1 (Windows); only platform-specific parts differ.
+# One-shot build script with interactive platform selection.
 set -e
 SCRIPT_ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_ROOT"
+
+show_help() {
+  cat <<'EOF'
+Usage:
+  ./build.sh [--flash] [--no-monitor] [cargo build args...]
+
+Quick examples:
+  ./build.sh
+  TARGET=linux ./build.sh
+  TARGET=linux-armv7 ./build.sh
+  TARGET=esp ./build.sh --flash
+
+Notes:
+  - On macOS building Linux musl, prefer Docker (zero local linker setup).
+  - For Linux builds, this script uses Rust stable toolchain.
+EOF
+}
+
+# Fast-path help.
+for arg in "$@"; do
+  case "$arg" in
+    -h|--help) show_help; exit 0 ;;
+  esac
+done
+
+MSG_TITLE="Beetle Build Script"
+MSG_SELECT_PLATFORM="Select build platform:"
+MSG_PLATFORM_ESP="ESP32-S3 Firmware (default)"
+MSG_PLATFORM_LINUX="Linux x86_64"
+MSG_PLATFORM_LINUX_ARMV7="Linux armv7 (32-bit ARM hard-float)"
+MSG_INPUT_OPTION="Enter option"
+MSG_PRESS_ENTER="press Enter for"
+MSG_INVALID_OPTION="Invalid option, enter"
+MSG_LINUX_MODE="Linux Build Mode"
+MSG_DETECTED_LINUX="Detected Linux system, using native build"
+MSG_DETECTED_MACOS="Detected macOS system, cross-compiling to Linux"
+MSG_SELECT_METHOD="Select build method:"
+MSG_METHOD_DOCKER="Docker build (recommended, no setup needed)"
+MSG_METHOD_MUSL="musl-cross toolchain (requires installation)"
+MSG_ERROR_NO_DOCKER="Error: Docker not found"
+MSG_INSTALL_DOCKER="Please install Docker Desktop"
+MSG_UNKNOWN_OS="Warning: Unknown system"
+MSG_TRY_NATIVE="trying native build"
+MSG_ESP_MODE="ESP32 Build Mode"
+MSG_USING_DOCKER="Using Docker for build"
+MSG_BUILD_IN_DOCKER="Building in Docker"
+MSG_BUILD_COMPLETE="Build complete"
+MSG_BINARY="Binary"
 # 固定 target 到本仓库，避免环境/IDE 将 CARGO_TARGET_DIR 指到临时目录导致 esp-idf-sys bindings 与 esp-idf-svc cfg 不一致。
 export CARGO_TARGET_DIR="${SCRIPT_ROOT}/target"
 export PATH="${HOME}/.cargo/bin:${PATH}"
@@ -16,18 +59,156 @@ command -v cargo &>/dev/null || { echo "Error: cargo not found. Install Rust: ht
 # --- Parse args (same as build.ps1) ---
 DO_FLASH=""
 NO_MONITOR=""
+BUILD_METHOD="${BUILD_METHOD:-auto}" # auto | docker | local
 BUILD_ARGS=()
 for arg in "$@"; do
   case "$arg" in
+    -h|--help)    show_help; exit 0 ;;
     --flash)      DO_FLASH=1 ;;
     --no-monitor) NO_MONITOR=1 ;;
     *)            BUILD_ARGS+=("$arg") ;;
   esac
 done
 
-# --- BOARD => target/features from board_presets.toml ---
-BUILD_TARGET="xtensa-esp32s3-espidf"
-BUILD_FEATURES=""
+run_linux_docker_build() {
+  local target="$1"
+  echo "  $MSG_USING_DOCKER"
+  echo ""
+  echo "========== $MSG_BUILD_IN_DOCKER =========="
+  if [[ "$target" == "x86_64-unknown-linux-musl" ]]; then
+    docker run --rm -v "$SCRIPT_ROOT":/workspace -w /workspace \
+      rust:latest \
+      bash -c "rustup target add x86_64-unknown-linux-musl && cargo build --release --target x86_64-unknown-linux-musl"
+  elif [[ "$target" == "armv7-unknown-linux-musleabihf" ]]; then
+    docker run --rm -v "$SCRIPT_ROOT":/home/rust/src -w /home/rust/src \
+      messense/rust-musl-cross:armv7-musleabihf \
+      cargo build --release --target armv7-unknown-linux-musleabihf
+  else
+    echo "Error: Docker build not supported for target: $target" >&2
+    exit 1
+  fi
+}
+
+# --- Interactive platform selection ---
+select_build_platform() {
+  # If TARGET env is set, skip interactive prompt.
+  if [[ -n "${TARGET:-}" ]]; then
+    case "${TARGET}" in
+      esp|esp32) PLATFORM_CHOICE=1; return 0 ;;  # ESP32
+      linux) PLATFORM_CHOICE=2; return 0 ;;      # Linux
+      linux-armv7|armv7) PLATFORM_CHOICE=3; return 0 ;;
+      *) echo "Error: Unknown TARGET=$TARGET. Use 'esp', 'linux', or 'linux-armv7'" >&2; exit 1 ;;
+    esac
+  fi
+
+  # If --flash is set, default to ESP32.
+  if [[ -n "$DO_FLASH" ]]; then
+    PLATFORM_CHOICE=1
+    return 0
+  fi
+
+  echo ""
+  echo "=========================================="
+  echo "  $MSG_TITLE"
+  echo "=========================================="
+  echo ""
+  echo "$MSG_SELECT_PLATFORM"
+  echo "  1) $MSG_PLATFORM_ESP"
+  echo "  2) $MSG_PLATFORM_LINUX"
+  echo "  3) $MSG_PLATFORM_LINUX_ARMV7"
+  echo ""
+
+  while true; do
+    read -r -p "$MSG_INPUT_OPTION [1-3] ($MSG_PRESS_ENTER 1): " choice
+    choice=${choice:-1}
+    case "$choice" in
+      1) PLATFORM_CHOICE=1; return 0 ;;
+      2) PLATFORM_CHOICE=2; return 0 ;;
+      3) PLATFORM_CHOICE=3; return 0 ;;
+      *) echo "$MSG_INVALID_OPTION 1, 2, or 3" ;;
+    esac
+  done
+}
+
+# Execute platform selection.
+PLATFORM_CHOICE=1
+select_build_platform
+
+if [[ $PLATFORM_CHOICE -eq 2 || $PLATFORM_CHOICE -eq 3 ]]; then
+  # Linux 构建
+  echo ""
+  echo "========== $MSG_LINUX_MODE =========="
+  if [[ $PLATFORM_CHOICE -eq 3 ]]; then
+    BUILD_TARGET="armv7-unknown-linux-musleabihf"
+  fi
+
+  # 检测当前系统
+  CURRENT_OS="$(uname -s)"
+  if [[ "$CURRENT_OS" == "Linux" ]]; then
+    # 在 Linux 上，直接用原生构建
+    if [[ $PLATFORM_CHOICE -eq 2 ]]; then
+      BUILD_TARGET="x86_64-unknown-linux-gnu"
+    fi
+    echo "  $MSG_DETECTED_LINUX"
+  elif [[ "$CURRENT_OS" == "Darwin" ]]; then
+    # On macOS, cross-compile to Linux.
+    echo "  $MSG_DETECTED_MACOS"
+    if [[ $PLATFORM_CHOICE -eq 2 ]]; then
+      BUILD_TARGET="x86_64-unknown-linux-musl"
+      LOCAL_LINKER_CMD="x86_64-linux-musl-gcc"
+    else
+      BUILD_TARGET="armv7-unknown-linux-musleabihf"
+      LOCAL_LINKER_CMD="arm-linux-musleabihf-gcc"
+    fi
+
+    HAS_DOCKER=0
+    command -v docker &>/dev/null && HAS_DOCKER=1
+    HAS_LOCAL_LINKER=0
+    command -v "$LOCAL_LINKER_CMD" &>/dev/null && HAS_LOCAL_LINKER=1
+
+    case "$BUILD_METHOD" in
+      docker)
+        [[ $HAS_DOCKER -eq 1 ]] || {
+          echo "$MSG_ERROR_NO_DOCKER"
+          echo "$MSG_INSTALL_DOCKER: https://www.docker.com/products/docker-desktop"
+          exit 1
+        }
+        USE_DOCKER=1
+        ;;
+      local)
+        USE_DOCKER=""
+        ;;
+      auto)
+        # Novice-friendly default: if Docker exists, use Docker first.
+        if [[ $HAS_DOCKER -eq 1 ]]; then
+          USE_DOCKER=1
+          echo "  Auto-selected Docker build (detected Docker)."
+        else
+          USE_DOCKER=""
+          echo "  Auto-selected local musl-cross build (Docker not found)."
+        fi
+        ;;
+      *)
+        echo "Error: BUILD_METHOD must be one of: auto, docker, local" >&2
+        exit 1
+        ;;
+    esac
+  else
+    echo "$MSG_UNKNOWN_OS $CURRENT_OS, $MSG_TRY_NATIVE"
+    BUILD_TARGET="x86_64-unknown-linux-gnu"
+  fi
+
+  BUILD_FEATURES=""
+  SKIP_ESP_TOOLCHAIN=1
+else
+  # ESP32 构建
+  echo ""
+  echo "========== $MSG_ESP_MODE =========="
+
+  # --- BOARD => target/features from board_presets.toml ---
+  BUILD_TARGET="xtensa-esp32s3-espidf"
+  BUILD_FEATURES=""
+fi
 if [[ -n "${BOARD:-}" ]]; then
   if [[ ! "$BOARD" =~ ^[a-z0-9-]+$ ]]; then
     echo "Error: BOARD must contain only [a-z0-9-]. Got: $BOARD" >&2
@@ -180,76 +361,229 @@ get_flash_port() {
   done
 }
 
-# --- ESP toolchain PATH (platform-specific, same role as build.ps1 Set-EspPath) ---
-set_esp_path() {
-  for f in "$HOME/export-esp.sh" "$HOME/.espup/export-esp.sh" "$HOME/.local/share/esp-rs/export-esp.sh"; do
-    [[ -f "$f" ]] && { source "$f"; return; }
-  done
-  for d in "$HOME/.rustup/toolchains/esp/xtensa-esp-elf/"*/xtensa-esp-elf/bin; do
-    [[ -x "${d}/xtensa-esp32s3-elf-gcc" ]] 2>/dev/null && { export PATH="$d:$PATH"; return; }
-  done
-}
-set_esp_path
-
-# --- Install ESP toolchain if missing (same as build.ps1) ---
-if ! command -v xtensa-esp32s3-elf-gcc &>/dev/null && ! command -v riscv32-esp-elf-gcc &>/dev/null; then
+# --- Linux 构建：跳过 ESP 工具链 ---
+if [[ "$BUILD_TARGET" =~ -unknown-linux ]]; then
   echo ""
-  echo "========== Step: Installing ESP Rust toolchain (espup) =========="
-  echo "  xtensa-esp32s3-elf-gcc not found. Running espup install."
-  if ! command -v espup &>/dev/null; then
-    echo ">>> Installing espup (using stable)..."
-    RUSTUP_TOOLCHAIN=stable cargo install espup
+  echo "========== $MSG_LINUX_MODE =========="
+  echo "  Target: $BUILD_TARGET"
+
+  # 检查是否在 macOS 上构建 Linux musl
+  if [[ "$BUILD_TARGET" =~ -unknown-linux-musl ]] && [[ "$(uname -s)" == "Darwin" ]]; then
+    echo "  $MSG_DETECTED_MACOS"
+
+    # 使用 Docker
+    if [[ -n "${USE_DOCKER:-}" ]]; then
+      run_linux_docker_build "$BUILD_TARGET"
+
+      echo ""
+      echo "========== $MSG_BUILD_COMPLETE =========="
+      echo "  $MSG_BINARY: $BIN"
+      ls -lh "$BIN" 2>/dev/null || echo "  (check target/$BUILD_TARGET/release/beetle)"
+      exit 0
+    fi
+
+    # Check and install local musl-cross toolchain when needed.
+    if [[ "$BUILD_TARGET" == "x86_64-unknown-linux-musl" ]] && ! command -v x86_64-linux-musl-gcc &>/dev/null; then
+      echo ""
+      echo "========== Installing musl-cross toolchain =========="
+      echo "  x86_64-linux-musl-gcc not found."
+      if command -v brew &>/dev/null; then
+        echo "  Installing via Homebrew..."
+        brew install filosottile/musl-cross/musl-cross
+      else
+        echo "Error: Neither Docker nor musl-cross found." >&2
+        echo "Install one of:" >&2
+        echo "  - Docker: https://www.docker.com/products/docker-desktop" >&2
+        echo "  - musl-cross: brew install filosottile/musl-cross/musl-cross" >&2
+        exit 1
+      fi
+    fi
+    if [[ "$BUILD_TARGET" == "armv7-unknown-linux-musleabihf" ]] && ! command -v arm-linux-musleabihf-gcc &>/dev/null; then
+      echo ""
+      echo "========== Installing musl-cross toolchain =========="
+      echo "  arm-linux-musleabihf-gcc not found."
+      if command -v brew &>/dev/null; then
+        echo "  Installing via Homebrew..."
+        brew install filosottile/musl-cross/musl-cross
+      else
+        echo "Error: Neither Docker nor musl-cross found." >&2
+        echo "Install one of:" >&2
+        echo "  - Docker: https://www.docker.com/products/docker-desktop" >&2
+        echo "  - musl-cross: brew install filosottile/musl-cross/musl-cross" >&2
+        exit 1
+      fi
+    fi
+
+    if [[ "$BUILD_TARGET" == "x86_64-unknown-linux-musl" ]] && ! command -v x86_64-linux-musl-gcc &>/dev/null; then
+      echo "Error: x86_64-linux-musl-gcc is still not available after installation." >&2
+      echo "Hint: restart your shell and verify with: x86_64-linux-musl-gcc --version" >&2
+      echo "Or choose Docker build mode to avoid local linker setup." >&2
+      exit 1
+    fi
+    if [[ "$BUILD_TARGET" == "armv7-unknown-linux-musleabihf" ]] && ! command -v arm-linux-musleabihf-gcc &>/dev/null; then
+      echo "Error: arm-linux-musleabihf-gcc is still not available after installation." >&2
+      echo "Hint: restart your shell and verify with: arm-linux-musleabihf-gcc --version" >&2
+      echo "Or choose Docker build mode to avoid local linker setup." >&2
+      exit 1
+    fi
+
+    # 配置 musl 链接器（x86_64 本地模式）。
+    if [[ "$BUILD_TARGET" == "x86_64-unknown-linux-musl" ]]; then
+      mkdir -p .cargo
+      if ! grep -q "x86_64-unknown-linux-musl" .cargo/config.toml 2>/dev/null; then
+        cat >> .cargo/config.toml << 'EOF'
+
+[target.x86_64-unknown-linux-musl]
+linker = "x86_64-linux-musl-gcc"
+EOF
+        echo "  Configured musl linker in .cargo/config.toml"
+      fi
+
+      if ! grep -q 'linker = "x86_64-linux-musl-gcc"' .cargo/config.toml 2>/dev/null; then
+        cat >> .cargo/config.toml << 'EOF'
+linker = "x86_64-linux-musl-gcc"
+EOF
+        echo "  Added linker for musl target in .cargo/config.toml"
+      fi
+    fi
+    if [[ "$BUILD_TARGET" == "armv7-unknown-linux-musleabihf" ]]; then
+      mkdir -p .cargo
+      if ! grep -q "armv7-unknown-linux-musleabihf" .cargo/config.toml 2>/dev/null; then
+        cat >> .cargo/config.toml << 'EOF'
+
+[target.armv7-unknown-linux-musleabihf]
+linker = "arm-linux-musleabihf-gcc"
+EOF
+        echo "  Configured armv7 musl linker in .cargo/config.toml"
+      fi
+      if ! grep -q 'linker = "arm-linux-musleabihf-gcc"' .cargo/config.toml 2>/dev/null; then
+        cat >> .cargo/config.toml << 'EOF'
+linker = "arm-linux-musleabihf-gcc"
+EOF
+        echo "  Added linker for armv7 musl target in .cargo/config.toml"
+      fi
+      # Also export linker env to avoid any stale/global Cargo config precedence issues.
+      export CARGO_TARGET_ARMV7_UNKNOWN_LINUX_MUSLEABIHF_LINKER="arm-linux-musleabihf-gcc"
+    fi
+  fi
+
+  # 添加 target
+  if ! rustup +stable target list --installed | grep -q "$BUILD_TARGET"; then
+    echo "  Adding target: $BUILD_TARGET"
+    rustup +stable target add "$BUILD_TARGET"
+  fi
+
+  # 跳过 ESP 工具链检查
+  SKIP_ESP_TOOLCHAIN=1
+else
+  # --- ESP toolchain PATH (platform-specific, same role as build.ps1 Set-EspPath) ---
+  set_esp_path() {
+    for f in "$HOME/export-esp.sh" "$HOME/.espup/export-esp.sh" "$HOME/.local/share/esp-rs/export-esp.sh"; do
+      [[ -f "$f" ]] && { source "$f"; return; }
+    done
+    for d in "$HOME/.rustup/toolchains/esp/xtensa-esp-elf/"*/xtensa-esp-elf/bin; do
+      [[ -x "${d}/xtensa-esp32s3-elf-gcc" ]] 2>/dev/null && { export PATH="$d:$PATH"; return; }
+    done
+  }
+  set_esp_path
+
+  # --- Install ESP toolchain if missing (same as build.ps1) ---
+  if ! command -v xtensa-esp32s3-elf-gcc &>/dev/null && ! command -v riscv32-esp-elf-gcc &>/dev/null; then
+    echo ""
+    echo "========== Step: Installing ESP Rust toolchain (espup) =========="
+    echo "  xtensa-esp32s3-elf-gcc not found. Running espup install."
+    if ! command -v espup &>/dev/null; then
+      echo ">>> Installing espup (using stable)..."
+      RUSTUP_TOOLCHAIN=stable cargo install espup
+      export PATH="${HOME}/.cargo/bin:${PATH}"
+    fi
+    espup install
+    set_esp_path
+    command -v xtensa-esp32s3-elf-gcc &>/dev/null || command -v riscv32-esp-elf-gcc &>/dev/null || {
+      echo "Error: xtensa-esp32s3-elf-gcc still not found after espup install" >&2
+      exit 1
+    }
+  fi
+
+  # --- Install ldproxy if missing (same as build.ps1; no Windows prebuilt on Mac/Linux) ---
+  if ! command -v ldproxy &>/dev/null; then
+    echo ""
+    echo "========== Step: Installing ldproxy (linker wrapper) =========="
+    echo ">>> Installing ldproxy (using stable)..."
+    RUSTUP_TOOLCHAIN=stable cargo install ldproxy
     export PATH="${HOME}/.cargo/bin:${PATH}"
   fi
-  espup install
-  set_esp_path
-  command -v xtensa-esp32s3-elf-gcc &>/dev/null || command -v riscv32-esp-elf-gcc &>/dev/null || {
-    echo "Error: xtensa-esp32s3-elf-gcc still not found after espup install" >&2
-    exit 1
-  }
 fi
 
-# --- Install ldproxy if missing (same as build.ps1; no Windows prebuilt on Mac/Linux) ---
-if ! command -v ldproxy &>/dev/null; then
-  echo ""
-  echo "========== Step: Installing ldproxy (linker wrapper) =========="
-  echo ">>> Installing ldproxy (using stable)..."
-  RUSTUP_TOOLCHAIN=stable cargo install ldproxy
-  export PATH="${HOME}/.cargo/bin:${PATH}"
+# --- Write sdkconfig board overlay (仅 ESP 目标) ---
+if [[ -z "${SKIP_ESP_TOOLCHAIN:-}" ]]; then
+  BOARD_SDKCONFIG="$SCRIPT_ROOT/sdkconfig.defaults.esp32s3.board"
+  # 与 sdkconfig.defaults.esp32s3 一致：CMake 工程根为 esp-idf-sys 的 out/，分区表路径需相对 out/ 指向仓库根 CSV。
+  case "$PARTITION_TABLE" in
+    partitions_8mb.csv)
+      printf '%s\n' 'CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y' '# CONFIG_ESPTOOLPY_FLASHSIZE_16MB is not set' 'CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="../../../../../../partitions_8mb.csv"' > "$BOARD_SDKCONFIG"
+      ;;
+    partitions_32mb.csv)
+      printf '%s\n' 'CONFIG_ESPTOOLPY_FLASHSIZE_32MB=y' '# CONFIG_ESPTOOLPY_FLASHSIZE_16MB is not set' 'CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="../../../../../../partitions_32mb.csv"' > "$BOARD_SDKCONFIG"
+      ;;
+    *)
+      printf '%s\n' 'CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y' 'CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="../../../../../../partitions.csv"' > "$BOARD_SDKCONFIG"
+      ;;
+  esac
 fi
 
-# --- Write sdkconfig board overlay so esp-idf-sys uses correct partition table and flash size ---
-BOARD_SDKCONFIG="$SCRIPT_ROOT/sdkconfig.defaults.esp32s3.board"
-# 与 sdkconfig.defaults.esp32s3 一致：CMake 工程根为 esp-idf-sys 的 out/，分区表路径需相对 out/ 指向仓库根 CSV。
-case "$PARTITION_TABLE" in
-  partitions_8mb.csv)
-    printf '%s\n' 'CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y' '# CONFIG_ESPTOOLPY_FLASHSIZE_16MB is not set' 'CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="../../../../../../partitions_8mb.csv"' > "$BOARD_SDKCONFIG"
-    ;;
-  partitions_32mb.csv)
-    printf '%s\n' 'CONFIG_ESPTOOLPY_FLASHSIZE_32MB=y' '# CONFIG_ESPTOOLPY_FLASHSIZE_16MB is not set' 'CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="../../../../../../partitions_32mb.csv"' > "$BOARD_SDKCONFIG"
-    ;;
-  *)
-    printf '%s\n' 'CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y' 'CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="../../../../../../partitions.csv"' > "$BOARD_SDKCONFIG"
-    ;;
-esac
-
-# --- Build args: if BOARD or --flash, use resolved target/features + buildArgs (same as build.ps1) ---
+# --- Build args: inject default ESP --target when missing (same as build.ps1); no longer rely on .cargo [build] target ---
 RELEASE_ARGS=()
-if [[ -n "$BOARD" ]] || [[ -n "$DO_FLASH" ]]; then
-  HAS_TARGET=0
-  for a in "${BUILD_ARGS[@]}"; do [[ "$a" == "--target" ]] && HAS_TARGET=1; done
-  [[ $HAS_TARGET -eq 0 ]] && RELEASE_ARGS+=(--target "$BUILD_TARGET")
-  [[ -n "$BUILD_FEATURES" ]] && RELEASE_ARGS+=($BUILD_FEATURES)
-  RELEASE_ARGS+=("${BUILD_ARGS[@]}")
-else
-  RELEASE_ARGS=("${BUILD_ARGS[@]}")
-fi
+HAS_TARGET=0
+for a in "${BUILD_ARGS[@]}"; do [[ "$a" == "--target" ]] && HAS_TARGET=1; done
+[[ $HAS_TARGET -eq 0 ]] && RELEASE_ARGS+=(--target "$BUILD_TARGET")
+[[ -n "$BUILD_FEATURES" ]] && RELEASE_ARGS+=($BUILD_FEATURES)
+RELEASE_ARGS+=("${BUILD_ARGS[@]}")
 
 # --- Build (same as build.ps1) ---
 echo ""
 echo "========== Step: Building release =========="
 echo "  Target: $BUILD_TARGET  |  Root: $SCRIPT_ROOT"
-cargo build --release "${RELEASE_ARGS[@]}"
+
+# Linux 构建用 stable 工具链
+if [[ "$BUILD_TARGET" =~ -unknown-linux ]]; then
+  if ! cargo +stable build --release "${RELEASE_ARGS[@]}"; then
+    # Auto fallback: local musl build failed on macOS, retry with Docker if available.
+    if [[ "$(uname -s)" == "Darwin" ]] && [[ "$BUILD_TARGET" =~ -unknown-linux-musl ]] && [[ -z "${USE_DOCKER:-}" ]] && command -v docker &>/dev/null; then
+      echo ""
+      echo "Local toolchain build failed. Auto-fallback to Docker build..."
+      run_linux_docker_build "$BUILD_TARGET"
+      echo ""
+      echo "========== $MSG_BUILD_COMPLETE =========="
+      echo "  $MSG_BINARY: $BIN"
+      ls -lh "$BIN" 2>/dev/null || echo "  (check target/$BUILD_TARGET/release/beetle)"
+      exit 0
+    fi
+
+    echo "" >&2
+    echo "Build failed for target: $BUILD_TARGET" >&2
+    if [[ "$BUILD_TARGET" == "x86_64-unknown-linux-musl" ]] && [[ "$(uname -s)" == "Darwin" ]]; then
+      echo "Common fixes on macOS:" >&2
+      echo "  1) Ensure target is installed on stable toolchain:" >&2
+      echo "     rustup +stable target add x86_64-unknown-linux-musl" >&2
+      echo "  2) Ensure musl linker is available:" >&2
+      echo "     x86_64-linux-musl-gcc --version" >&2
+      echo "  3) Ensure .cargo/config.toml contains:" >&2
+      echo "     [target.x86_64-unknown-linux-musl]" >&2
+      echo "     linker = \"x86_64-linux-musl-gcc\"" >&2
+      echo "  4) If your default toolchain is esp, always use +stable for rustup target commands." >&2
+      echo "  5) Prefer Docker mode if linker errors persist (recommended)." >&2
+    elif [[ "$BUILD_TARGET" == "armv7-unknown-linux-musleabihf" ]] && [[ "$(uname -s)" == "Darwin" ]]; then
+      echo "Common fixes on macOS (armv7):" >&2
+      echo "  1) Prefer Docker mode for armv7 (recommended)." >&2
+      echo "  2) Ensure target is installed on stable toolchain:" >&2
+      echo "     rustup +stable target add armv7-unknown-linux-musleabihf" >&2
+    fi
+    exit 1
+  fi
+else
+  cargo build --release "${RELEASE_ARGS[@]}"
+fi
 
 # --- Flash path (only when --flash) ---
 if [[ -z "$DO_FLASH" ]]; then

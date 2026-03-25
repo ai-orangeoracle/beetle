@@ -17,7 +17,6 @@ pub struct HandlerContext {
     pub skill_meta_store: Arc<dyn SkillMetaStore + Send + Sync>,
     pub inbound_depth: Arc<AtomicUsize>,
     pub outbound_depth: Arc<AtomicUsize>,
-    pub wifi_connected: bool,
     pub version: Arc<str>,
     /// 板型 ID，与 board_presets.toml 一致，用于 OTA 渠道查 manifest。
     pub board_id: Arc<str>,

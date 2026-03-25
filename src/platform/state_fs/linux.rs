@@ -1,0 +1,90 @@
+//! Linux / host：`std::fs` + `state_mount_path()`，互斥与 ESP 上 SPIFFS 语义一致。
+//! Linux/host: std::fs under state_mount_path; mutex aligns with ESP SPIFFS serialization.
+
+use crate::error::{Error, Result};
+use crate::platform::abstraction::StateFs;
+use crate::platform::spiffs::MAX_WRITE_SIZE;
+use crate::platform::state_root::state_mount_path;
+use std::io::ErrorKind;
+use std::path::PathBuf;
+use std::sync::Mutex;
+
+/// 串行化状态根访问，与 `Esp32StateFs` 经 `spiffs` 互斥一致。
+pub struct LinuxStateFs {
+    lock: Mutex<()>,
+}
+
+impl Default for LinuxStateFs {
+    fn default() -> Self {
+        Self {
+            lock: Mutex::new(()),
+        }
+    }
+}
+
+fn abs(rel_path: &str) -> Result<PathBuf> {
+    let rel = super::normalize_state_rel_path(rel_path)?;
+    Ok(state_mount_path().join(rel))
+}
+
+fn map_read(r: std::result::Result<Vec<u8>, std::io::Error>) -> Result<Option<Vec<u8>>> {
+    match r {
+        Ok(b) => Ok(Some(b)),
+        Err(e) if e.kind() == ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(Error::io("state_fs", e)),
+    }
+}
+
+impl StateFs for LinuxStateFs {
+    fn read(&self, rel_path: &str) -> Result<Option<Vec<u8>>> {
+        let _g = self.lock.lock().unwrap_or_else(|e| e.into_inner());
+        let path = abs(rel_path)?;
+        map_read(std::fs::read(&path))
+    }
+
+    fn write(&self, rel_path: &str, data: &[u8]) -> Result<()> {
+        if data.len() > MAX_WRITE_SIZE {
+            return Err(Error::config(
+                "state_fs",
+                format!("write size {} exceeds limit {}", data.len(), MAX_WRITE_SIZE),
+            ));
+        }
+        let _g = self.lock.lock().unwrap_or_else(|e| e.into_inner());
+        let path = abs(rel_path)?;
+        if let Some(parent) = path.parent() {
+            if !parent.as_os_str().is_empty() {
+                std::fs::create_dir_all(parent).map_err(|e| Error::io("state_fs", e))?;
+            }
+        }
+        std::fs::write(&path, data).map_err(|e| Error::io("state_fs", e))
+    }
+
+    fn remove(&self, rel_path: &str) -> Result<()> {
+        let _g = self.lock.lock().unwrap_or_else(|e| e.into_inner());
+        let path = abs(rel_path)?;
+        match std::fs::remove_file(&path) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(Error::io("state_fs", e)),
+        }
+    }
+
+    fn list_dir(&self, rel_path: &str) -> Result<Vec<String>> {
+        let rel = super::normalize_state_rel_path(rel_path)?;
+        let _g = self.lock.lock().unwrap_or_else(|e| e.into_inner());
+        let path = state_mount_path().join(rel);
+        let mut names = Vec::new();
+        for e in std::fs::read_dir(&path).map_err(|e| Error::io("state_fs", e))? {
+            let e = e.map_err(|e| Error::io("state_fs", e))?;
+            if let Some(s) = e.file_name().to_str() {
+                let is_dir = e.file_type().map(|t| t.is_dir()).unwrap_or(false);
+                names.push(if is_dir {
+                    format!("{}/", s)
+                } else {
+                    s.to_string()
+                });
+            }
+        }
+        Ok(names)
+    }
+}

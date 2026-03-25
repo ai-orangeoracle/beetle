@@ -5,14 +5,12 @@ use crate::platform::abstraction::SkillMetaStore;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-use super::{read_file, write_file, SPIFFS_BASE};
+use super::{read_file, state_path_join, write_file};
 
 const REL_PATH: &str = "config/skills_meta.json";
 
 fn full_path() -> PathBuf {
-    let mut p = PathBuf::from(SPIFFS_BASE);
-    p.push(REL_PATH);
-    p
+    state_path_join(REL_PATH)
 }
 
 #[derive(Default, Serialize, Deserialize)]

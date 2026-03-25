@@ -20,35 +20,35 @@
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/License-MIT%20OR%20Apache--2.0-blue.svg" /></a>
 </p>
 
-> **一块设备，一个 Agent 运行时。**  
-> 一次部署，接入多通道，并让 LLM 决策直接驱动真实硬件。
+> **一块板子，一个 Agent。**
+> 编译一次，接入多个聊天平台，让 LLM 直接控制真实硬件。
 
-| 为什么是 Beetle | 你现在就能得到 |
+| 为什么选 Beetle | 现在就能用上什么 |
 |-----------------|----------------|
-| 硬件原生架构 | 板上运行 ReAct + 工具 + 记忆 |
-| 完整产品闭环 | 固件内置轻量配置页 + 完整 `configure-ui` Web 应用 + 官方入口 [beetle.uno](http://beetle.uno/) |
-| 实用成本带 | 面向 **50-500 元** 设备快速落地 |
-| 清晰扩展路径 | 当前 ESP32-S3 基线，后续 Linux 系与更高性能平台 |
+| 直接跑在硬件上 | ReAct、工具调用、记忆管理都在板子上运行 |
+| 开箱即用 | 固件自带配置页面，还有完整的 Web 管理界面 [beetle.uno](http://beetle.uno/) |
+| 成本友好 | 瞄准 **50-500 元**价位的设备 |
+| 平台扩展 | 现在支持 ESP32-S3，接下来会支持 Linux 开发板 |
 
-定位在 **50-500 元（约 7-70 美元）** 的硬件设备带：当前以 ESP32 为起点，后续扩展到 Linux 系与其他常见硬件平台。  
-当前基准与准入门槛是 **ESP32-S3**；凡性能高于 ESP32-S3 的平台，后续都会逐步增加兼容。
+**价格定位**：50-500 元（约 7-70 美元）的硬件。现在从 ESP32 起步，后面会扩展到 Linux 单板机和其他常见平台。
+**入门门槛**：ESP32-S3 是当前基准，比它性能更好的板子后续都会逐步支持。
 
-飞书、钉钉、企微、QQ 频道、Telegram、WebSocket 汇聚到同一块设备上，无 Gateway、无常开 PC；配网用热点 + 浏览器，板型用 `BOARD=xxx` 切换。
+把飞书、钉钉、企微、QQ 频道、Telegram、WebSocket 都接到一块板子上——不需要网关，不需要一直开着电脑。配网就用手机连热点打开浏览器，换板子就改个 `BOARD=xxx` 环境变量。
 
 ## 一眼看懂
 
-- **这是什么**：面向硬件原生的 Agent 运行时，设计思路受 openClaw 启发。
-- **核心价值**：一块设备就能同时承载通道、工具、记忆与设备控制。
-- **现在跑在哪**：当前以 ESP32-S3 稳定落地，后续扩展 Linux 系与更高性能平台。
-- **最终要做什么**：随身智能助理 + LLM 驱动的智能万物互联。
-- **产品完整度**：固件内置轻量配置页；完整配置 Web 应用通过 `configure-ui` 与官方入口 [beetle.uno](http://beetle.uno/) 提供。
+- **这是啥**：一个跑在硬件上的 AI Agent 运行时，灵感来自 openClaw。
+- **能干啥**：一块板子搞定聊天通道、工具调用、记忆存储和硬件控制。
+- **跑在哪**：现在稳定支持 ESP32-S3，后面会扩展到 Linux 开发板。
+- **最终目标**：做成随身智能助理，让 LLM 能控制各种智能设备。
+- **完整度如何**：固件自带轻量配置页，完整的 Web 管理界面在 `configure-ui` 和 [beetle.uno](http://beetle.uno/)。
 
 ## 典型场景
 
-- **随身助理**：一块板子随身运行，通过常用 IM 通道对话并调用本地工具。
-- **智能空间联动**：让 LLM 决策直接驱动 GPIO/PWM/ADC/蜂鸣器等硬件能力。
-- **产品原型验证**：快速做可定制、可商业化的 AI 硬件工作流原型。
-- **配置与运维**：通过内置配置网页完成初始化、通道配置、健康检查和持续调优。
+- **随身助理**：带一块板子出门，用微信、Telegram 等聊天就能调用本地工具。
+- **智能家居联动**：让 LLM 直接控制 GPIO、PWM、传感器、蜂鸣器这些硬件。
+- **产品原型**：快速做一个能定制、能商用的 AI 硬件原型。
+- **配置管理**：用内置的网页界面完成初始化、通道配置、健康检查。
 
 ---
 
@@ -74,12 +74,12 @@
 
 ## 概述
 
-- **硬件即 Agent 运行时**：ReAct、工具、记忆运行在设备本体（当前以 ESP32 为基线，后续扩展到更广硬件），不依赖必须的云端中继推理。
-- **多通道统一**：各通道同队列、同一 Agent；新通道实现 trait 即注册。
-- **浏览器配网**：未配网时设备开热点 **Beetle**（无密码），浏览器打开 **http://192.168.4.1**；已连 WiFi 后使用路由器分配的设备 IP，配对码保护写操作。
-- **项目定位**：面向硬件原生 Agent，先从 ESP32-S3 打基线，再向更高性能硬件扩展。
-- **长期构想**：随身智能助理 + 智能万物互联（LLM 驱动硬件能力），支持可定制化与商业化落地。
-- 受 [OpenClaw](https://github.com/openclaw/openclaw) 启发，用 Rust 在 MCU 上跑类型安全的全栈 Agent。
+- **硬件上跑 Agent**：ReAct、工具调用、记忆管理都在设备本地运行（现在是 ESP32，后面会支持更多硬件），不强制依赖云端推理。
+- **多通道统一**：所有聊天平台共用一个消息队列和一个 Agent，新平台只需实现一个 trait 就能接入。
+- **浏览器配网**：没配网时板子会开一个叫 **Beetle** 的热点（无密码），手机连上后打开 **http://192.168.4.1** 就能配置。配好 WiFi 后用路由器分配的 IP 访问，配对码保护写操作。
+- **项目定位**：做一个硬件原生的 Agent 运行时，先在 ESP32-S3 上打稳基础，再扩展到更强的硬件。
+- **长期目标**：做成随身智能助理，让 LLM 能控制各种智能设备，支持定制和商业化。
+- 灵感来自 [OpenClaw](https://github.com/openclaw/openclaw)，用 Rust 在单片机上跑类型安全的全栈 Agent。
 
 **系统拓扑：**
 
@@ -105,33 +105,33 @@
 
 ## 适用人群
 
-- **硬件开发者 / Maker**：希望在低成本设备上直接落地 AI Agent。
-- **IoT / 嵌入式工程师**：希望用一套 Rust 架构打通通道、工具和设备控制。
-- **产品与创新团队**：希望先做随身助理和 LLM 驱动设备联动的可商用原型。
-- **开源贡献者**：希望扩展通道、工具、模型和平台兼容能力。
+- **硬件开发者 / Maker**：想在便宜的板子上直接跑 AI Agent。
+- **IoT / 嵌入式工程师**：想用一套 Rust 代码打通聊天平台、工具调用和硬件控制。
+- **产品和创新团队**：想快速做一个随身助理或 LLM 控制设备的可商用原型。
+- **开源贡献者**：想扩展更多聊天平台、工具、模型或硬件支持。
 
 ---
 
 ## 平台路线图
 
-| 阶段 | 平台范围 | 状态 |
+| 阶段 | 支持的硬件 | 状态 |
 |------|----------|------|
-| **当前** | 以 ESP32-S3 为基线与准入门槛 | 稳定 |
-| **下一步** | Linux 系边缘设备（SBC/嵌入式 Linux） | 规划中 |
-| **后续** | 其他常见且性能高于 ESP32-S3 的硬件平台 | 规划中 |
+| **现在** | ESP32-S3（基准） | ✅ 稳定 |
+| **下一步** | Linux 开发板（树莓派、香橙派等） | 🚧 开发中 |
+| **后续** | 其他性能更好的硬件平台 | 📋 计划中 |
 
-当前仓库默认先围绕 ESP32-S3，是为了让启动、验证、资源边界更可控；这是**起点**，不是平台终点。
+现在先围绕 ESP32-S3 做，是为了让启动、验证、资源控制更好把握。这只是**起点**，不是终点。
 
 ---
 
 ## 前置要求
 
-| 环境              | 要求                                                                                                        |
+| 环境              | 需要什么                                                                                                        |
 | ----------------- | ----------------------------------------------------------------------------------------------------------- |
-| **Rust**          | [esp-rs 工具链](https://docs.espressif.com/projects/rust-book/en/latest/introduction.html)，`espup install` |
-| **烧录**          | [espflash](https://github.com/esp-rs/espflash)，`cargo install espflash`                                    |
-| **macOS / Linux** | 无额外要求；首次缺工具链时 `build.sh` 会提示安装 espup/ldproxy                                              |
-| **Windows**       | Visual Studio（「使用 C++ 的桌面开发」+ Windows 10/11 SDK）                                                 |
+| **Rust**          | [esp-rs 工具链](https://docs.espressif.com/projects/rust-book/en/latest/introduction.html)，运行 `espup install` 安装 |
+| **烧录工具**      | [espflash](https://github.com/esp-rs/espflash)，运行 `cargo install espflash` 安装                                    |
+| **macOS / Linux** | 没啥特别要求，第一次缺工具时 `build.sh` 会提示你装 espup/ldproxy                                              |
+| **Windows**       | Visual Studio（勾选「使用 C++ 的桌面开发」+ Windows 10/11 SDK）                                                 |
 
 ---
 
@@ -140,8 +140,8 @@
 ### macOS / Linux
 
 ```bash
-./build.sh                    # 仅构建
-./build.sh --flash            # 构建后烧录（会提示擦除、选串口）
+./build.sh                    # 只编译
+./build.sh --flash            # 编译完直接烧录（会提示你擦不擦除、选哪个串口）
 BOARD=esp32-s3-16mb ./build.sh --flash
 ESPFLASH_PORT=/dev/cu.usbserial-xxx ./build.sh --flash   # 指定串口
 ```
@@ -159,7 +159,7 @@ $env:ESPFLASH_PORT="COM3"; .\build.ps1 --flash
 
 路径过长时可先 `.\build.ps1 clean` 再构建。
 
-**首次使用**：设备上电后开热点 **Beetle**，浏览器打开 **http://192.168.4.1** 填写 WiFi 与配对码。
+**第一次用**：板子上电后会开一个叫 **Beetle** 的热点，手机连上后打开 **http://192.168.4.1** 填 WiFi 和配对码就行。
 
 ---
 
@@ -169,11 +169,11 @@ $env:ESPFLASH_PORT="COM3"; .\build.ps1 --flash
 cargo build --release
 ```
 
-- **Target**：默认 `xtensa-esp32s3-espidf`；板型由 `BOARD` 与 `board_presets.toml` 决定。
-- **Features**：`config_api`（默认）、`telegram`、`feishu`（默认）、`websocket`、`cli`、`ota`。  
-  示例：`cargo build --release --features cli,ota`
+- **编译目标**：默认是 `xtensa-esp32s3-espidf`，具体板型由 `BOARD` 环境变量和 `board_presets.toml` 决定。
+- **功能开关**：`config_api`（默认开）、`telegram`、`feishu`（默认开）、`websocket`、`cli`、`ota`。
+  比如：`cargo build --release --features cli,ota`
 
-烧录与串口：`--flash` 才烧录；`./build.sh clean` 清理；`--no-monitor` 不打开串口监控。指定串口：`ESPFLASH_PORT=/dev/cu.usbserial-xxx` 或 `COM3`。连接失败时检查 USB 线/口、板子进入下载模式（按住 BOOT 短按 RESET），脚本会在 erase/flash 失败时打印诊断提示。
+**烧录和串口**：加 `--flash` 才会烧录；`./build.sh clean` 清理编译产物；`--no-monitor` 不打开串口监控。指定串口用 `ESPFLASH_PORT=/dev/cu.usbserial-xxx` 或 `COM3`。连不上的话检查 USB 线、换个口试试，或者按住 BOOT 键再短按 RESET 进下载模式。脚本会在擦除/烧录失败时给你诊断提示。
 
 ---
 
@@ -181,20 +181,20 @@ cargo build --release
 
 | BOARD           | Flash | PSRAM | 说明                                     |
 | --------------- | ----- | ----- | ---------------------------------------- |
-| `esp32-s3-8mb`  | 8MB   | 8MB   | N8R8；`BOARD=esp32-s3-8mb ./build.sh`    |
-| `esp32-s3-16mb` | 16MB  | 8MB   | N16R8；未设 BOARD 时默认                 |
-| `esp32-s3-32mb` | 32MB  | 16MB  | N32R16；`BOARD=esp32-s3-32mb ./build.sh` |
+| `esp32-s3-8mb`  | 8MB   | 8MB   | N8R8，用 `BOARD=esp32-s3-8mb ./build.sh`    |
+| `esp32-s3-16mb` | 16MB  | 8MB   | N16R8，不设 BOARD 就是这个                 |
+| `esp32-s3-32mb` | 32MB  | 16MB  | N32R16，用 `BOARD=esp32-s3-32mb ./build.sh` |
 
-分区表与 Flash 大小由 `board_presets.toml` 及构建脚本写入的 `sdkconfig.defaults.esp32s3.board` 决定，**须使用项目自带分区表**，否则会报 `spiffs partition could not be found`。
+分区表和 Flash 大小由 `board_presets.toml` 和构建脚本生成的 `sdkconfig.defaults.esp32s3.board` 决定，**必须用项目自带的分区表**，不然会报 `spiffs partition could not be found` 错误。
 
 ---
 
 ## 配置
 
-- **编译时**：构建前环境变量 `BEETLE_*`；NVS 有对应 key 则运行时覆盖。
-- **运行时**：配置页写入 NVS；密钥不打印、不写 SPIFFS。
+- **编译时**：编译前设置 `BEETLE_*` 环境变量；如果 NVS 里有对应的 key，运行时会覆盖。
+- **运行时**：通过配置页面写入 NVS；密钥不会打印也不会写到 SPIFFS。
 
-| 类别        | 配置键                                                                                                                                              |
+| 类别        | 配置项                                                                                                                                              |
 | ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
 | WiFi        | `WIFI_SSID`、`WIFI_PASS`                                                                                                                            |
 | Telegram    | `TG_TOKEN`、`TG_ALLOWED_CHAT_IDS`                                                                                                                   |
@@ -202,10 +202,10 @@ cargo build --release
 | 钉钉        | `DINGTALK_WEBHOOK_URL`                                                                                                                              |
 | 企微        | `WECOM_CORP_ID`、`WECOM_CORP_SECRET`、`WECOM_AGENT_ID`、`WECOM_DEFAULT_TOUSER`                                                                      |
 | QQ 频道     | `QQ_CHANNEL_APP_ID`、`QQ_CHANNEL_SECRET`                                                                                                            |
-| LLM         | 多源：`config/llm.json`（SPIFFS）；编译时环境变量作默认。字段：provider、api_key、model、api_url、stream、max_tokens；路由/工作源下标支持路由模式。支持提供商：`openai`、`anthropic`、`gemini`、`glm`、`qwen`、`deepseek`、`moonshot`、`ollama`。详见 [LLM 提供商配置指南](docs/zh-cn/llm-providers.md)。 |
+| LLM         | 多个来源：`config/llm.json`（SPIFFS）；编译时环境变量作默认值。字段包括：provider、api_key、model、api_url、stream、max_tokens；支持路由模式。支持的提供商：`openai`、`anthropic`、`gemini`、`glm`、`qwen`、`deepseek`、`moonshot`、`ollama`。详见 [LLM 提供商配置指南](docs/zh-cn/llm-providers.md)。 |
 | 代理 / 搜索 | `PROXY_URL`、`SEARCH_KEY`、`TAVILY_KEY`                                                                                                             |
 
-完整键名与校验见 `src/config.rs`。运行时配置分段（LLM、通道、系统）与 API 见 [配置 API 契约](docs/zh-cn/config-api.md)。配网见 [配置与使用](docs/zh-cn/configuration.md)。
+完整的配置项和校验规则看 `src/config.rs`。运行时配置分段（LLM、通道、系统）和 API 文档看 [配置 API 契约](docs/zh-cn/config-api.md)。配网教程看 [配置与使用](docs/zh-cn/configuration.md)。
 
 ---
 
@@ -213,20 +213,38 @@ cargo build --release
 
 | 维度         | 说明                                                                                                                                                                                                                                                                                                      |
 | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 板子即 Agent | ReAct、工具、记忆均在 ESP32 内完成                                                                                                                                                                                                                                                                        |
-| 多通道统一   | 飞书 / 钉钉 / 企微 / QQ 频道 / Telegram / WebSocket 同队列、同一 Agent                                                                                                                                                                                                                                    |
-| 浏览器配网   | 热点 Beetle → http://192.168.4.1；已连 WiFi → 路由器分配 IP，配对码保护写操作                                                                                                                                                                                                                             |
-| Rust 全栈    | 类型安全、统一错误与资源上界；新通道/工具/LLM 实现 trait 即注册                                                                                                                                                                                                                                           |
-| 记忆与工具   | 长期记忆、会话摘要、到点提醒；GetTime、Cron、Files、WebSearch、AnalyzeImage、FetchUrl、HttpPost、RemindAt、KvStore、UpdateSessionSummary；**board_info** 查设备状态（芯片、堆、运行时间、压力、WiFi、SPIFFS）；**device_control** 按 config/hardware.json 控制 GPIO/PWM/ADC/蜂鸣器等；Skills 注入系统提示 |
-| 资源与健康   | 编排器：堆/队列压力、HTTP 准入、通道熔断；健康与资源快照通过 API 暴露                                                                                                                                                                                                                                     |
+| 板子上跑 Agent | ReAct、工具调用、记忆管理都在 ESP32 里完成                                                                                                                                                                                                                                                                        |
+| 多平台统一   | 飞书、钉钉、企微、QQ 频道、Telegram、WebSocket 共用一个队列和一个 Agent                                                                                                                                                                                                                                    |
+| 浏览器配网   | 热点 Beetle → http://192.168.4.1；连上 WiFi 后用路由器分配的 IP，配对码保护写操作                                                                                                                                                                                                             |
+| Rust 全栈    | 类型安全、统一的错误处理和资源上限；新平台/工具/LLM 只需实现 trait 就能注册                                                                                                                                                                                                                           |
+| 记忆与工具   | 长期记忆、会话摘要、定时提醒；内置工具：GetTime、Cron、Files、WebSearch、AnalyzeImage、FetchUrl、HttpPost、RemindAt、KvStore、UpdateSessionSummary；**board_info** 查看设备状态（芯片、内存、运行时间、压力、WiFi、存储）；**device_control** 根据 config/hardware.json 控制 GPIO/PWM/ADC/蜂鸣器等；Skills 可以注入到系统提示 |
+| 资源与健康   | 编排器：内存/队列压力监控、HTTP 准入控制、通道熔断；健康状态和资源快照通过 API 暴露                                                                                                                                                                                                                     |
 
 ---
 
 ## 存储与安全
 
-- **SPIFFS**：`spiffs_data/` 打包烧录到 spiffs 分区，存记忆、会话、skills。
-- **OTA**（feature `ota`）：从配置 URL 拉固件写备用分区，失败不改写当前分区。
-- **安全**：密钥不打印、不写盘；队列/消息/响应体上界集中配置；配置页写操作需配对码。
+- **SPIFFS**：`spiffs_data/` 目录会打包烧录到 spiffs 分区，用来存记忆、会话、skills。
+- **OTA**（需要开启 `ota` feature）：从配置的 URL 拉固件写到备用分区，失败了不会动当前分区。
+- **安全**：密钥不打印、不写盘；队列/消息/响应体都有大小上限；配置页的写操作需要配对码。
+
+### 配置页安全须知
+
+**配对码保护**
+- 第一次用的时候设置配对码，用来保护所有配置修改
+- 配对码保存在浏览器本地，**1 小时后自动过期**，需要重新输入
+- 建议用 6 位以上的随机字符，别用太简单的密码
+
+**跨域访问**
+- 可以通过公网域名（比如 http://beetle.uno）访问局域网设备
+- 所有修改操作都有 CSRF 保护，防止恶意网站伪造请求
+- 第一次访问时会自动获取安全令牌，不用手动操作
+
+**使用建议**
+- 只在可信的网络环境下用配置页面
+- 别在公共场所或不安全的 WiFi 下配置
+- 定期换配对码提高安全性
+- 配置完可以断开设备热点，只通过路由器 IP 访问
 
 ### 配置页安全须知
 
@@ -252,20 +270,22 @@ cargo build --release
 
 | 文档                                                                | 说明                                                                |
 | ------------------------------------------------------------------- | ------------------------------------------------------------------- |
-| [配置与使用](docs/zh-cn/configuration.md)                           | 配网、配置页、常用配置                                              |
-| [配置 API 契约](docs/zh-cn/config-api.md)                           | HTTP API：配对、配置分段、健康、OTA、webhook                        |
-| [Agent 工具说明](docs/zh-cn/tools.md)                               | 面向用户：Agent 可用工具说明（get_time、web_search、board_info 等） |
+| [文档索引](docs/README.md)                                          | 按读者分类的中英文入口与维护约定                                         |
+| [Linux 发布包说明](docs/zh-cn/linux-release-rollback.md)             | musl 包目录约定、手工部署说明（尚无一键安装）；tar 内含 systemd 示例 |
+| [配置与使用](docs/zh-cn/configuration.md)                           | 怎么配网、用配置页、常用配置项                                              |
+| [配置 API 契约](docs/zh-cn/config-api.md)                           | HTTP API：配对、配置分段、健康检查、OTA、webhook                        |
+| [Agent 工具说明](docs/zh-cn/tools.md)                               | 固件 `build_default_registry` 注册的工具说明                         |
 | [硬件与资源](docs/zh-cn/hardware.md)                                | 板型、内存、PSRAM、看门狗、编译选项、排错                           |
-| [硬件设备配置与 LLM 驱动设计](docs/zh-cn/hardware-device-config.md) | 里程碑设计：JSON 配置即用、device_control 工具、GPIO/PWM/ADC/蜂鸣器 |
-| [架构概要](docs/zh-cn/architecture.md)                              | 模块划分、数据流、扩展方式                                          |
+| [硬件设备配置](docs/zh-cn/hardware-device-config.md)                | `hardware.json` 与 `device_control`（GPIO/PWM/ADC/蜂鸣器）        |
+| [架构概要](docs/zh-cn/architecture.md)                              | 模块怎么划分的、数据怎么流转、怎么扩展                                          |
 
 ---
 
 ## 故障排除
 
-- **`spiffs partition could not be found`**：须使用项目自带分区表（见 [硬件与资源](docs/zh-cn/hardware.md)）。
-- **烧录/连接失败**：检查 USB 线/口；板子进入下载模式（按住 BOOT 短按 RESET）；指定 `ESPFLASH_PORT`。
-- **任务看门狗 / DNS 等**：见 [硬件与资源 - 已知问题与排错](docs/zh-cn/hardware.md#已知问题与排错)。
+- **`spiffs partition could not be found`**：必须用项目自带的分区表（看 [硬件与资源](docs/zh-cn/hardware.md)）。
+- **烧录/连接失败**：检查 USB 线和接口；让板子进入下载模式（按住 BOOT 键再短按 RESET）；或者指定 `ESPFLASH_PORT`。
+- **任务看门狗 / DNS 等问题**：看 [硬件与资源 - 已知问题与排错](docs/zh-cn/hardware.md#已知问题与排错)。
 
 ---
 
@@ -274,4 +294,4 @@ cargo build --release
 - [Rust on ESP Book](https://docs.espressif.com/projects/rust-book/)
 - [esp-idf-svc](https://github.com/esp-rs/esp-idf-svc)
 
-本项目采用 **MIT OR Apache-2.0** 双许可，见 [LICENSE](LICENSE)。
+本项目采用 **MIT OR Apache-2.0** 双许可，详见 [LICENSE](LICENSE)。

@@ -4,6 +4,11 @@
 use crate::error::Result;
 use std::time::Duration;
 
+/// 与 ESP `esp_websocket_client` 默认 buffer 对齐；单帧应用层载荷上限为 [`MAX_WSS_SEND_PAYLOAD_BYTES`]。
+pub(crate) const DEFAULT_WSS_BUFFER_SIZE: usize = 4096;
+/// 应用层 `send_binary` 最大字节数（留出控制/对齐余量）。
+pub(crate) const MAX_WSS_SEND_PAYLOAD_BYTES: usize = DEFAULT_WSS_BUFFER_SIZE - 32;
+
 /// 单次收到的 WSS 事件。
 #[derive(Debug, Clone)]
 pub enum WssEvent {

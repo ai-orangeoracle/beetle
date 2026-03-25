@@ -15,9 +15,11 @@ const DEFAULT_MAX_TOKENS: u32 = 1024;
 
 /// OpenAI 兼容客户端；持 config 只读，HTTP 由 chat 时注入。
 pub struct OpenAiCompatibleClient {
-    api_base: String,
+    /// 预拼接 base + `/chat/completions`，避免每次请求分配。
+    chat_url: String,
+    /// `Authorization: Bearer …` 完整值；空密钥时为 `None`（不发送头）。
+    auth_bearer: Option<String>,
     model: String,
-    api_key: String,
     max_tokens: u32,
     stream: bool,
 }
@@ -52,10 +54,17 @@ impl OpenAiCompatibleClient {
         } else {
             source.api_url.trim_end_matches('/').to_string()
         };
+        let chat_url = format!("{}{}", api_base, CHAT_PATH);
+        let key = source.api_key.clone();
+        let auth_bearer = if key.is_empty() {
+            None
+        } else {
+            Some(format!("Bearer {}", key))
+        };
         Self {
-            api_base,
+            chat_url,
+            auth_bearer,
             model: source.model.clone(),
-            api_key: source.api_key.clone(),
             max_tokens: source.max_tokens.unwrap_or(DEFAULT_MAX_TOKENS),
             stream,
         }
@@ -219,14 +228,19 @@ impl LlmClient for OpenAiCompatibleClient {
             tools,
             self.stream,
         )?;
-        let url = format!("{}{}", self.api_base, CHAT_PATH);
         if self.stream {
             crate::llm::retry::with_retry(2, 500, TAG, http, |http| {
-                do_request_streaming(http, &url, &self.api_key, &body, None)
+                do_request_streaming(
+                    http,
+                    &self.chat_url,
+                    self.auth_bearer.as_deref(),
+                    &body,
+                    None,
+                )
             })
         } else {
             crate::llm::retry::with_retry(2, 500, TAG, http, |http| {
-                do_request(http, &url, &self.api_key, &body)
+                do_request(http, &self.chat_url, self.auth_bearer.as_deref(), &body)
             })
         }
     }
@@ -243,27 +257,31 @@ impl LlmClient for OpenAiCompatibleClient {
             return self.chat(http, system, messages, tools);
         }
         let body = build_request_body(&self.model, self.max_tokens, system, messages, tools, true)?;
-        let url = format!("{}{}", self.api_base, CHAT_PATH);
         // Cannot use retry wrapper with mutable on_progress, so do single attempt.
-        do_request_streaming(http, &url, &self.api_key, &body, Some(on_progress))
+        do_request_streaming(
+            http,
+            &self.chat_url,
+            self.auth_bearer.as_deref(),
+            &body,
+            Some(on_progress),
+        )
     }
 }
 
 fn do_request(
     http: &mut dyn LlmHttpClient,
     url: &str,
-    api_key: &str,
+    auth_bearer: Option<&str>,
     body: &[u8],
 ) -> Result<LlmResponse> {
     let mut cl_buf = [0u8; 20];
     let content_length = crate::util::usize_to_decimal_buf(&mut cl_buf, body.len());
-    let auth_value = format!("Bearer {}", api_key);
     let mut headers: Vec<(&str, &str)> = vec![
         ("Content-Type", "application/json"),
         ("Content-Length", content_length),
     ];
-    if !api_key.is_empty() {
-        headers.insert(0, ("Authorization", auth_value.as_str()));
+    if let Some(bearer) = auth_bearer {
+        headers.insert(0, ("Authorization", bearer));
     }
     let (status, resp_body) = http.do_post(url, &headers, body).map_err(|e| match e {
         Error::Http { status_code, .. } => Error::Http {
@@ -342,6 +360,39 @@ fn do_request(
 
 // ---------- SSE streaming ----------
 
+/// OpenAI Chat Completions 流式 chunk（借用 `event.data`，零拷贝字符串）。
+#[derive(Debug, Deserialize)]
+struct OpenAiStreamChunk<'a> {
+    #[serde(borrow, default)]
+    choices: Vec<OpenAiStreamChoice<'a>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenAiStreamChoice<'a> {
+    finish_reason: Option<&'a str>,
+    delta: Option<OpenAiStreamDelta<'a>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenAiStreamDelta<'a> {
+    content: Option<&'a str>,
+    #[serde(borrow, default)]
+    tool_calls: Option<Vec<OpenAiStreamToolCallDelta<'a>>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenAiStreamToolCallDelta<'a> {
+    index: Option<u64>,
+    id: Option<&'a str>,
+    function: Option<OpenAiStreamFunctionDelta<'a>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenAiStreamFunctionDelta<'a> {
+    name: Option<&'a str>,
+    arguments: Option<&'a str>,
+}
+
 /// OpenAI SSE 流式累加器：逐事件拼接 content / tool_calls。
 struct OpenAiStreamAccumulator {
     content: String,
@@ -365,34 +416,28 @@ impl OpenAiStreamAccumulator {
         }
     }
 
-    /// 处理单条 SSE data 的已解析 JSON chunk；返回 content_delta 供进度回调。
-    fn handle_value(&mut self, val: &serde_json::Value) -> Option<String> {
-        let mut delta_text: Option<String> = None;
+    /// 处理单条 SSE data 的已解析 JSON chunk；返回 content_delta 借用供进度回调（零分配）。
+    fn handle_chunk<'a>(&mut self, chunk: &OpenAiStreamChunk<'a>) -> Option<&'a str> {
+        let mut delta_text: Option<&'a str> = None;
 
-        let choices = val.get("choices").and_then(|v| v.as_array())?;
-
-        for choice in choices {
-            // finish_reason
-            if let Some(fr) = choice.get("finish_reason").and_then(|v| v.as_str()) {
+        for choice in &chunk.choices {
+            if let Some(fr) = choice.finish_reason {
                 self.stop_reason = finish_reason_to_stop_reason(Some(fr));
             }
 
-            let delta = match choice.get("delta") {
+            let delta = match &choice.delta {
                 Some(d) => d,
                 None => continue,
             };
 
-            // delta.content
-            if let Some(text) = delta.get("content").and_then(|v| v.as_str()) {
+            if let Some(text) = delta.content {
                 self.content.push_str(text);
-                delta_text = Some(text.to_string());
+                delta_text = Some(text);
             }
 
-            // delta.tool_calls
-            if let Some(tc_arr) = delta.get("tool_calls").and_then(|v| v.as_array()) {
+            if let Some(ref tc_arr) = delta.tool_calls {
                 for tc in tc_arr {
-                    let index = tc.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-                    // Guard against malicious index values that could cause OOM.
+                    let index = tc.index.unwrap_or(0) as usize;
                     const MAX_TOOL_CALL_INDEX: usize = 128;
                     if index > MAX_TOOL_CALL_INDEX {
                         log::warn!(
@@ -402,7 +447,6 @@ impl OpenAiStreamAccumulator {
                         );
                         continue;
                     }
-                    // 确保 tool_calls vec 足够长。
                     while self.tool_calls.len() <= index {
                         self.tool_calls.push(OpenAiToolCallBuilder {
                             id: String::new(),
@@ -411,14 +455,14 @@ impl OpenAiStreamAccumulator {
                         });
                     }
                     let builder = &mut self.tool_calls[index];
-                    if let Some(id) = tc.get("id").and_then(|v| v.as_str()) {
+                    if let Some(id) = tc.id {
                         builder.id = id.to_string();
                     }
-                    if let Some(func) = tc.get("function") {
-                        if let Some(name) = func.get("name").and_then(|v| v.as_str()) {
+                    if let Some(ref func) = tc.function {
+                        if let Some(name) = func.name {
                             builder.name.push_str(name);
                         }
-                        if let Some(args) = func.get("arguments").and_then(|v| v.as_str()) {
+                        if let Some(args) = func.arguments {
                             builder.arguments.push_str(args);
                         }
                     }
@@ -458,19 +502,18 @@ impl OpenAiStreamAccumulator {
 fn do_request_streaming(
     http: &mut dyn LlmHttpClient,
     url: &str,
-    api_key: &str,
+    auth_bearer: Option<&str>,
     body: &[u8],
     on_progress: Option<crate::llm::StreamProgressFn>,
 ) -> Result<LlmResponse> {
     let mut cl_buf = [0u8; 20];
     let content_length = crate::util::usize_to_decimal_buf(&mut cl_buf, body.len());
-    let auth_value = format!("Bearer {}", api_key);
     let mut headers: Vec<(&str, &str)> = vec![
         ("Content-Type", "application/json"),
         ("Content-Length", content_length),
     ];
-    if !api_key.is_empty() {
-        headers.insert(0, ("Authorization", auth_value.as_str()));
+    if let Some(bearer) = auth_bearer {
+        headers.insert(0, ("Authorization", bearer));
     }
 
     let mut accumulator = OpenAiStreamAccumulator::new();
@@ -484,13 +527,13 @@ fn do_request_streaming(
                 if event.data == "[DONE]" {
                     continue;
                 }
-                let parsed = match serde_json::from_str::<serde_json::Value>(&event.data) {
+                let parsed = match serde_json::from_str::<OpenAiStreamChunk>(&event.data) {
                     Ok(v) => v,
                     Err(_) => continue,
                 };
-                let delta_text = accumulator.handle_value(&parsed);
+                let delta_text = accumulator.handle_chunk(&parsed);
 
-                if let (Some(ref delta), Some(ref mut cb)) = (&delta_text, &mut progress_cb) {
+                if let (Some(delta), Some(ref mut cb)) = (delta_text, &mut progress_cb) {
                     cb(delta, &accumulator.content);
                 }
             }

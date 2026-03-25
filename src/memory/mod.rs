@@ -98,9 +98,7 @@ impl EmotionSignalStore for MemoryEmotionSignalStore {
         self.0
             .lock()
             .map_err(|e| crate::error::Error::Other {
-                source: Box::new(std::io::Error::other(
-                    e.to_string(),
-                )),
+                source: Box::new(std::io::Error::other(e.to_string())),
                 stage: "emotion_signal_set",
             })?
             .insert(chat_id.to_string(), signal.to_string());
@@ -112,9 +110,7 @@ impl EmotionSignalStore for MemoryEmotionSignalStore {
             .0
             .lock()
             .map_err(|e: std::sync::PoisonError<_>| crate::error::Error::Other {
-                source: Box::new(std::io::Error::other(
-                    e.to_string(),
-                )),
+                source: Box::new(std::io::Error::other(e.to_string())),
                 stage: "emotion_signal_get",
             })?
             .remove(chat_id))
@@ -202,15 +198,13 @@ pub fn build_system_prompt(
         if note.len() <= remaining {
             out.push_str(note);
         } else {
-            let mut n = String::new();
-            for c in note.chars() {
-                if n.len() + c.len_utf8() <= remaining {
-                    n.push(c);
-                } else {
-                    break;
-                }
+            let mut end = remaining;
+            while end > 0 && !note.is_char_boundary(end) {
+                end -= 1;
             }
-            out.push_str(&n);
+            if end > 0 {
+                out.push_str(&note[..end]);
+            }
             break;
         }
     }

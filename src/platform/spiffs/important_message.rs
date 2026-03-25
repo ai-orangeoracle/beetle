@@ -6,12 +6,10 @@ use crate::memory::{ImportantMessageStore, REL_PATH_IMPORTANT_MESSAGE};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-use super::{read_file, write_file, SPIFFS_BASE};
+use super::{read_file, state_path_join, write_file};
 
 fn full_path() -> PathBuf {
-    let mut p = PathBuf::from(SPIFFS_BASE);
-    p.push(REL_PATH_IMPORTANT_MESSAGE);
-    p
+    state_path_join(REL_PATH_IMPORTANT_MESSAGE)
 }
 
 /// 无状态；单文件。

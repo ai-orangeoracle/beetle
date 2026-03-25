@@ -7,7 +7,7 @@ use crate::memory::{TaskContinuationStore, REL_PATH_TASK_CONTINUATION};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-use super::{read_file, write_file, SPIFFS_BASE};
+use super::{read_file, state_path_join, write_file};
 
 #[derive(Serialize, Deserialize)]
 struct TaskContinuationState {
@@ -17,9 +17,7 @@ struct TaskContinuationState {
 }
 
 fn full_path() -> PathBuf {
-    let mut p = PathBuf::from(SPIFFS_BASE);
-    p.push(REL_PATH_TASK_CONTINUATION);
-    p
+    state_path_join(REL_PATH_TASK_CONTINUATION)
 }
 
 fn truncate_output_to_max(s: &str, max_bytes: usize) -> String {

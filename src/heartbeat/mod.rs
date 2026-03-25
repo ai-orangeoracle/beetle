@@ -1,7 +1,7 @@
 //! 周期打日志（版本、运行时长、可选 heap），供外部监控存活；可读 HEARTBEAT.md 待办并注入入站。
 //! Heartbeat: periodic log (version, uptime, optional heap) for liveness monitoring.
 
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 const TAG: &str = "heartbeat";
@@ -57,6 +57,8 @@ pub fn run_heartbeat_loop(version: &'static str, interval_secs: u64) {
 
 /// 周期打日志并在有待办时向 inbound 注入一条 PcMsg；同一待办 30s 内不重复注入。
 /// 同时更新 orchestrator 的队列深度快照。定期执行会话 GC。
+/// 会话/存储相关指标中的存储用量来自注入的 [`crate::platform::Platform`]（`spiffs_usage`），不直引 `platform::spiffs`。
+#[allow(clippy::too_many_arguments)]
 pub fn run_heartbeat_loop_with_tasks(
     version: &'static str,
     interval_secs: u64,
@@ -65,6 +67,7 @@ pub fn run_heartbeat_loop_with_tasks(
     inbound_depth: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     outbound_depth: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     session_store: std::sync::Arc<dyn crate::memory::SessionStore + Send + Sync>,
+    platform: Arc<dyn crate::platform::Platform>,
 ) {
     let interval = Duration::from_secs(interval_secs);
     crate::util::spawn_guarded("heartbeat_tasks", move || {
@@ -88,7 +91,7 @@ pub fn run_heartbeat_loop_with_tasks(
                     .list_chat_ids()
                     .map(|v| v.len() as u32)
                     .unwrap_or(0);
-                let (s_used, s_total) = storage_usage_kb();
+                let (s_used, s_total) = storage_usage_kb(platform.as_ref());
                 crate::orchestrator::update_session_storage(sess_count, s_used, s_total);
             }
 
@@ -153,17 +156,10 @@ pub fn run_heartbeat_loop_with_tasks(
     );
 }
 
-/// 存储用量（KB）。ESP32 读 SPIFFS，host 返回 (0, 0)。
-/// Storage usage in KB. ESP32 reads SPIFFS, host returns (0, 0).
-#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
-fn storage_usage_kb() -> (u32, u32) {
-    match crate::platform::spiffs_usage() {
+/// 存储用量（KB）。经 [`crate::platform::Platform::spiffs_usage`]；无数据时为 (0, 0)。
+fn storage_usage_kb(platform: &dyn crate::platform::Platform) -> (u32, u32) {
+    match platform.spiffs_usage() {
         Some((total, used)) => ((used / 1024) as u32, (total / 1024) as u32),
         None => (0, 0),
     }
-}
-
-#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
-fn storage_usage_kb() -> (u32, u32) {
-    (0, 0)
 }

@@ -25,7 +25,7 @@ struct HealthBody {
 
 /// 生成 health JSON body（含 metrics 与 resource 快照，无敏感信息）。
 pub fn body(ctx: &HandlerContext) -> Result<String, std::io::Error> {
-    let wifi = if ctx.wifi_connected {
+    let wifi = if crate::platform::is_wifi_sta_connected() {
         "connected"
     } else {
         "disconnected"

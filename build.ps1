@@ -1,4 +1,5 @@
 # One-shot: env check, install espup/ldproxy/toolchain, then release build.
+# ESP firmware: this script injects default --target for release; do not rely on repo .cargo default target.
 # Usage: .\build.ps1  or  .\build.ps1 --target xtensa-esp32s3-espidf
 #        .\build.ps1 clean           清理项目根与短路径 D:\pc_b 的 target（路径过长时只需跑一次）
 #        .\build.ps1 --flash        构建后烧录（会提示 y/N 是否先整片擦除；未设端口则扫描串口交互选择）
@@ -416,15 +417,11 @@ if (-not (Get-Command ldproxy -ErrorAction SilentlyContinue)) {
   }
 }
 
-# 构建参数：指定了 BOARD 或 --flash 时用解析出的 target/features，否则沿用原参数
-$releaseArgs = if ($env:BOARD -or $doFlash) {
-  $ra = @()
-  if ($buildArgs -notcontains "--target") { $ra += "--target", $buildTarget }
-  if ($buildFeatures) { $ra += $buildFeatures }
-  $ra + $buildArgs
-} else {
-  $args
-}
+# 构建参数：release 始终在未传 --target 时注入默认 ESP triple（与 build.sh 一致）
+$releaseArgs = @()
+if ($buildArgs -notcontains "--target") { $releaseArgs += "--target", $buildTarget }
+if ($buildFeatures) { $releaseArgs += $buildFeatures }
+$releaseArgs += $buildArgs
 
 # Windows: run cargo in a cmd that has run vcvars64 (so LIB/kernel32.lib is set). Requires VS with "Desktop dev with C++" and Windows 10/11 SDK. If LNK1181 persists, run build.cmd from "x64 Native Tools Command Prompt for VS".
 if ($env:OS -eq "Windows_NT") {

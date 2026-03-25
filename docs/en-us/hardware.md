@@ -1,8 +1,8 @@
 # Hardware and resources
 
-**English** | [中文](../zh-cn/hardware.md)
+**English** | [中文](../zh-cn/hardware.md) | [Doc index](../README.md)
 
-This doc is for **users and developers** doing board selection or troubleshooting: supported boards, memory and build options, observability, and where to find configurable hardware (GPIO/PWM/ADC/buzzer) documentation.
+For **board selection and troubleshooting**: supported boards, memory and build options, where to observe runtime health, and pointers to configurable hardware docs (`hardware.json` details are not duplicated here).
 
 ---
 
@@ -37,16 +37,15 @@ This doc is for **users and developers** doing board selection or troubleshootin
 
 ## Observability
 
-- **Heartbeat**: Periodically logs internal heap / PSRAM / total free heap for trend observation.
-- **CLI** (feature `cli`): On serial you can run `heap_info` to see Internal free, PSRAM free, Total free.
-
-Logs or CLI let you confirm memory usage is within expectations.
+- **HTTP**: `GET /api/health` and `GET /api/resource` are documented in [config-api](config-api.md) (orchestrator-aligned snapshots).
+- **Logs**: Heartbeat emits periodic baselines for trends.
+- **CLI** (feature `cli`): Serial `heap_info` and related commands for heap/PSRAM summaries.
 
 ---
 
 ## Configurable hardware devices
 
-GPIO output/input, PWM, ADC, buzzer, etc. can be configured via `config/hardware.json` and used by the LLM through the `device_control` tool. See [Hardware device config & LLM-driven control](hardware-device-config.md) for the design; [Config API – GET/POST /api/config/hardware](config-api.md) for usage and validation.
+See [Hardware device config](hardware-device-config.md) (design constraints) and [config-api /api/config/hardware](config-api.md) (HTTP contract). The Agent tool name is **`device_control`** (registration rules in [tools](tools.md)).
 
 ---
 

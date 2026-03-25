@@ -113,7 +113,11 @@ impl Tool for RemindListTool {
             )
         })?;
         let obj = parse_tool_args(args, "remind_list")?;
-        let limit = obj.get("limit").and_then(Value::as_u64).unwrap_or(10).clamp(1, 20) as usize;
+        let limit = obj
+            .get("limit")
+            .and_then(Value::as_u64)
+            .unwrap_or(10)
+            .clamp(1, 20) as usize;
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())

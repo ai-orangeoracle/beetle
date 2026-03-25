@@ -1,8 +1,10 @@
 //! HTTP 服务器公共常量与辅助函数，与架构无关。
 
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 use embedded_io::Read;
 use std::fmt::Debug;
 
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 pub const MAX_OPEN_SOCKETS: usize = 4;
 pub const POST_BODY_MAX_LEN: usize = 4096;
 pub const RESTART_COOLDOWN_SECS: u64 = 60;
@@ -25,7 +27,7 @@ pub const CORS_OPTIONS_HEADERS: &[(&str, &str)] = &[
     ("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS"),
     (
         "Access-Control-Allow-Headers",
-        "Content-Type, X-Pairing-Code",
+        "Content-Type, X-Pairing-Code, X-CSRF-Token, x-csrf-token",
     ),
     ("Content-Type", "text/plain; charset=utf-8"),
     ("Content-Length", "1"),
@@ -48,17 +50,21 @@ pub const REDIRECT_PAIRING_HEADERS: &[(&str, &str)] = &[
 
 /// 读 body 时的错误：读失败或非 UTF-8。
 #[derive(Debug)]
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 pub enum BodyReadError {
     ReadFailed,
     InvalidUtf8,
 }
 
 /// 无 Content-Length 时首次分配大小，避免小 POST 也占满 4KB。
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 const BODY_READ_CHUNK_INITIAL: usize = 1024;
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 const BODY_READ_CHUNK_SIZE: usize = 512;
 
 /// 从请求体读取 UTF-8 字符串，上限 max_len。有 content_len 时单次分配；无时按块读取，减少小 body 的分配。
 /// 使用 embedded_io::Read，与 ESP 的 Request 实现一致。
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 pub fn read_body_utf8_impl<R: Read>(
     r: &mut R,
     content_len: Option<u64>,
@@ -134,10 +140,7 @@ pub fn restart_requested_from_uri(uri: &str) -> bool {
     let query = uri.find('?').map(|i| &uri[i + 1..]).unwrap_or("");
     for pair in query.split('&') {
         let mut it = pair.splitn(2, '=');
-        if it
-            .next()
-            .is_some_and(|k| k.eq_ignore_ascii_case("restart"))
-        {
+        if it.next().is_some_and(|k| k.eq_ignore_ascii_case("restart")) {
             return it.next().is_some_and(|v| v.trim() == "1");
         }
     }
@@ -193,6 +196,7 @@ pub fn to_io<E: Debug>(e: E) -> std::io::Error {
 }
 
 /// Handler 闭包返回类型。
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 pub type HandlerResult = std::result::Result<(), std::io::Error>;
 
 /// POST 类 handler 统一响应：status + body，由 mod 写入。

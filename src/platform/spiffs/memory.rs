@@ -8,12 +8,10 @@ use crate::memory::{
 };
 use std::path::PathBuf;
 
-use super::{list_dir, read_file, write_file, SPIFFS_BASE};
+use super::{list_dir, read_file, state_path_join, write_file};
 
 fn full_path(rel: &str) -> PathBuf {
-    let mut p = PathBuf::from(SPIFFS_BASE);
-    p.push(rel);
-    p
+    state_path_join(rel)
 }
 
 /// MemoryStore 的 SPIFFS 实现。
@@ -102,8 +100,7 @@ impl MemoryStore for SpiffsMemoryStore {
     }
 
     fn get_daily_note(&self, name: &str) -> Result<String> {
-        let mut p = PathBuf::from(SPIFFS_BASE);
-        p.push(REL_PATH_DAILY_DIR);
+        let mut p = state_path_join(REL_PATH_DAILY_DIR);
         p.push(name);
         let buf = read_file(&p)?;
         Ok(String::from_utf8_lossy(&buf).into_owned())
@@ -120,8 +117,7 @@ impl MemoryStore for SpiffsMemoryStore {
                 ),
             ));
         }
-        let mut p = PathBuf::from(SPIFFS_BASE);
-        p.push(REL_PATH_DAILY_DIR);
+        let mut p = state_path_join(REL_PATH_DAILY_DIR);
         p.push(name);
         write_file(&p, content.as_bytes())
     }
