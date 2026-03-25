@@ -6,7 +6,8 @@ use crate::bus::{InboundTx, OutboundTx, PcMsg, MAX_CONTENT_LEN};
 use crate::constants::{
     AGENT_MARKER_MARK_IMPORTANT, AGENT_MARKER_SIGNAL_COMFORT, AGENT_MARKER_STOP,
     AGENT_RETRY_BASE_MS, AGENT_RETRY_MAX_MS, INBOUND_RECV_TIMEOUT_SECS, MAX_DEFER_RETRIES,
-    MAX_TOOL_RESULTS_USER_MESSAGE_LEN, TASK_CONTINUATION_CONTINUE_THRESHOLD_LEN,
+    MAX_TOOL_RESULTS_USER_MESSAGE_LEN, SESSION_SUMMARY_MAX_LEN,
+    TASK_CONTINUATION_CONTINUE_THRESHOLD_LEN,
 };
 use crate::error::Result;
 use crate::llm::{LlmClient, LlmHttpClient, Message, StopReason, ToolSpec};
@@ -44,6 +45,9 @@ const TOOL_RESULT_PREVIEW_CHARS: usize = 80;
 /// 路由用短 system；回复约定：REPLY: <内容> 或 WORKER。
 const ROUTER_SYSTEM: &str =
     "You are a router. Reply with exactly one line: either 'REPLY: <your direct reply>' or 'WORKER'.";
+
+/// 程序性会话摘要：单次轻量 LLM 调用的 system 提示。
+const SUMMARY_SYSTEM: &str = "You are a conversation summarizer. Compress the following conversation into a concise summary (max 800 chars) preserving key facts, user preferences and pending tasks. Reply with the summary only.";
 
 /// 低内存时发给用户的固定人话（出站），并重新入队当前消息。
 const LOW_MEMORY_USER_MESSAGE: &str = "设备内存紧张，请稍后再试。";
@@ -196,6 +200,68 @@ impl<H: PlatformHttpClient> ToolContext for AgentToolCtx<'_, H> {
     }
     fn current_channel(&self) -> Option<&str> {
         Some(&self.channel)
+    }
+}
+
+/// 程序性触发：用最近会话生成摘要并 `set_with_count`。LLM 失败时确定性回退，仍落盘。
+fn generate_session_summary<H: PlatformHttpClient>(
+    http: &mut H,
+    llm: &dyn LlmClient,
+    config: &AgentLoopConfig<'_>,
+    chat_id: &str,
+    current_count: usize,
+) -> Result<()> {
+    use std::fmt::Write;
+
+    let recent = config.session_store.load_recent(chat_id, 20)?;
+    let mut transcript = String::with_capacity(2048);
+    for m in &recent {
+        let preview = truncate_content_to_max(&m.content, 200);
+        let _ = writeln!(
+            transcript,
+            "{}: {}",
+            m.role.to_uppercase(),
+            preview.as_ref()
+        );
+    }
+    let user_msg = Message {
+        role: "user".to_string(),
+        content: transcript,
+    };
+    let messages = [user_msg];
+    let mut ctx = AgentToolCtx {
+        http,
+        chat_id: Arc::from(chat_id),
+        channel: Arc::from("system"),
+    };
+    match llm.chat(&mut ctx, SUMMARY_SYSTEM, &messages, None) {
+        Ok(resp) => {
+            let summary =
+                truncate_content_to_max(&resp.content, SESSION_SUMMARY_MAX_LEN).into_owned();
+            config
+                .session_summary_store
+                .set_with_count(chat_id, &summary, current_count)?;
+            Ok(())
+        }
+        Err(e) => {
+            log::warn!(
+                "[agent_summary] LLM summary failed for chat_id={}: {}",
+                chat_id,
+                e
+            );
+            let fallback: String = recent
+                .iter()
+                .rev()
+                .take(5)
+                .map(|m| truncate_content_to_max(&m.content, 100).into_owned())
+                .collect::<Vec<_>>()
+                .join(" | ");
+            let summary = truncate_content_to_max(&fallback, SESSION_SUMMARY_MAX_LEN).into_owned();
+            config
+                .session_summary_store
+                .set_with_count(chat_id, &summary, current_count)?;
+            Ok(())
+        }
     }
 }
 
@@ -624,6 +690,28 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
             metrics::record_message_out();
             crate::platform::task_wdt::feed_current_task();
         }
+
+        // Programmatic session summary — reply already queued; extra LLM call runs after outbound.
+        {
+            let after_count = config
+                .session_store
+                .load_recent(&msg.chat_id, 128)
+                .map(|v| v.len())
+                .unwrap_or(0);
+            let last_summary_count = config
+                .session_summary_store
+                .get_with_count(&msg.chat_id)
+                .ok()
+                .flatten()
+                .map(|(_, c)| c)
+                .unwrap_or(0);
+            if after_count >= 20 && after_count.saturating_sub(last_summary_count) >= 10 {
+                match generate_session_summary(http, worker_llm, config, &msg.chat_id, after_count) {
+                    Ok(()) => log::info!("[agent_summary] updated for {}", msg.chat_id),
+                    Err(e) => log::warn!("[agent_summary] failed: {}", e),
+                }
+            }
+        }
     }
     Ok(())
 }
@@ -676,7 +764,6 @@ fn run_worker_path<H: PlatformHttpClient>(
         .ok()
         .flatten();
     let summary_text = summary_with_count.as_ref().map(|(s, _)| s.as_str());
-    let summary_last_count = summary_with_count.as_ref().map(|(_, c)| *c).unwrap_or(0);
     let budget = crate::orchestrator::current_budget();
     let (system, mut messages) = build_context(&super::ContextParams {
         msg,
@@ -692,7 +779,6 @@ fn run_worker_path<H: PlatformHttpClient>(
         system_continuation_suffix: suffix.as_deref(),
         emotion_signal_suffix,
         summary_text,
-        summary_last_count,
     })
     .map_err(|e| e.with_stage("agent_context"))?;
 

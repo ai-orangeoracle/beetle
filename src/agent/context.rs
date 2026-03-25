@@ -32,7 +32,6 @@ pub struct ContextParams<'a> {
     pub system_continuation_suffix: Option<&'a str>,
     pub emotion_signal_suffix: Option<&'a str>,
     pub summary_text: Option<&'a str>,
-    pub summary_last_count: usize,
 }
 
 /// 根据入站 PcMsg 与 store 构建 (system, messages)，供 LlmClient.chat 使用。
@@ -175,7 +174,6 @@ pub fn build_context(p: &ContextParams<'_>) -> Result<(String, Vec<Message>)> {
         .session
         .load_recent(&p.msg.chat_id, n)
         .unwrap_or_else(|_| vec![]);
-    let current_message_count = recent.len();
     let cap = recent.len() + if p.summary_text.is_some() { 2 } else { 1 };
     let mut messages: Vec<Message> = Vec::with_capacity(cap);
     if let Some(summary) = p.summary_text {
@@ -193,19 +191,6 @@ pub fn build_context(p: &ContextParams<'_>) -> Result<(String, Vec<Message>)> {
         content: p.msg.content.clone(),
     });
 
-    // Session maintenance: inject summary trigger when messages accumulate.
-    let needs_summary_update = current_message_count >= 20
-        && (p.summary_text.is_none()
-            || current_message_count.saturating_sub(p.summary_last_count) >= 10);
-    if needs_summary_update {
-        let maintenance_hint = format!(
-            "\n\n[SESSION MAINTENANCE] 当前会话已有 {} 条消息。请在回复用户后，调用 update_session_summary 工具将关键上下文压缩为摘要，以防止旧消息被截断丢失。",
-            current_message_count
-        );
-        if system.len().saturating_add(maintenance_hint.len()) <= p.system_max_len {
-            system.push_str(&maintenance_hint);
-        }
-    }
     let important_offset = p
         .important_message_store
         .get_important_offset(&p.msg.chat_id)
