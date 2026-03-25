@@ -1,4 +1,5 @@
 //! GET /api/system_info：供系统信息页展示用，返回 product_name、system_status、current_time、firmware_version、locale。
+//! `current_time`：Host 用系统时钟；ESP 在 SNTP 同步后由 `util::current_unix_secs()` 提供 UTC 字符串，未同步时返回 "—"。
 
 use super::HandlerContext;
 use crate::config;
@@ -6,32 +7,49 @@ use crate::platform::http_server::common::to_io;
 use crate::state;
 use std::sync::atomic::Ordering;
 
-fn current_time_str() -> String {
+/// SNTP 未同步时系统时间多在 1970 附近；低于此阈值不在 API 中冒充墙钟。
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+const MIN_TRUSTWORTHY_UNIX_SECS: u64 = 1577836800; // 2020-01-01 00:00:00 UTC
+
+fn current_unix_secs_wallclock() -> Option<u64> {
     #[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
     {
         use std::time::{SystemTime, UNIX_EPOCH};
-        let secs = match SystemTime::now().duration_since(UNIX_EPOCH) {
-            Ok(d) => d.as_secs(),
-            Err(_) => return "—".to_string(),
-        };
-        let t = secs % 86400;
-        let h = (t / 3600) as u32;
-        let m = (t % 3600 / 60) as u32;
-        let s = (t % 60) as u32;
-        let d = secs / 86400;
-        let (y, mo, day) = days_to_ymd(d);
-        format!(
-            "{:04}-{:02}-{:02} {:02}:{:02}:{:02} UTC",
-            y, mo, day, h, m, s
-        )
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .ok()
+            .map(|d| d.as_secs())
     }
     #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
     {
-        "—".to_string()
+        Some(crate::util::current_unix_secs())
     }
 }
 
-#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+fn format_unix_utc(secs: u64) -> String {
+    #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+    if secs < MIN_TRUSTWORTHY_UNIX_SECS {
+        return "—".to_string();
+    }
+    let t = secs % 86400;
+    let h = (t / 3600) as u32;
+    let m = (t % 3600 / 60) as u32;
+    let s = (t % 60) as u32;
+    let d = secs / 86400;
+    let (y, mo, day) = days_to_ymd(d);
+    format!(
+        "{:04}-{:02}-{:02} {:02}:{:02}:{:02} UTC",
+        y, mo, day, h, m, s
+    )
+}
+
+fn current_time_str() -> String {
+    match current_unix_secs_wallclock() {
+        Some(secs) => format_unix_utc(secs),
+        None => "—".to_string(),
+    }
+}
+
 fn days_to_ymd(days: u64) -> (u32, u32, u32) {
     let mut d = days;
     let mut y = 1970u32;

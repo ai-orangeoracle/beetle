@@ -41,3 +41,22 @@ export const MAIN_SURFACE_PCB_SX = {
     animation: "none",
   },
 } as const;
+
+/**
+ * 侧栏选中项丝印：用绝对定位子节点绘制（不用 ::before，避免与 MUI ButtonBase/ListItem 伪元素冲突）。
+ * 对比度刻意抬高，否则叠在主色浅底上几乎不可见。
+ */
+export function sidebarNavSelectedPcbOverlaySx() {
+  return {
+    backgroundImage: [
+      "repeating-linear-gradient(90deg, color-mix(in srgb, var(--foreground) 22%, transparent) 0, color-mix(in srgb, white 14%, var(--foreground) 18%, transparent) 0.8px, color-mix(in srgb, var(--foreground) 14%, transparent) 1.45px, transparent 2px, transparent 24px)",
+      "repeating-linear-gradient(0deg, color-mix(in srgb, var(--foreground) 22%, transparent) 0, color-mix(in srgb, white 14%, var(--foreground) 18%, transparent) 0.8px, color-mix(in srgb, var(--foreground) 14%, transparent) 1.45px, transparent 2px, transparent 24px)",
+      "radial-gradient(circle, color-mix(in srgb, var(--primary) 55%, transparent) 1.5px, transparent 2.4px)",
+      "radial-gradient(circle, color-mix(in srgb, var(--foreground) 18%, transparent) 0.7px, transparent 1.1px)",
+      "repeating-linear-gradient(135deg, color-mix(in srgb, var(--foreground) 14%, transparent) 0 1px, transparent 1px 32px)",
+    ].join(", "),
+    backgroundSize: "24px 24px, 24px 24px, 24px 24px, 12px 12px, 32px 32px",
+    backgroundPosition: "0 0, 0 0, 0 0, 6px 6px, 0 0",
+    backgroundRepeat: "repeat, repeat, repeat, repeat, repeat",
+  } as const;
+}

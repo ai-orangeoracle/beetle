@@ -22,6 +22,7 @@ import { SIDEBAR_WIDTH_EXPANDED } from "../config/layout";
 import { useDevice } from "../hooks/useDevice";
 import { useDeviceApi, type DeviceHintReason } from "../hooks/useDeviceApi";
 import { useToast } from "../hooks/useToast";
+import { sidebarNavSelectedPcbOverlaySx } from "../theme/pcbSurface";
 
 function getNavBlockedMessageKey(reason: DeviceHintReason): string {
   switch (reason) {
@@ -260,20 +261,41 @@ export function Sidebar({ drawer }: SidebarProps) {
                   pathname.startsWith("/soul-user/")
                 : pathname === path;
           const allowNav = canNavigate(path);
-          const navSelectedHardware = {
+          const navSelectedBaseGrad =
+            "linear-gradient(165deg, color-mix(in srgb, var(--primary) 9%, var(--surface)) 0%, color-mix(in srgb, var(--primary) 16%, var(--card)) 100%)";
+          const navSelectedHoverGrad =
+            "linear-gradient(165deg, color-mix(in srgb, var(--primary) 12%, var(--surface)) 0%, color-mix(in srgb, var(--primary) 22%, var(--card)) 100%)";
+          const navSelectedPcbShared = {
             borderRadius: 2,
             color: "var(--primary)",
+            position: "relative" as const,
+            overflow: "hidden" as const,
+            minHeight: 56,
             backgroundColor: "transparent",
-            backgroundImage:
-              "linear-gradient(165deg, color-mix(in srgb, var(--primary) 9%, var(--surface)) 0%, color-mix(in srgb, var(--primary) 16%, var(--card)) 100%)",
             border: "1px solid color-mix(in srgb, var(--primary) 26%, transparent)",
             boxShadow: [
-              "inset var(--accent-line-width) 0 0 color-mix(in srgb, var(--primary) 70%, #000)",
-              "inset calc(var(--accent-line-width) + 1px) 0 0 color-mix(in srgb, var(--primary) 20%, transparent)",
-              "inset 0 1px 0 color-mix(in srgb, var(--foreground) 11%, transparent)",
-              "inset 0 -1px 0 color-mix(in srgb, var(--foreground) 8%, transparent)",
+              "inset 0 1px 0 color-mix(in srgb, var(--foreground) 10%, transparent)",
+              "inset 0 -1px 0 color-mix(in srgb, var(--foreground) 7%, transparent)",
             ].join(", "),
-            "& .MuiListItemIcon-root": { color: "var(--primary)" },
+            "& .MuiListItemIcon-root": {
+              color: "var(--primary)",
+              position: "relative",
+              zIndex: 1,
+            },
+            "& .MuiListItemText-root": { position: "relative", zIndex: 1 },
+          };
+          const navSelectedHardware = {
+            ...navSelectedPcbShared,
+            backgroundImage: navSelectedBaseGrad,
+            backgroundSize: "100% 100%",
+            backgroundRepeat: "no-repeat",
+          };
+          const navSelectedHardwareHover = {
+            ...navSelectedPcbShared,
+            backgroundImage: navSelectedHoverGrad,
+            backgroundSize: "100% 100%",
+            backgroundRepeat: "no-repeat",
+            borderColor: "color-mix(in srgb, var(--primary) 36%, transparent)",
           };
           const listItemSx = {
             borderRadius: "var(--radius-control)",
@@ -282,13 +304,7 @@ export function Sidebar({ drawer }: SidebarProps) {
             ...(active && allowNav
               ? {
                   "&.Mui-selected": navSelectedHardware,
-                  "&.Mui-selected:hover": {
-                    ...navSelectedHardware,
-                    backgroundImage:
-                      "linear-gradient(165deg, color-mix(in srgb, var(--primary) 12%, var(--surface)) 0%, color-mix(in srgb, var(--primary) 22%, var(--card)) 100%)",
-                    borderColor:
-                      "color-mix(in srgb, var(--primary) 36%, transparent)",
-                  },
+                  "&.Mui-selected:hover": navSelectedHardwareHover,
                 }
               : {}),
             ...(!allowNav && {
@@ -332,6 +348,20 @@ export function Sidebar({ drawer }: SidebarProps) {
               onClick={handleNavClick}
               sx={listItemSx}
             >
+              {active && allowNav ? (
+                <Box
+                  aria-hidden
+                  sx={{
+                    position: "absolute",
+                    inset: 0,
+                    borderRadius: "inherit",
+                    zIndex: 0,
+                    pointerEvents: "none",
+                    overflow: "hidden",
+                    ...sidebarNavSelectedPcbOverlaySx(),
+                  }}
+                />
+              ) : null}
               <ListItemIcon
                 sx={{
                   minWidth: 40,
