@@ -107,6 +107,25 @@ pub fn build_context(p: &ContextParams<'_>) -> Result<(String, Vec<Message>)> {
             }
         }
     }
+    // Runtime context: current UTC time + platform (before group/structured sections).
+    let now_secs = crate::util::current_unix_secs();
+    if now_secs > 0 {
+        let (y, mo, d, h, mi, s_sec) = crate::util::epoch_to_ymdhms(now_secs);
+        let wd = crate::util::weekday_name(now_secs / 86400);
+        let platform = if cfg!(any(target_arch = "xtensa", target_arch = "riscv32")) {
+            "ESP32-S3"
+        } else {
+            "Linux"
+        };
+        let runtime_block = format!(
+            "\n\n## Runtime\n{:04}-{:02}-{:02} {} {:02}:{:02}:{:02} UTC | {}",
+            y, mo, d, wd, h, mi, s_sec, platform
+        );
+        let remain = p.system_max_len.saturating_sub(system.len());
+        if runtime_block.len() <= remain {
+            system.push_str(&runtime_block);
+        }
+    }
     if p.msg.is_group {
         let remain = p.system_max_len.saturating_sub(system.len());
         if remain > 64 {

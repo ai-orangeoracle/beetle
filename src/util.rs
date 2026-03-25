@@ -311,6 +311,74 @@ pub fn weekday_name(days_since_epoch: u64) -> &'static str {
 
 // ---------- 脱敏 ----------
 
+/// 脱敏工具输出中的凭证键值对。逐行扫描，对含敏感关键字的行将 value 部分替换为 `[REDACTED]` 前缀提示。
+/// 不引入 regex 依赖，适合嵌入式环境。
+/// Scrub credential-like key/value lines in tool output; no regex dependency for embedded builds.
+pub fn scrub_credentials(input: &str) -> String {
+    const SENSITIVE_KEYS: &[&str] = &[
+        "token",
+        "api_key",
+        "api-key",
+        "apikey",
+        "password",
+        "passwd",
+        "secret",
+        "bearer",
+        "credential",
+        "authorization",
+        "access_key",
+        "private_key",
+    ];
+    if input.is_empty() {
+        return String::new();
+    }
+    let mut out = String::with_capacity(input.len());
+    let mut first = true;
+    for line in input.split('\n') {
+        if !first {
+            out.push('\n');
+        }
+        first = false;
+        let lower = line.to_ascii_lowercase();
+        if SENSITIVE_KEYS.iter().any(|k| lower.contains(k)) {
+            out.push_str(&scrub_kv_line(line));
+        } else {
+            out.push_str(line);
+        }
+    }
+    out
+}
+
+fn scrub_kv_line(line: &str) -> String {
+    let bytes = line.as_bytes();
+    let mut sep = None;
+    for (i, &b) in bytes.iter().enumerate() {
+        if b == b':' && bytes.get(i + 1) == Some(&b'/') {
+            continue; // skip "://" (URL scheme)
+        }
+        if b == b'=' || b == b':' {
+            sep = Some(i);
+            break;
+        }
+    }
+    match sep {
+        Some(pos) => {
+            let (key_part, val_part) = line.split_at(pos + 1);
+            let val = val_part.trim().trim_matches('"').trim_matches('\'');
+            if val.len() >= 8 {
+                let mut prefix_end = val.len().min(4);
+                while prefix_end > 0 && !val.is_char_boundary(prefix_end) {
+                    prefix_end -= 1;
+                }
+                format!("{} {}…[REDACTED]", key_part, &val[..prefix_end])
+            } else {
+                line.to_string()
+            }
+        }
+        None => line.to_string(),
+    }
+}
+
 /// 常量时间比较，避免 token 时序侧信道。
 /// Constant-time string comparison to prevent timing side-channel attacks.
 pub fn constant_time_eq(a: &str, b: &str) -> bool {
@@ -497,6 +565,61 @@ where
             }
         })
         .ok();
+}
+
+#[cfg(test)]
+mod scrub_credentials_tests {
+    use super::*;
+
+    #[test]
+    fn scrub_api_key() {
+        let s = scrub_credentials("api_key: sk-1234abcdef");
+        assert!(s.contains("[REDACTED]") && s.contains("sk-1"));
+    }
+
+    #[test]
+    fn scrub_json_token() {
+        let s = scrub_credentials(r#"{"token": "eyJhbGciOiJ..."}"#);
+        assert!(s.contains("[REDACTED]"));
+    }
+
+    #[test]
+    fn no_scrub_normal() {
+        let s = scrub_credentials("result: 42 items found");
+        assert_eq!(s, "result: 42 items found");
+    }
+
+    #[test]
+    fn scrub_multibyte_val_no_panic() {
+        // Chinese chars (3 bytes each) as token value — must not panic on char boundary
+        let s = scrub_credentials("token: 你好世界长密钥abc");
+        assert!(s.contains("[REDACTED]"));
+    }
+
+    #[test]
+    fn scrub_multiline() {
+        let input = "result: ok\napi_key: sk-secret1234\nother: data";
+        let s = scrub_credentials(input);
+        assert!(s.contains("result: ok"));
+        assert!(s.contains("[REDACTED]"));
+        assert!(s.contains("other: data"));
+        let lines: Vec<&str> = s.lines().collect();
+        assert_eq!(lines.len(), 3);
+    }
+
+    #[test]
+    fn no_scrub_url_scheme() {
+        // "authorization" is a sensitive key, but ensure function doesn't crash on URL values
+        let s = scrub_credentials("authorization: Bearer eyJhbGci0iJIUzI1NiJ9");
+        assert!(s.contains("[REDACTED]"));
+    }
+
+    #[test]
+    fn no_scrub_short_value() {
+        // value shorter than 8 bytes: should NOT redact (likely not a real secret)
+        let s = scrub_credentials("token: abc");
+        assert!(!s.contains("[REDACTED]"));
+    }
 }
 
 #[cfg(test)]

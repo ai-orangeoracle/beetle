@@ -38,6 +38,9 @@ const TOOL_RESULTS_PREFIX: &str = "Tool results:\n";
 const REACT_FULL_ROUNDS_KEPT: usize = 2;
 const REACT_FULL_MSGS_KEPT: usize = REACT_FULL_ROUNDS_KEPT * 2;
 
+/// 早期轮次工具结果摘要：每条结果保留的首行预览字符数（UTF-8 安全截断）。
+const TOOL_RESULT_PREVIEW_CHARS: usize = 80;
+
 /// 路由用短 system；回复约定：REPLY: <内容> 或 WORKER。
 const ROUTER_SYSTEM: &str =
     "You are a router. Reply with exactly one line: either 'REPLY: <your direct reply>' or 'WORKER'.";
@@ -81,13 +84,13 @@ fn hash_tool_call(name: &str, args: &str) -> u64 {
     h.finish()
 }
 
-/// 将早期轮次的工具结果压缩为「每调用一行字节数」摘要，保留语义锚点、不丢轮次结构。
+/// 将早期轮次的工具结果压缩为「预览 + 总字节数」摘要，保留语义锚点、不丢轮次结构。
 fn summarize_tool_results(content: &str) -> String {
     use std::fmt::Write;
 
     let body = content.strip_prefix(TOOL_RESULTS_PREFIX).unwrap_or(content);
     let lines: Vec<&str> = body.lines().collect();
-    let mut out = String::with_capacity(256);
+    let mut out = String::with_capacity(512);
     out.push_str("Tool results (prior round):\n");
     let mut i = 0usize;
     let mut wrote_any = false;
@@ -95,17 +98,30 @@ fn summarize_tool_results(content: &str) -> String {
         let line = lines[i];
         if let Some(idx) = line.find("]: ") {
             let id_part = &line[..idx + 3];
-            let mut val_len = line[idx + 3..].len();
+            let first_val = &line[idx + 3..];
+            let mut extra_bytes = 0usize;
             i += 1;
             while i < lines.len() {
                 let next = lines[i];
                 if next.contains("]: ") && next.starts_with('[') {
                     break;
                 }
-                val_len = val_len.saturating_add(1).saturating_add(next.len());
+                extra_bytes = extra_bytes.saturating_add(1).saturating_add(next.len());
                 i += 1;
             }
-            let _ = writeln!(out, "{}[{} bytes]", id_part, val_len);
+            let total_bytes = first_val.len().saturating_add(extra_bytes);
+            let preview = if first_val.len() > TOOL_RESULT_PREVIEW_CHARS {
+                let mut end = TOOL_RESULT_PREVIEW_CHARS;
+                while end > 0 && !first_val.is_char_boundary(end) {
+                    end -= 1;
+                }
+                format!("{}…[{} bytes]", &first_val[..end], total_bytes)
+            } else if extra_bytes > 0 {
+                format!("{}…[{} bytes]", first_val, total_bytes)
+            } else {
+                first_val.to_string()
+            };
+            let _ = writeln!(out, "{}{}", id_part, preview);
             wrote_any = true;
         } else {
             i += 1;
@@ -879,7 +895,7 @@ fn run_worker_path<H: PlatformHttpClient>(
                             match registry.execute(&tc.name, &tc.input, &mut tool_ctx) {
                                 Ok(s) => {
                                     metrics::record_tool_call(true);
-                                    s
+                                    crate::util::scrub_credentials(&s)
                                 }
                                 Err(e) => {
                                     metrics::record_tool_call(false);
