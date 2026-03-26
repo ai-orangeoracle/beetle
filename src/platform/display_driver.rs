@@ -802,6 +802,12 @@ fn darken(c: Rgb565, amt: u8) -> Rgb565 {
     Rgb565::new(r, g, b)
 }
 
+/// Dim fill for beetle body/head glow halo on dark dashboard background.
+/// 深色底上的甲壳虫光晕填充色（高对比下的柔和外圈）。
+fn beetle_glow_fill(base: Rgb565) -> Rgb565 {
+    darken(base, 180)
+}
+
 /// Draw a beetle icon using embedded-graphics primitives.
 ///
 /// `x`, `y` is the top-left corner of the bounding box; `size` is the box side length.
@@ -926,6 +932,16 @@ fn draw_beetle<D: DrawTarget<Color = Rgb565>>(
         }
     }
 
+    // --- Body glow halo (dim ring behind filled body) ---
+    let glow_fill = PrimitiveStyle::with_fill(beetle_glow_fill(color));
+    let body_glow_r = body_r + 4;
+    let _ = Circle::new(
+        Point::new(cx - body_glow_r, body_cy - body_glow_r),
+        (body_glow_r * 2) as u32,
+    )
+    .into_styled(glow_fill)
+    .draw(target);
+
     // --- Body (large filled circle) ---
     let body_fill = PrimitiveStyle::with_fill(color);
     let _ = Circle::new(
@@ -960,6 +976,15 @@ fn draw_beetle<D: DrawTarget<Color = Rgb565>>(
                 .draw(target);
         }
     }
+
+    // --- Head glow halo ---
+    let head_glow_r = head_r + 3;
+    let _ = Circle::new(
+        Point::new(cx - head_glow_r, head_cy - head_glow_r),
+        (head_glow_r * 2) as u32,
+    )
+    .into_styled(PrimitiveStyle::with_fill(beetle_glow_fill(color)))
+    .draw(target);
 
     // --- Head (smaller filled circle, slightly darker) ---
     let head_color = darken(color, 20);
@@ -1118,6 +1143,73 @@ struct DashboardParams<'a> {
     error_flash: bool,
 }
 
+/// Title column strip: only covers the state title row (ends above `subtitle_top`).
+/// 标题区窄背景；不覆盖副标题行，与 `UpdateIp` 局部刷新兼容。
+fn draw_title_strip<D: DrawTarget<Color = Rgb565>>(
+    target: &mut D,
+    layout: &DisplayLayout,
+    width: u16,
+    fill: Rgb565,
+) {
+    let x = layout.title_left.saturating_sub(6) as i32;
+    let y = layout.title_top as i32;
+    let inner = layout.subtitle_top.saturating_sub(layout.title_top);
+    let h_strip = inner.saturating_sub(3).max(10) as u32;
+    let w_strip = (width as i32 - x).max(0) as u32;
+    if w_strip == 0 {
+        return;
+    }
+    let _ = Rectangle::new(Point::new(x, y), Size::new(w_strip, h_strip))
+        .into_styled(PrimitiveStyle::with_fill(fill))
+        .draw(target);
+}
+
+/// L-shaped brackets at four corners (8 short lines), inset from edges.
+/// 四角短线取景框。
+fn draw_corner_brackets<D: DrawTarget<Color = Rgb565>>(
+    target: &mut D,
+    width: u16,
+    height: u16,
+    color: Rgb565,
+) {
+    let w = width as i32;
+    let h = height as i32;
+    let dim_min = width.min(height) as i32;
+    let arm = (dim_min * 8 / 240).clamp(6, 14);
+    let m = 5;
+    let top_y = 5;
+    let bot_y = h - m;
+    let style = PrimitiveStyle::with_stroke(color, 1);
+
+    let _ = Line::new(Point::new(m, top_y), Point::new(m + arm, top_y))
+        .into_styled(style)
+        .draw(target);
+    let _ = Line::new(Point::new(m, top_y), Point::new(m, top_y + arm))
+        .into_styled(style)
+        .draw(target);
+
+    let _ = Line::new(Point::new(w - m - arm, top_y), Point::new(w - m, top_y))
+        .into_styled(style)
+        .draw(target);
+    let _ = Line::new(Point::new(w - m, top_y), Point::new(w - m, top_y + arm))
+        .into_styled(style)
+        .draw(target);
+
+    let _ = Line::new(Point::new(m, bot_y), Point::new(m + arm, bot_y))
+        .into_styled(style)
+        .draw(target);
+    let _ = Line::new(Point::new(m, bot_y - arm), Point::new(m, bot_y))
+        .into_styled(style)
+        .draw(target);
+
+    let _ = Line::new(Point::new(w - m - arm, bot_y), Point::new(w - m, bot_y))
+        .into_styled(style)
+        .draw(target);
+    let _ = Line::new(Point::new(w - m, bot_y - arm), Point::new(w - m, bot_y))
+        .into_styled(style)
+        .draw(target);
+}
+
 /// Render the full dashboard UI.
 fn render_dashboard<D: DrawTarget<Color = Rgb565>>(target: &mut D, p: &DashboardParams<'_>) {
     let layout = p.layout;
@@ -1128,14 +1220,33 @@ fn render_dashboard<D: DrawTarget<Color = Rgb565>>(target: &mut D, p: &Dashboard
         .into_styled(PrimitiveStyle::with_fill(bg_color))
         .draw(target);
 
-    // --- Beetle icon ---
+    // --- Beetle icon (state colors tuned for dark background) ---
     let beetle_color = match p.state {
-        DisplaySystemState::Booting => rgb565(0xdd, 0x99, 0x22),
-        DisplaySystemState::NoWifi => rgb565(0xaa, 0xaa, 0xaa),
-        DisplaySystemState::Idle => rgb565(0x22, 0xcc, 0x22),
-        DisplaySystemState::Busy => rgb565(0x44, 0x88, 0xee),
-        DisplaySystemState::Fault => rgb565(0xee, 0x33, 0x33),
+        DisplaySystemState::Booting => rgb565(0xff, 0xaa, 0x00),
+        DisplaySystemState::NoWifi => rgb565(0x88, 0x99, 0xbb),
+        DisplaySystemState::Idle => rgb565(0x00, 0xee, 0x66),
+        DisplaySystemState::Busy => rgb565(0x22, 0xaa, 0xff),
+        DisplaySystemState::Fault => rgb565(0xff, 0x33, 0x44),
     };
+
+    // --- Top accent stripe (state color) ---
+    let _ = Rectangle::new(Point::new(0, 0), Size::new(p.width as u32, 3))
+        .into_styled(PrimitiveStyle::with_fill(beetle_color))
+        .draw(target);
+
+    // --- Section dividers ---
+    let div_style = PrimitiveStyle::with_stroke(rgb565(0x22, 0x22, 0x38), 1);
+    let mid_div_y = layout.middle_top.saturating_sub(6) as i32;
+    let foot_div_y = layout.footer_top.saturating_sub(6) as i32;
+    let _ = Line::new(Point::new(0, mid_div_y), Point::new(p.width as i32, mid_div_y))
+        .into_styled(div_style)
+        .draw(target);
+    let _ = Line::new(Point::new(0, foot_div_y), Point::new(p.width as i32, foot_div_y))
+        .into_styled(div_style)
+        .draw(target);
+
+    draw_title_strip(target, layout, p.width, TITLE_STRIP_BG);
+
     let icon_size = layout.icon_size as i32;
     let opts = match p.state {
         DisplaySystemState::Busy => BeetleOpts {
@@ -1185,7 +1296,7 @@ fn render_dashboard<D: DrawTarget<Color = Rgb565>>(target: &mut D, p: &Dashboard
                 draw_top_arc(target, cx, sig_y, r, &arc_style);
             }
             // X mark over WiFi (signal crossed out)
-            let x_style = PrimitiveStyle::with_stroke(rgb565(0xcc, 0x22, 0x22), 2);
+            let x_style = PrimitiveStyle::with_stroke(rgb565(0xff, 0x44, 0x44), 2);
             let x_sz = 6i32;
             let _ = Line::new(
                 Point::new(cx - x_sz, sig_y - 13 - x_sz),
@@ -1248,7 +1359,7 @@ fn render_dashboard<D: DrawTarget<Color = Rgb565>>(target: &mut D, p: &Dashboard
     }
 
     // --- Title text: state name ---
-    let title_style = MonoTextStyle::new(&FONT_9X18_BOLD, rgb565(0x22, 0x22, 0x22));
+    let title_style = MonoTextStyle::new(&FONT_9X18_BOLD, beetle_color);
     let state_name = match p.state {
         DisplaySystemState::Booting => "BOOTING",
         DisplaySystemState::NoWifi => "NO WIFI",
@@ -1264,7 +1375,7 @@ fn render_dashboard<D: DrawTarget<Color = Rgb565>>(target: &mut D, p: &Dashboard
     .draw(target);
 
     // --- Subtitle: IP address (+ uptime for Idle/Busy) or version ---
-    let subtitle_style = MonoTextStyle::new(&FONT_6X13, rgb565(0x66, 0x66, 0x66));
+    let subtitle_style = MonoTextStyle::new(&FONT_6X13, rgb565(0x88, 0x99, 0xbb));
     if p.state == DisplaySystemState::Booting {
         let ip_text = p
             .ip_address
@@ -1304,10 +1415,22 @@ fn render_dashboard<D: DrawTarget<Color = Rgb565>>(target: &mut D, p: &Dashboard
         p.llm_last_ms,
         p.error_flash,
     );
+
+    draw_corner_brackets(target, p.width, p.height, CORNER_BRACKET_COLOR);
 }
 
-/// Dashboard background color (white).
-const DISPLAY_BG: Rgb565 = Rgb565::WHITE;
+/// Dashboard background color (dark navy, `rgb565(0x08, 0x08, 0x16)`).
+/// 仪表盘深色底。
+const DISPLAY_BG: Rgb565 = Rgb565::new(1, 2, 2);
+
+/// Slightly lifted panel behind the state title row (`rgb565(0x12, 0x12, 0x24)`).
+/// 标题区窄背景色。
+const TITLE_STRIP_BG: Rgb565 = Rgb565::new(2, 4, 4);
+
+/// Corner bracket stroke (`rgb565(0x33, 0x33, 0x50)`).
+/// 四角框线色。
+const CORNER_BRACKET_COLOR: Rgb565 = Rgb565::new(6, 12, 10);
+
 
 /// F3: 格式化副标题 "IP Up:XdYh" 或 "IP Up:XhYm"（栈上，无堆分配）。
 fn format_subtitle_with_uptime<'a>(ip: &'a str, secs: u64, buf: &'a mut [u8; 30]) -> &'a str {
@@ -1394,11 +1517,11 @@ fn render_channels_inner<D: DrawTarget<Color = Rgb565>>(
 ) {
     let middle_y = layout.middle_top as i32;
     let margin_x = layout.margin_x as i32;
-    let healthy_color = rgb565(0x22, 0xcc, 0x22);
-    let unhealthy_color = rgb565(0xcc, 0x22, 0x22);
-    let disabled_color = rgb565(0xbb, 0xbb, 0xbb);
-    let text_style = MonoTextStyle::new(&FONT_6X13, rgb565(0x33, 0x33, 0x33));
-    let disabled_text_style = MonoTextStyle::new(&FONT_6X13, rgb565(0x99, 0x99, 0x99));
+    let healthy_color = rgb565(0x00, 0xee, 0x66);
+    let unhealthy_color = rgb565(0xff, 0x33, 0x44);
+    let disabled_color = rgb565(0x44, 0x44, 0x55);
+    let text_style = MonoTextStyle::new(&FONT_6X13, rgb565(0xcc, 0xcc, 0xdd));
+    let disabled_text_style = MonoTextStyle::new(&FONT_6X13, rgb565(0x44, 0x44, 0x55));
     let fail_text_style = MonoTextStyle::new(&FONT_6X13, unhealthy_color);
 
     let col_width = width as i32 / 2;
@@ -1485,7 +1608,7 @@ fn render_ip_partial<D: DrawTarget<Color = Rgb565>>(
         .into_styled(PrimitiveStyle::with_fill(bg))
         .draw(target);
 
-    let subtitle_style = MonoTextStyle::new(&FONT_6X13, rgb565(0x66, 0x66, 0x66));
+    let subtitle_style = MonoTextStyle::new(&FONT_6X13, rgb565(0x88, 0x99, 0xbb));
     let _ = Text::new(ip, Point::new(x, y + 11), subtitle_style).draw(target);
 }
 
@@ -1578,9 +1701,9 @@ fn render_footer<D: DrawTarget<Color = Rgb565>>(
         DisplayPressureLevel::Critical => "CRITICAL",
     };
     let pressure_color = match level {
-        DisplayPressureLevel::Normal => rgb565(0x22, 0xcc, 0x22),
+        DisplayPressureLevel::Normal => rgb565(0x00, 0xee, 0x66),
         DisplayPressureLevel::Cautious => rgb565(0xdd, 0xaa, 0x00),
-        DisplayPressureLevel::Critical => rgb565(0xee, 0x33, 0x33),
+        DisplayPressureLevel::Critical => rgb565(0xff, 0x33, 0x44),
     };
 
     // F7: 错误闪烁 — error_flash=true 时反色渲染压力标签（彩色背景 + 白字）
@@ -1611,7 +1734,7 @@ fn render_footer<D: DrawTarget<Color = Rgb565>>(
     let bar_w = (width as i32 - 56).max(40) as u32;
     let bar_h = 12u32;
 
-    let bar_border = PrimitiveStyle::with_stroke(rgb565(0xaa, 0xaa, 0xaa), 1);
+    let bar_border = PrimitiveStyle::with_stroke(rgb565(0x33, 0x33, 0x44), 1);
     let _ = Rectangle::new(Point::new(bar_x, bar_y), Size::new(bar_w, bar_h))
         .into_styled(bar_border)
         .draw(target);
@@ -1626,7 +1749,7 @@ fn render_footer<D: DrawTarget<Color = Rgb565>>(
         .draw(target);
     }
 
-    let text_style = MonoTextStyle::new(&FONT_6X13, rgb565(0x33, 0x33, 0x33));
+    let text_style = MonoTextStyle::new(&FONT_6X13, rgb565(0xcc, 0xcc, 0xdd));
     let mut pct_buf = [0u8; 5];
     let pct_str = format_pct(heap_percent, &mut pct_buf);
     let _ = Text::new(
@@ -1638,7 +1761,7 @@ fn render_footer<D: DrawTarget<Color = Rgb565>>(
 
     // --- Message stats line: "In:NNN Out:NNN L:X.Xs HH:MM" (F6: 含 LLM 延迟) ---
     let stats_y = bar_y + bar_h as i32 + 14; // 2px gap + 12px bar + baseline offset
-    let dim_style = MonoTextStyle::new(&FONT_6X13, rgb565(0x88, 0x88, 0x88));
+    let dim_style = MonoTextStyle::new(&FONT_6X13, rgb565(0x66, 0x77, 0xaa));
     let mut stats_buf = [0u8; 40]; // F6: 扩大到 40 字节
     let stats_str = format_msg_stats(
         messages_in,
@@ -1675,9 +1798,9 @@ fn render_boot_progress<D: DrawTarget<Color = Rgb565>>(
     let seg_w = total_w / 4;
     let bar_h = 14u32;
 
-    let filled_color = rgb565(0x22, 0xcc, 0x22);
-    let empty_color = rgb565(0xdd, 0xdd, 0xdd);
-    let border_color = rgb565(0xaa, 0xaa, 0xaa);
+    let filled_color = rgb565(0x00, 0xee, 0x66);
+    let empty_color = rgb565(0x1a, 0x1a, 0x2c);
+    let border_color = rgb565(0x33, 0x33, 0x44);
 
     // 4 segments
     for i in 0..4u8 {
@@ -1693,7 +1816,7 @@ fn render_boot_progress<D: DrawTarget<Color = Rgb565>>(
 
     // Labels below bar
     let label_y = bar_y + bar_h as i32 + 12;
-    let label_style = MonoTextStyle::new(&FONT_6X13, rgb565(0x66, 0x66, 0x66));
+    let label_style = MonoTextStyle::new(&FONT_6X13, rgb565(0x88, 0x99, 0xbb));
     let labels = ["WiFi", "SNTP", "Chan", "Agent"];
     for (i, lbl) in labels.iter().enumerate() {
         let lx = bar_x + i as i32 * seg_w + (seg_w - lbl.len() as i32 * 6) / 2;

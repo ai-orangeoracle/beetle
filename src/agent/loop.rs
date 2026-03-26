@@ -478,6 +478,11 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
                 continue;
             }
         }
+        // 准入通过：标记 agent 任务开始。Guard Drop 时自动递减，覆盖整个任务生命周期（含工具调用、会话写入、回复发送）。
+        // Admission passed: mark agent task in-flight for the display busy indicator.
+        // The guard auto-decrements on drop, covering the full task lifetime.
+        let _agent_task_guard = crate::orchestrator::begin_agent_task();
+
         if let Some(ref mut f) = typing_notifier {
             f(&msg.channel, &msg.chat_id, http);
         }

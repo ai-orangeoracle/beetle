@@ -361,6 +361,51 @@ select_flash_mode() {
 valid_flash_port() {
   [[ -n "$1" ]] && [[ "$1" =~ ^/dev/[a-zA-Z0-9/_.-]+$ ]] && [[ "$1" != *".."* ]]
 }
+
+# macOS/Linux: show who holds the serial device (common cause of espflash "Failed to open serial port").
+warn_serial_port_busy() {
+  local p="$1"
+  if [[ -z "$p" ]]; then
+    return 0
+  fi
+  if [[ ! -e "$p" ]]; then
+    echo -e "${YELLOW}  Serial device not found: $p (cable unplugged or USB re-enumerated — replug and pick port again).${NC}" >&2
+    return 0
+  fi
+  command -v lsof &>/dev/null || {
+    echo "  (Install lsof to see which process holds the serial port.)" >&2
+    return 0
+  }
+  local devs=("$p")
+  if [[ "$(uname -s)" = "Darwin" ]] && [[ "$p" == /dev/cu.* ]]; then
+    devs+=("${p/\/dev\/cu./\/dev\/tty.}")
+  fi
+  local found=0
+  for d in "${devs[@]}"; do
+    [[ -e "$d" ]] || continue
+    local out
+    out=$(lsof "$d" 2>/dev/null || true)
+    if [[ -n "$out" ]]; then
+      echo -e "${YELLOW}  Another process is using $d — quit it, then flash again:${NC}" >&2
+      echo "$out" >&2
+      found=1
+    fi
+  done
+  if [[ $found -eq 0 ]]; then
+    echo "  lsof: no process holds $p (or tty sibling)." >&2
+  fi
+}
+
+print_flash_open_port_hints() {
+  echo "" >&2
+  echo -e "${RED}Flash / serial open failed.${NC}" >&2
+  echo "  Common fixes:" >&2
+  echo "    1) Hold BOOT, tap RESET, run ./build.sh --flash again within a few seconds (ROM download mode)." >&2
+  echo "    2) Quit anything using the port: Serial Monitor, screen/minicom, another IDE, \`idf.py monitor\`." >&2
+  echo "    3) macOS: try direct USB (no hub); unplug/replug; or \`ESPFLASH_PORT=/dev/cu.… ./build.sh --flash\`." >&2
+  echo "    4) If you use conda base, try: \`conda deactivate\` then flash (rare toolchain PATH issues)." >&2
+  warn_serial_port_busy "${CHOSEN_PORT:-}"
+}
 # Ensure espflash installed (same as build.ps1 Ensure-Espflash)
 ensure_espflash() {
   if command -v espflash &>/dev/null; then return; fi
@@ -396,6 +441,11 @@ get_flash_port() {
   fi
   echo "  Detected ${#PORTS[@]} serial ports. Select port to flash (ESP board):" >&2
   for i in "${!PORTS[@]}"; do echo "  $((i+1)). ${PORTS[i]}" >&2; done
+  # macOS: one board often appears as both cu.usbmodem* and cu.wchusbserial* (same USB serial in the name).
+  # Opening the WCH alias sometimes fails with "Failed to open serial port" while usbmodem works (or vice versa).
+  if [[ "$(uname -s)" != "Linux" ]]; then
+    echo -e "${YELLOW}  Tip: Prefer a cu.usbmodem* entry for ESP32-S3 native USB; if you see wchusbserial with the same ID as usbmodem, avoid the duplicate — pick the other.${NC}" >&2
+  fi
   while true; do
     read -r -p "Enter number (1-${#PORTS[@]}): " sel
     if [[ "$sel" =~ ^[0-9]+$ ]] && (( sel >= 1 && sel <= ${#PORTS[@]} )); then
@@ -670,17 +720,18 @@ echo "  Bootloader:        $BOOTLOADER_BIN"
 echo "  Firmware binary:   $BIN"
 echo ""
 
-# Pre-flash connection check: try board-info; on failure print diagnostic hints.
+# Pre-flash: port occupancy (espflash often fails with "Failed to open serial port" if another app holds cu.*).
 echo "========== Checking connection =========="
+echo ""
+echo "  Serial port occupancy (lsof):" >&2
+warn_serial_port_busy "$CHOSEN_PORT"
 echo ""
 if espflash board-info --port "$CHOSEN_PORT" --chip "$FLASH_CHIP" 2>/dev/null; then
   echo -e "${GREEN}✓ board-info OK${NC}"
 else
   echo -e "${YELLOW}⚠ Could not read board-info from $CHOSEN_PORT (connection or chip mismatch).${NC}"
-  echo "  Proceeding anyway; if flash fails, try:"
-  echo "    1) Replug USB or set ESPFLASH_PORT=… (see ./build.sh --help)"
-  echo "    2) Download mode: hold BOOT, tap RESET, run flash within a few seconds"
-  echo "    3) macOS: ensure another app is not using the serial port"
+  echo "  If flash then fails to open the port, use download mode: hold BOOT, tap RESET, flash within a few seconds."
+  echo "  Also close any Serial Monitor / screen / idf.py monitor using this port."
 fi
 echo ""
 
@@ -712,17 +763,21 @@ echo "========== Flashing firmware =========="
 echo ""
 echo "  Binary: $BIN"
 echo "  Partition table: $PARTITION_FOR_FLASH"
+FLASH_OK=0
 if [[ -n "$NO_MONITOR" ]]; then
-  if ! espflash flash --port "$CHOSEN_PORT" --chip "$FLASH_CHIP" "${FLASH_EXTRA[@]}" "$BIN"; then
-    echo "Flash failed. Check port, download mode, and chip." >&2
-    exit 1
+  if espflash flash --port "$CHOSEN_PORT" --chip "$FLASH_CHIP" "${FLASH_EXTRA[@]}" "$BIN"; then
+    FLASH_OK=1
   fi
+else
+  if espflash flash --port "$CHOSEN_PORT" --chip "$FLASH_CHIP" "${FLASH_EXTRA[@]}" --monitor "$BIN"; then
+    FLASH_OK=1
+  fi
+fi
+if [[ "$FLASH_OK" -eq 1 ]]; then
   echo ""
   echo -e "${GREEN}✓ Flash complete.${NC}"
   echo ""
 else
-  if ! espflash flash --port "$CHOSEN_PORT" --chip "$FLASH_CHIP" "${FLASH_EXTRA[@]}" --monitor "$BIN"; then
-    echo "Flash failed. Check port, download mode, and chip." >&2
-    exit 1
-  fi
+  print_flash_open_port_hints
+  exit 1
 fi

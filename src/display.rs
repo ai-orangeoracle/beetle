@@ -200,7 +200,7 @@ fn default_color_order() -> DisplayColorOrder {
 }
 
 fn default_spi_host() -> u8 {
-    2
+    1
 }
 
 fn default_spi_freq_hz() -> u32 {
@@ -269,10 +269,10 @@ pub fn validate_display_config_core(cfg: &DisplayConfig) -> Result<()> {
             "DISPLAY_CONFIG_INVALID_OFFSET: offset must be -480..=480",
         ));
     }
-    if cfg.spi.host != 2 && cfg.spi.host != 3 {
+    if cfg.spi.host != 1 && cfg.spi.host != 2 {
         return Err(Error::config(
             "display",
-            "DISPLAY_CONFIG_INVALID_SPI_HOST: host must be 2 or 3",
+            "DISPLAY_CONFIG_INVALID_SPI_HOST: host must be 1 or 2",
         ));
     }
     if !(DISPLAY_SPI_FREQ_MIN..=DISPLAY_SPI_FREQ_MAX).contains(&cfg.spi.freq_hz) {

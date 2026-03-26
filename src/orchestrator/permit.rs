@@ -40,6 +40,26 @@ impl Drop for HttpPermitGuard {
     }
 }
 
+/// RAII guard：持有期间 `active_agent_tasks` 非零，Drop 时递减。
+/// Held for the full lifetime of a single agent task (from admission to reply sent).
+/// RAII guard: keeps `active_agent_tasks` > 0 while held, decrements on drop.
+pub struct AgentTaskGuard {
+    state: &'static OrchestratorState,
+}
+
+impl AgentTaskGuard {
+    pub(super) fn new(state: &'static OrchestratorState) -> Self {
+        state.active_agent_tasks.fetch_add(1, Ordering::Relaxed);
+        Self { state }
+    }
+}
+
+impl Drop for AgentTaskGuard {
+    fn drop(&mut self) {
+        self.state.active_agent_tasks.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
 /// 请求 HTTP 准入令牌。
 /// Request HTTP admission permit.
 pub fn request_http_permit(

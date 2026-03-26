@@ -560,9 +560,10 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
                         }
                     };
                     let sta_connected = beetle::platform::is_wifi_sta_connected();
-                    let busy = snapshot.inbound_depth > 0
-                        || snapshot.outbound_depth > 0
-                        || snapshot.active_http_count > 0;
+                    let busy = snapshot.active_agent_tasks > 0
+                        || snapshot.active_http_count > 0
+                        || snapshot.inbound_depth > 0
+                        || snapshot.outbound_depth > 0;
                     let state =
                         if snapshot.pressure == beetle::orchestrator::PressureLevel::Critical {
                             DisplaySystemState::Fault

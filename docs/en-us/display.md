@@ -31,7 +31,7 @@ A typical SPI connection to ESP32-S3:
 | RST | Hardware reset (pulse low→high on init) | Optional |
 | BL | Backlight enable (set high on init) | Optional |
 
-> All pin numbers are ESP32-S3 GPIO numbers. The SPI host must be 2 (HSPI) or 3 (VSPI).
+> All pin numbers are ESP32-S3 GPIO numbers. `spi.host`: **1** = `SPI2_HOST`, **2** = `SPI3_HOST` (ESP-IDF `spi_host_device_t`).
 
 ---
 
@@ -110,7 +110,7 @@ Display configuration is stored in `config/display.json` on the SPIFFS partition
 | `invert_colors` | bool | false | Flip the driver's default color inversion |
 | `offset_x` | i16 | 0 | Horizontal pixel offset for the display window (-480 to 480) |
 | `offset_y` | i16 | 0 | Vertical pixel offset for the display window (-480 to 480) |
-| `spi.host` | u8 | 2 | SPI host: `2` (HSPI) or `3` (VSPI) |
+| `spi.host` | u8 | 1 | SPI host: `1` = SPI2_HOST, `2` = SPI3_HOST (same as ESP-IDF `spi_host_device_t`) |
 | `spi.sclk` | i32 | — | SPI clock GPIO pin |
 | `spi.mosi` | i32 | — | SPI MOSI GPIO pin |
 | `spi.cs` | i32 | — | Chip select GPIO pin |
@@ -123,12 +123,13 @@ Display configuration is stored in `config/display.json` on the SPIFFS partition
 
 ## Dashboard layout
 
-The dashboard renders on a white background:
+The dashboard renders on a dark navy background (~`#080816`): a 3px top stripe in the state accent color; thin divider lines above the channel block and footer; a slightly lighter strip behind the state title (stops above the IP subtitle row); L-shaped corner brackets (two short strokes per corner).
 
 ```
 ┌──────────────────────────────────┐ y=0
+│▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓│ State-color top bar
 │ ┌──────┐                         │
-│ │beetle│  STATE_NAME              │ Title (bold)
+│ │beetle│  STATE_NAME              │ Title (bold, state color)
 │ │64x64 │  192.168.1.100           │ IP subtitle
 │ └──────┘                         │
 ├──────────────────────────────────┤ y≈104
@@ -146,11 +147,11 @@ The beetle is drawn entirely with `embedded-graphics` primitives (circles, lines
 
 | State | Beetle color | Visual cues |
 |-------|-------------|-------------|
-| **Booting** | Orange | Loading dots on body; dashed WiFi arcs above head; subtitle shows firmware version |
-| **NoWifi** | Gray | Solid WiFi arcs above head, crossed out with red X |
-| **Idle** | Green | White checkmark on body |
-| **Busy** | Blue | Membrane wings spread from under elytra |
-| **Fault** | Red | Flipped upside-down; X eyes; exclamation mark on body |
+| **Booting** | Amber gold | Loading dots on body; dashed WiFi arcs above head; subtitle shows firmware version |
+| **NoWifi** | Blue-gray | Solid WiFi arcs above head, crossed out with red X |
+| **Idle** | Neon green | White checkmark on body |
+| **Busy** | Cyan-blue | Membrane wings spread from under elytra |
+| **Fault** | Bright red | Flipped upside-down; X eyes; exclamation mark on body |
 
 ### Channel status indicators
 
