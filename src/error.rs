@@ -123,6 +123,15 @@ impl Error {
         self.stage() == "tls_admission"
     }
 
+    /// 是否为连接层失败（TLS 握手超时、socket 连接失败等）。
+    /// 此类错误短时间重试大概率仍会失败，应快速失败而非级联阻塞。
+    pub fn is_connect_error(&self) -> bool {
+        matches!(
+            self.stage(),
+            "http_post_request" | "http_get_request" | "http_client_replace"
+        )
+    }
+
     /// 覆盖 stage 并返回同一变体，便于保留 Config/Http 等判别用于监控与排查。
     pub fn with_stage(self, stage: &'static str) -> Self {
         match self {

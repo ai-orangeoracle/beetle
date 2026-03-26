@@ -7,7 +7,9 @@ use crate::config::AppConfig;
 use crate::i18n::{locale_from_store, tr, Message};
 
 /// 成功返回 `{ "channels": [ ... ] }` 字符串，失败返回 Err（mod 层写 500，不暴露内部细节）。
+/// httpd 线程非 agent 线程，需先注册 TWDT 才能安全 feed（幂等）。
 pub fn body(ctx: &HandlerContext) -> Result<String, String> {
+    crate::platform::task_wdt::register_current_task_to_task_wdt();
     let loc = locale_from_store(ctx.config_store.as_ref());
     let config = AppConfig::load(
         ctx.config_store.as_ref(),

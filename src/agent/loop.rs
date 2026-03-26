@@ -564,12 +564,13 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
                 log::warn!("[agent] chat loop failed: {}", e);
                 state::set_last_error(&e);
 
+                let is_conn = e.is_connect_error();
                 let (counter, _) = llm_failure_count
                     .entry(msg_key)
                     .or_insert((0, Instant::now()));
                 *counter = counter.saturating_add(1);
 
-                if *counter < 3 {
+                if *counter < 3 && !is_conn {
                     match inbound_tx.try_send(msg.clone()) {
                         Ok(()) => {}
                         Err(std::sync::mpsc::TrySendError::Full(_)) => {
