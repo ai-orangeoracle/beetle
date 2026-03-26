@@ -41,6 +41,7 @@ indexmap = "2.0"
 
 [target.'cfg(any(target_arch = "xtensa", target_arch = "riscv32"))'.dependencies]
 embedded-svc = "0.29"
+esp-idf-hal = "0.46.2"
 esp-idf-svc = "0.52"
 
 [target.'cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))'.dependencies]

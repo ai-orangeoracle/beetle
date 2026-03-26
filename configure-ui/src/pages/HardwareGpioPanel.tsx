@@ -106,6 +106,26 @@ function validateSegment(
         }
       }
     }
+    if (d.device_type === "dht") {
+      const model = d.options?.model;
+      if (model != null && typeof model === "string") {
+        if (!["dht11", "dht22", "dht21"].includes(model)) {
+          return t("hardwareConfig.validation.dhtModel");
+        }
+      }
+      const wf = d.options?.watch_field;
+      if (wf != null && typeof wf === "string") {
+        if (wf !== "temperature" && wf !== "humidity") {
+          return t("hardwareConfig.validation.dhtWatchField");
+        }
+      }
+      const pull = d.options?.pull;
+      if (pull != null && typeof pull === "string") {
+        if (!["up", "down", "none"].includes(pull)) {
+          return t("hardwareConfig.validation.dhtPull");
+        }
+      }
+    }
   }
   if (pwmCount > MAX_PWM_DEVICES) {
     return t("hardwareConfig.validation.maxPwm");
@@ -299,7 +319,10 @@ export function HardwareGpioPanel() {
                     const nextType = e.target.value;
                     const prev = dev.options ?? {};
                     let nextOpts: Record<string, unknown> = { ...prev };
-                    if (nextType === "pwm_out" && dev.device_type !== "pwm_out") {
+                    if (
+                      nextType === "pwm_out" &&
+                      dev.device_type !== "pwm_out"
+                    ) {
                       nextOpts = {
                         ...nextOpts,
                         frequency_hz:
@@ -308,9 +331,29 @@ export function HardwareGpioPanel() {
                             : 1000,
                       };
                     }
-                    if (dev.device_type === "pwm_out" && nextType !== "pwm_out") {
+                    if (
+                      dev.device_type === "pwm_out" &&
+                      nextType !== "pwm_out"
+                    ) {
                       const { frequency_hz: _f, ...rest } = nextOpts;
                       nextOpts = rest;
+                    }
+
+                    if (nextType === "dht" && dev.device_type !== "dht") {
+                      const o = { ...nextOpts };
+                      delete o.frequency_hz;
+                      nextOpts = {
+                        ...o,
+                        model: "dht11",
+                        watch_field: "temperature",
+                      };
+                    }
+                    if (dev.device_type === "dht" && nextType !== "dht") {
+                      const o = { ...nextOpts };
+                      delete o.model;
+                      delete o.watch_field;
+                      delete o.pull;
+                      nextOpts = o;
                     }
                     updateDevice(i, {
                       ...dev,
@@ -373,6 +416,77 @@ export function HardwareGpioPanel() {
                       },
                     }}
                   />
+                )}
+                {dev.device_type === "dht" && (
+                  <>
+                    <TextField
+                      select
+                      size="small"
+                      fullWidth
+                      label={t("hardwareConfig.dhtModel")}
+                      helperText={`${t("hardwareConfig.dhtModelHelp")} ${riskHint}`}
+                      value={
+                        typeof dev.options?.model === "string"
+                          ? dev.options.model
+                          : "dht11"
+                      }
+                      onChange={(e) => {
+                        const o: Record<string, unknown> = { ...dev.options };
+                        o.model = e.target.value;
+                        updateDevice(i, { ...dev, options: o });
+                      }}
+                      slotProps={{ select: { native: true } }}
+                    >
+                      {(["dht11", "dht22", "dht21"] as const).map((m) => (
+                        <option key={m} value={m}>
+                          {m}
+                        </option>
+                      ))}
+                    </TextField>
+                    <TextField
+                      select
+                      size="small"
+                      fullWidth
+                      label={t("hardwareConfig.dhtWatchField")}
+                      helperText={`${t("hardwareConfig.dhtWatchFieldHelp")} ${riskHint}`}
+                      value={
+                        typeof dev.options?.watch_field === "string"
+                          ? dev.options.watch_field
+                          : "temperature"
+                      }
+                      onChange={(e) => {
+                        const o: Record<string, unknown> = { ...dev.options };
+                        o.watch_field = e.target.value;
+                        updateDevice(i, { ...dev, options: o });
+                      }}
+                      slotProps={{ select: { native: true } }}
+                    >
+                      <option value="temperature">temperature</option>
+                      <option value="humidity">humidity</option>
+                    </TextField>
+                    <TextField
+                      select
+                      size="small"
+                      fullWidth
+                      label={t("hardwareConfig.dhtPull")}
+                      helperText={`${t("hardwareConfig.dhtPullHelp")} ${riskHint}`}
+                      value={
+                        typeof dev.options?.pull === "string"
+                          ? dev.options.pull
+                          : "up"
+                      }
+                      onChange={(e) => {
+                        const o: Record<string, unknown> = { ...dev.options };
+                        o.pull = e.target.value;
+                        updateDevice(i, { ...dev, options: o });
+                      }}
+                      slotProps={{ select: { native: true } }}
+                    >
+                      <option value="up">up</option>
+                      <option value="down">down</option>
+                      <option value="none">none</option>
+                    </TextField>
+                  </>
                 )}
                 <TextField
                   size="small"

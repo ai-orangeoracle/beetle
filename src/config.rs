@@ -915,7 +915,7 @@ const HARDWARE_FORBIDDEN_PINS: [i32; 4] = [0, 3, 45, 46]; // ESP32-S3 strapping
 const HARDWARE_ADC1_PINS: std::ops::RangeInclusive<i32> = 1..=10;
 const HARDWARE_PWM_FREQ_MIN: u32 = 1;
 const HARDWARE_PWM_FREQ_MAX: u32 = 40_000;
-const KNOWN_DEVICE_TYPES: [&str; 5] = ["gpio_out", "gpio_in", "pwm_out", "adc_in", "buzzer"];
+const KNOWN_DEVICE_TYPES: [&str; 6] = ["gpio_out", "gpio_in", "pwm_out", "adc_in", "buzzer", "dht"];
 
 /// 引脚配置：键为引脚角色（如 "pin"），值为 GPIO 编号。
 pub type PinConfig = std::collections::HashMap<String, i32>;
@@ -1197,6 +1197,30 @@ fn validate_hardware_segment(seg: &HardwareSegment) -> Result<()> {
                         format!(
                             "hardware_devices[{}] pwm_out frequency_hz {} must be {}..={}",
                             i, freq, HARDWARE_PWM_FREQ_MIN, HARDWARE_PWM_FREQ_MAX
+                        ),
+                    ));
+                }
+            }
+        }
+        if dev.device_type == "dht" {
+            if let Some(model) = dev.options.get("model").and_then(|v| v.as_str()) {
+                if !["dht11", "dht22", "dht21"].contains(&model) {
+                    return Err(Error::config(
+                        "hardware",
+                        format!(
+                            "hardware_devices[{}] dht options.model '{}' must be dht11|dht22|dht21",
+                            i, model
+                        ),
+                    ));
+                }
+            }
+            if let Some(field) = dev.options.get("watch_field").and_then(|v| v.as_str()) {
+                if field != "temperature" && field != "humidity" {
+                    return Err(Error::config(
+                        "hardware",
+                        format!(
+                            "hardware_devices[{}] dht options.watch_field '{}' must be temperature|humidity",
+                            i, field
                         ),
                     ));
                 }

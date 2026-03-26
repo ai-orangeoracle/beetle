@@ -343,6 +343,15 @@ impl Platform for Esp32Platform {
         crate::platform::hardware_drivers::drive_buzzer(pins, params)
     }
 
+    fn drive_dht(
+        &self,
+        pins: &crate::config::PinConfig,
+        params: &serde_json::Value,
+        options: &serde_json::Value,
+    ) -> crate::error::Result<String> {
+        crate::platform::hardware_drivers::drive_dht(pins, params, options)
+    }
+
     fn init_i2c(&self, config: &crate::config::I2cBusConfig) -> crate::error::Result<()> {
         let state = crate::platform::hardware_drivers::I2cBusState::new(
             config.sda_pin,

@@ -327,6 +327,15 @@ impl Platform for LinuxPlatform {
         crate::platform::hardware_drivers::drive_buzzer(pins, params)
     }
 
+    fn drive_dht(
+        &self,
+        pins: &crate::config::PinConfig,
+        params: &serde_json::Value,
+        options: &serde_json::Value,
+    ) -> crate::error::Result<String> {
+        crate::platform::hardware_drivers::drive_dht(pins, params, options)
+    }
+
     fn i2c_read(&self, addr: u8, register: u8, len: usize) -> crate::error::Result<Vec<u8>> {
         crate::platform::hardware_drivers::drive_i2c_read(addr, register, len)
     }

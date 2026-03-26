@@ -4,6 +4,43 @@
 use crate::config::PinConfig;
 use crate::error::{Error, Result};
 use serde_json::Value;
+use std::collections::HashMap;
+use std::sync::Mutex;
+use std::time::Instant;
+
+// ── DHT sensor: rate limit (ESP + host stub) ──
+/// DHT11 两次成功读数最小间隔（ms）。
+const DHT11_MIN_INTERVAL_MS: u64 = 1_000;
+/// DHT22/DHT21 两次成功读数最小间隔（ms）。
+const DHT22_MIN_INTERVAL_MS: u64 = 2_000;
+
+static DHT_LAST_READ: Mutex<Option<HashMap<i32, Instant>>> = Mutex::new(None);
+
+fn dht_rate_limit_check(pin: i32, min_interval_ms: u64) -> Result<()> {
+    let guard = DHT_LAST_READ.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(map) = guard.as_ref() {
+        if let Some(prev) = map.get(&pin) {
+            let elapsed_ms = prev.elapsed().as_millis() as u64;
+            if elapsed_ms < min_interval_ms {
+                return Err(Error::config(
+                    "drive_dht",
+                    format!(
+                        "too frequent: wait {}ms before next read (min interval {}ms)",
+                        min_interval_ms.saturating_sub(elapsed_ms),
+                        min_interval_ms
+                    ),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn dht_rate_limit_on_success(pin: i32) {
+    let mut guard = DHT_LAST_READ.lock().unwrap_or_else(|e| e.into_inner());
+    let map = guard.get_or_insert_with(HashMap::new);
+    map.insert(pin, Instant::now());
+}
 
 /// LEDC 定时器分辨率：13-bit (0–8191)。
 const LEDC_DUTY_RESOLUTION_BITS: u32 = 13;
@@ -385,6 +422,271 @@ pub fn drive_buzzer(pins: &PinConfig, params: &Value) -> Result<String> {
     }
 }
 
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+use std::time::Duration;
+
+/// DHT11 启动拉低时间（μs）。
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+const DHT11_START_LOW_US: u32 = 18_000;
+/// DHT22/DHT21 启动拉低时间（μs）。
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+const DHT22_START_LOW_US: u32 = 1_000;
+/// 启动后释放总线再等待（μs）。
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+const DHT_START_RELEASE_US: u32 = 30;
+/// 位带单相忙等循环上限。
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+const DHT_BIT_TIMEOUT_CYCLES: u32 = 1_000;
+/// 等待从机响应的循环上限。
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+const DHT_RESPONSE_TIMEOUT_CYCLES: u32 = 5_000;
+/// 高电平循环计数阈值：≥ 判为数据位 1（可按硬件微调）。
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+const DHT_HIGH_THRESHOLD: u32 = 40;
+/// 失败后重试次数（不含首次）。
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+const DHT_MAX_RETRIES: u8 = 2;
+/// 重试间隔（ms）。
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+const DHT_RETRY_DELAY_MS: u64 = 100;
+
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+static DHT_SAMPLE_CRIT: esp_idf_hal::interrupt::IsrCriticalSection =
+    esp_idf_hal::interrupt::IsrCriticalSection::new();
+
+/// DHT 单总线采样：握手后读 40 位，返回 5 字节原始帧。
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+unsafe fn dht_sample_raw_frame(pin: i32) -> Result<[u8; 5]> {
+    use esp_idf_svc::sys::{gpio_get_level, ESP_OK};
+
+    let _g = DHT_SAMPLE_CRIT.enter();
+
+    let mut c: u32;
+    // 线应为高；等待从机拉低（响应头）
+    c = 0;
+    while gpio_get_level(pin) != 0 {
+        c += 1;
+        if c > DHT_RESPONSE_TIMEOUT_CYCLES {
+            return Err(Error::config(
+                "drive_dht",
+                "timeout waiting for sensor response (high)",
+            ));
+        }
+    }
+    // 等响应低结束 → 高
+    c = 0;
+    while gpio_get_level(pin) == 0 {
+        c += 1;
+        if c > DHT_RESPONSE_TIMEOUT_CYCLES {
+            return Err(Error::config(
+                "drive_dht",
+                "timeout during sensor response (low phase)",
+            ));
+        }
+    }
+    // 等响应高结束 → 数据首位低前
+    c = 0;
+    while gpio_get_level(pin) != 0 {
+        c += 1;
+        if c > DHT_RESPONSE_TIMEOUT_CYCLES {
+            return Err(Error::config(
+                "drive_dht",
+                "timeout during sensor response (high phase)",
+            ));
+        }
+    }
+
+    let mut data = [0u8; 5];
+    for i in 0..40u32 {
+        // 每位以低电平开始，等上升沿
+        c = 0;
+        while gpio_get_level(pin) == 0 {
+            c += 1;
+            if c > DHT_BIT_TIMEOUT_CYCLES {
+                return Err(Error::config(
+                    "drive_dht",
+                    format!("timeout waiting for bit {} low phase end", i),
+                ));
+            }
+        }
+        // 测量高电平宽度
+        c = 0;
+        while gpio_get_level(pin) != 0 {
+            c += 1;
+            if c > DHT_BIT_TIMEOUT_CYCLES {
+                break;
+            }
+        }
+        if c >= DHT_HIGH_THRESHOLD {
+            data[(i / 8) as usize] |= 1 << (7 - (i % 8));
+        }
+    }
+
+    Ok(data)
+}
+
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+fn dht_pull_from_options(
+    options: &Value,
+) -> (
+    esp_idf_svc::sys::gpio_pullup_t,
+    esp_idf_svc::sys::gpio_pulldown_t,
+) {
+    use esp_idf_svc::sys::{
+        gpio_pulldown_t_GPIO_PULLDOWN_DISABLE, gpio_pulldown_t_GPIO_PULLDOWN_ENABLE,
+        gpio_pullup_t_GPIO_PULLUP_DISABLE, gpio_pullup_t_GPIO_PULLUP_ENABLE,
+    };
+    let pull = options.get("pull").and_then(|v| v.as_str()).unwrap_or("up");
+    match pull {
+        "down" => (
+            gpio_pullup_t_GPIO_PULLUP_DISABLE,
+            gpio_pulldown_t_GPIO_PULLDOWN_ENABLE,
+        ),
+        "none" => (
+            gpio_pullup_t_GPIO_PULLUP_DISABLE,
+            gpio_pulldown_t_GPIO_PULLDOWN_DISABLE,
+        ),
+        _ => (
+            gpio_pullup_t_GPIO_PULLUP_ENABLE,
+            gpio_pulldown_t_GPIO_PULLDOWN_DISABLE,
+        ),
+    }
+}
+
+/// DHT11/DHT22/DHT21 单总线读取；JSON 与 `drive_gpio_in` / `drive_adc_in` 风格一致。
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+pub fn drive_dht(pins: &PinConfig, _params: &Value, options: &Value) -> Result<String> {
+    use esp_idf_svc::sys::{
+        esp_rom_delay_us, gpio_config, gpio_config_t, gpio_get_level,
+        gpio_int_type_t_GPIO_INTR_DISABLE, gpio_mode_t_GPIO_MODE_INPUT,
+        gpio_mode_t_GPIO_MODE_OUTPUT, gpio_reset_pin, gpio_set_level, ESP_OK,
+    };
+
+    let pin = *pins
+        .get("pin")
+        .ok_or_else(|| Error::config("drive_dht", "missing pin"))?;
+
+    let model = options
+        .get("model")
+        .and_then(|v| v.as_str())
+        .unwrap_or("dht11");
+    if model != "dht11" && model != "dht22" && model != "dht21" {
+        return Err(Error::config(
+            "drive_dht",
+            format!("options.model must be dht11|dht22|dht21, got '{}'", model),
+        ));
+    }
+
+    let (start_low_us, min_interval_ms) = if model == "dht11" {
+        (DHT11_START_LOW_US, DHT11_MIN_INTERVAL_MS)
+    } else {
+        (DHT22_START_LOW_US, DHT22_MIN_INTERVAL_MS)
+    };
+
+    dht_rate_limit_check(pin, min_interval_ms)?;
+
+    let (pull_up, pull_down) = dht_pull_from_options(options);
+    let mut last_err: Option<Error> = None;
+
+    for attempt in 0..=DHT_MAX_RETRIES {
+        if attempt > 0 {
+            std::thread::sleep(Duration::from_millis(DHT_RETRY_DELAY_MS));
+        }
+
+        let sample_result: Result<[u8; 5]> = (|| {
+            unsafe {
+                gpio_reset_pin(pin);
+                let conf_out = gpio_config_t {
+                    pin_bit_mask: 1u64 << pin,
+                    mode: gpio_mode_t_GPIO_MODE_OUTPUT,
+                    pull_up_en: pull_up,
+                    pull_down_en: pull_down,
+                    intr_type: gpio_int_type_t_GPIO_INTR_DISABLE,
+                };
+                let ret = gpio_config(&conf_out);
+                if ret != ESP_OK {
+                    return Err(Error::Other {
+                        source: Box::new(std::io::Error::other(format!(
+                            "gpio_config output failed: {}",
+                            ret
+                        ))),
+                        stage: "drive_dht",
+                    });
+                }
+
+                gpio_set_level(pin, 0);
+                esp_rom_delay_us(start_low_us);
+                gpio_set_level(pin, 1);
+                esp_rom_delay_us(DHT_START_RELEASE_US);
+
+                let conf_in = gpio_config_t {
+                    pin_bit_mask: 1u64 << pin,
+                    mode: gpio_mode_t_GPIO_MODE_INPUT,
+                    pull_up_en: pull_up,
+                    pull_down_en: pull_down,
+                    intr_type: gpio_int_type_t_GPIO_INTR_DISABLE,
+                };
+                let ret = gpio_config(&conf_in);
+                if ret != ESP_OK {
+                    return Err(Error::Other {
+                        source: Box::new(std::io::Error::other(format!(
+                            "gpio_config input failed: {}",
+                            ret
+                        ))),
+                        stage: "drive_dht",
+                    });
+                }
+
+                // 释放后短暂稳定再采样（与手册 20–40μs 一致，已在上方 delay）
+                let _ = gpio_get_level(pin);
+
+                dht_sample_raw_frame(pin)
+            }
+        })();
+
+        let data = match sample_result {
+            Ok(d) => d,
+            Err(e) => {
+                last_err = Some(e);
+                continue;
+            }
+        };
+
+        let sum = data[0]
+            .wrapping_add(data[1])
+            .wrapping_add(data[2])
+            .wrapping_add(data[3]);
+        if (sum & 0xFF) != data[4] {
+            last_err = Some(Error::config("drive_dht", "checksum mismatch"));
+            continue;
+        }
+
+        let (temperature, humidity) = if model == "dht11" {
+            let h = f64::from(data[0]);
+            let t = f64::from(data[2]);
+            (t, h)
+        } else {
+            let rh_raw = u16::from_be_bytes([data[0], data[1]]);
+            let t_raw = u16::from_be_bytes([data[2], data[3]]);
+            let h = f64::from(rh_raw) / 10.0;
+            let t = if (t_raw & 0x8000) != 0 {
+                -f64::from(t_raw & 0x7FFF) / 10.0
+            } else {
+                f64::from(t_raw) / 10.0
+            };
+            (t, h)
+        };
+
+        dht_rate_limit_on_success(pin);
+        return Ok(format!(
+            r#"{{"temperature":{},"humidity":{},"model":"{}"}}"#,
+            temperature, humidity, model
+        ));
+    }
+
+    Err(last_err.unwrap_or_else(|| Error::config("drive_dht", "read failed")))
+}
+
 // ── Host target: stub drivers for cargo check / clippy ──
 
 #[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
@@ -514,6 +816,35 @@ pub fn drive_buzzer(pins: &PinConfig, params: &Value) -> Result<String> {
             duration_ms
         ))
     }
+}
+
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+pub fn drive_dht(pins: &PinConfig, _params: &Value, options: &Value) -> Result<String> {
+    let pin = *pins
+        .get("pin")
+        .ok_or_else(|| Error::config("drive_dht", "missing pin"))?;
+    let model = options
+        .get("model")
+        .and_then(|v| v.as_str())
+        .unwrap_or("dht11");
+    if model != "dht11" && model != "dht22" && model != "dht21" {
+        return Err(Error::config(
+            "drive_dht",
+            format!("options.model must be dht11|dht22|dht21, got '{}'", model),
+        ));
+    }
+    let min_interval_ms = if model == "dht11" {
+        DHT11_MIN_INTERVAL_MS
+    } else {
+        DHT22_MIN_INTERVAL_MS
+    };
+    dht_rate_limit_check(pin, min_interval_ms)?;
+    log::info!("[drive_dht] stub: pin={} model={}", pin, model);
+    dht_rate_limit_on_success(pin);
+    Ok(format!(
+        r#"{{"temperature":22.0,"humidity":55.0,"model":"{}","stub":true}}"#,
+        model
+    ))
 }
 
 // ── I2C drivers (ESP-IDF `driver/i2c_master.h`, IDF 5.4+) ──

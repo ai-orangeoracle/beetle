@@ -140,7 +140,7 @@ export const enUS = {
     hardwareConfig: {
       sectionMain: 'GPIO & programmable hardware',
       sectionMainDesc:
-        'Devices the Agent can control by meaning (GPIO in/out, PWM, ADC, buzzer, etc.). Restart required after save.',
+        'Devices the Agent can control by meaning (GPIO in/out, PWM, ADC, buzzer, DHT temp/humidity, etc.). Restart required after save.',
       restartRequired: 'Saved. Restart to apply.',
       addDevice: 'Add device',
       removeDevice: 'Remove device',
@@ -151,6 +151,12 @@ export const enUS = {
       pin: 'GPIO pin',
       pwmFreqHz: 'PWM frequency (Hz)',
       pwmFreqHelp: 'Optional; leave empty for firmware default. Range 1–40000.',
+      dhtModel: 'DHT model',
+      dhtModelHelp: 'Must match the module; affects start timing and parsing.',
+      dhtWatchField: 'Watch field (sensor_watch)',
+      dhtWatchFieldHelp: 'Which value thresholds use; device_control still returns both.',
+      dhtPull: 'DATA line pull',
+      dhtPullHelp: 'Default pull-up; use none if you use an external resistor.',
       what: 'What it is (for the model)',
       how: 'How to use it (for the model)',
       fieldRiskHint:
@@ -167,6 +173,9 @@ export const enUS = {
         pinDup: 'The same pin cannot be used by two devices',
         adcPin: 'adc_in must use ADC1 pins (GPIO 1–10)',
         pwmFreq: 'PWM frequency must be between 1 and 40000 Hz',
+        dhtModel: 'dht model must be dht11, dht22, or dht21',
+        dhtWatchField: 'dht watch_field must be temperature or humidity',
+        dhtPull: 'dht pull must be up, down, or none',
       },
     },
     common: {

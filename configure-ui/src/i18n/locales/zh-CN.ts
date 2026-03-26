@@ -140,7 +140,7 @@ export const zhCN = {
     hardwareConfig: {
       sectionMain: 'GPIO 与可编程硬件设备',
       sectionMainDesc:
-        '配置供 Agent 按语义调用的板载设备（含 GPIO 输入/输出、PWM、ADC、蜂鸣器等）。保存后需重启设备生效。',
+        '配置供 Agent 按语义调用的板载设备（含 GPIO 输入/输出、PWM、ADC、蜂鸣器、DHT 温湿度等）。保存后需重启设备生效。',
       restartRequired: '保存成功，重启后生效',
       addDevice: '添加设备',
       removeDevice: '移除此设备',
@@ -151,6 +151,12 @@ export const zhCN = {
       pin: 'GPIO 引脚',
       pwmFreqHz: 'PWM 频率（Hz）',
       pwmFreqHelp: '可选；留空则由固件默认。范围 1～40000。',
+      dhtModel: 'DHT 型号',
+      dhtModelHelp: '与接线模块一致；影响启动时序与解析。',
+      dhtWatchField: '监控字段（sensor_watch）',
+      dhtWatchFieldHelp: '阈值告警时读取温度或湿度；device_control 仍返回两者。',
+      dhtPull: 'DATA 线上下拉',
+      dhtPullHelp: '默认上拉；长线或外置电阻时可改为 none。',
       what: '是什么（给模型看的说明）',
       how: '怎么用（给模型看的用法）',
       fieldRiskHint:
@@ -167,6 +173,9 @@ export const zhCN = {
         pinDup: '同一引脚不能分配给多个设备',
         adcPin: 'adc_in 仅支持 ADC1 对应引脚（GPIO 1～10）',
         pwmFreq: 'PWM 频率须在 1～40000 Hz 范围内',
+        dhtModel: 'dht 的型号须为 dht11、dht22 或 dht21',
+        dhtWatchField: 'dht 的监控字段须为 temperature 或 humidity',
+        dhtPull: 'dht 的 pull 须为 up、down 或 none',
       },
     },
     common: {

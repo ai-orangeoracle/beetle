@@ -357,4 +357,13 @@ pub trait Platform: Send + Sync {
             "Buzzer not supported on this platform",
         ))
     }
+
+    /// DHT 系列温湿度传感器读取。`params` 为 unused placeholder，传空 JSON 即可。
+    /// Read DHT series sensor. `params` is an unused placeholder; pass empty JSON object.
+    fn drive_dht(&self, _pins: &PinConfig, _params: &Value, _options: &Value) -> Result<String> {
+        Err(crate::error::Error::config(
+            "drive_dht",
+            "DHT sensor not supported on this platform",
+        ))
+    }
 }

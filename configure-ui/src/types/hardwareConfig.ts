@@ -40,6 +40,7 @@ export const HARDWARE_DEVICE_TYPES = [
   'pwm_out',
   'adc_in',
   'buzzer',
+  'dht',
 ] as const
 
 export type HardwareDeviceType = (typeof HARDWARE_DEVICE_TYPES)[number]

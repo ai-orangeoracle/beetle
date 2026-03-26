@@ -18,7 +18,7 @@ const DEVICE_READ_MIN_INTERVAL_MS: u64 = 500;
 const MAX_TOOL_DESCRIPTION_LEN: usize = 2048;
 
 fn is_input_type(device_type: &str) -> bool {
-    matches!(device_type, "gpio_in" | "adc_in")
+    matches!(device_type, "gpio_in" | "adc_in" | "dht")
 }
 
 /// 每设备运行时状态：上次操作时间 + 操作锁。
@@ -197,6 +197,7 @@ impl DeviceControlTool {
             }
             "adc_in" => self.platform.drive_adc_in(&dev.pins, params, &dev.options),
             "buzzer" => self.platform.drive_buzzer(&dev.pins, params),
+            "dht" => self.platform.drive_dht(&dev.pins, params, &dev.options),
             other => Err(Error::config(
                 "device_control",
                 format!(
