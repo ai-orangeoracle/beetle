@@ -195,6 +195,7 @@ export function DisplayConfigPanel() {
               >
                 <option value="st7789">ST7789</option>
                 <option value="ili9341">ILI9341</option>
+                <option value="st7735">ST7735 (1.8&quot; / 1.44&quot; / 0.96&quot;)</option>
               </TextField>
               <TextField
                 select

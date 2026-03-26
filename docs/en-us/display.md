@@ -12,8 +12,9 @@ The display module drives an SPI-connected TFT screen to show a real-time operat
 |------------|-------------------|-------|
 | **ST7789** | 240x240, 240x320 | Default; color inversion ON by default (panel-native) |
 | **ILI9341** | 240x320 | Color inversion OFF by default |
+| **ST7735** | 128x160, 128x128, 80x160, etc. | ST7735 / ST7735R / ST7735S family (register-compatible); inversion OFF by default; uses frame-rate, power, and gamma init |
 
-Both share the same SPI init sequence (SWRESET → SLPOUT → COLMOD → MADCTL → INV → NORON → DISPON). The `invert_colors` config flag flips the driver's default inversion behavior.
+ST7789 and ILI9341 share a short init (SWRESET → SLPOUT → COLMOD `0x55` → MADCTL → INV → NORON → DISPON). **ST7735** sends frame-rate, power, and gamma registers after SLPOUT, uses COLMOD `0x05`, then MADCTL → INV → NORON → DISPON. The `invert_colors` flag flips each driver's default inversion behavior.
 
 ---
 
@@ -66,13 +67,41 @@ Display configuration is stored in `config/display.json` on the SPIFFS partition
 }
 ```
 
+### ST7735 example (1.8" 128×160)
+
+```json
+{
+  "version": 1,
+  "enabled": true,
+  "driver": "st7735",
+  "bus": "spi",
+  "width": 128,
+  "height": 160,
+  "rotation": 0,
+  "color_order": "bgr",
+  "invert_colors": false,
+  "offset_x": 2,
+  "offset_y": 1,
+  "spi": {
+    "host": 2,
+    "sclk": 42,
+    "mosi": 41,
+    "cs": 21,
+    "dc": 40,
+    "rst": null,
+    "bl": null,
+    "freq_hz": 15000000
+  }
+}
+```
+
 ### Field reference
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `version` | u32 | 1 | Config schema version; must be `1` |
 | `enabled` | bool | — | Enable/disable display. When `false`, no SPI hardware is initialized |
-| `driver` | string | — | `"st7789"` or `"ili9341"` |
+| `driver` | string | — | `"st7789"`, `"ili9341"`, or `"st7735"` |
 | `bus` | string | — | `"spi"` (only option currently) |
 | `width` | u16 | — | Panel width in pixels (1–480) |
 | `height` | u16 | — | Panel height in pixels (1–480) |
@@ -175,10 +204,12 @@ The display thread runs with a 6 KB stack and refreshes every 5 seconds from `or
 
 4. **`invert_colors`** — If the display looks like a photo negative, toggle this flag. ST7789 panels typically need inversion ON (the default), while ILI9341 panels need it OFF.
 
-5. **SPI frequency** — 40 MHz works for most panels. If you see visual artifacts or corruption, try lowering to 20 MHz or 10 MHz. Maximum supported is 80 MHz.
+5. **SPI frequency** — 40 MHz works for most ST7789/ILI9341 panels. If you see visual artifacts or corruption, try lowering to 20 MHz or 10 MHz. Maximum supported is 80 MHz. **ST7735** is best at ≤15 MHz (e.g. `15_000_000`); higher speeds often cause corruption.
 
-6. **Display thread stack** — The rendering thread uses 6 KB stack. This is sufficient for the current dashboard layout. If you add significantly more complex rendering, monitor for stack overflow.
+6. **ST7735 (1.8" 128×160, etc.)** — Many modules use 132×162 glass; set `offset_x: 2`, `offset_y: 1` with `width`/`height` 128/160. Some “black tab” variants use `0`/`0`—tune to your module. `color_order` is often `bgr`; try `rgb` if red and blue are swapped.
 
-7. **Host compilation** — On non-ESP targets (`cargo check`, `cargo clippy`), the display backend returns `available: false` and all commands are no-ops. This ensures the codebase compiles cleanly on the host.
+7. **Display thread stack** — The rendering thread uses 6 KB stack. This is sufficient for the current dashboard layout. If you add significantly more complex rendering, monitor for stack overflow.
 
-8. **Rotation** — The `rotation` field applies a MADCTL transform at the controller level. The framebuffer dimensions (`width` x `height`) should match the post-rotation visible area.
+8. **Host compilation** — On non-ESP targets (`cargo check`, `cargo clippy`), the display backend returns `available: false` and all commands are no-ops. This ensures the codebase compiles cleanly on the host.
+
+9. **Rotation** — The `rotation` field applies a MADCTL transform at the controller level. The framebuffer dimensions (`width` x `height`) should match the post-rotation visible area.

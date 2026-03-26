@@ -20,7 +20,7 @@
 | **tools** | 工具注册表；内置工具见 [Agent 工具说明](tools.md)；新工具实现 `Tool` trait 并在 `build_default_registry` 中注册。 |
 | **agent** | 上下文构建、ReAct 循环；依赖 LlmClient、ToolRegistry、Memory、Session。 |
 | **channels** | 通道抽象与分发；Telegram、飞书、钉钉、企微、QQ 频道、WebSocket 等；入站推 bus，出站由 dispatch 按 channel 分发；通道健康追踪委托给 orchestrator。 |
-| **display** | 显示配置类型（`DisplayConfig`、`DisplayCommand`、`DisplaySystemState`）与渲染。ESP32 上的 SPI 后端（`display_driver.rs`）：PSRAM 帧缓冲、ST7789/ILI9341 初始化、`DrawTarget` 实现、甲壳虫图标 + 仪表板通过 `embedded-graphics` 渲染。Host 编译返回 `available: false`。 |
+| **display** | 显示配置类型（`DisplayConfig`、`DisplayCommand`、`DisplaySystemState`）与渲染。ESP32 上的 SPI 后端（`display_driver.rs`）：PSRAM 帧缓冲、ST7789/ILI9341/ST7735 初始化、`DrawTarget` 实现、甲壳虫图标 + 仪表板通过 `embedded-graphics` 渲染。Host 编译返回 `available: false`。 |
 | **metrics** | 运行指标与错误画像：消息进/出、LLM/tool 调用与错误、WDT feed、dispatch 成功/失败、按 stage 聚合错误（含 session 写入失败）；供 health API 与 heartbeat 基线日志暴露。 |
 | **cli** (可选) | 串口命令：wifi_status、heap_info、session_list、restart、ota 等。 |
 | **ota** (可选) | 从 URL 拉取固件、写 OTA 分区；失败不破坏当前分区。 |

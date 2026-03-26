@@ -12,8 +12,9 @@
 |--------|-----------|------|
 | **ST7789** | 240x240、240x320 | 默认选择；面板原生色彩反转 ON |
 | **ILI9341** | 240x320 | 色彩反转默认 OFF |
+| **ST7735** | 128x160、128x128、80x160 等 | ST7735 / ST7735R / ST7735S 家族（寄存器兼容）；色彩反转默认 OFF；需专用初始化（帧率/电源/伽马） |
 
-两者使用相同的 SPI 初始化序列（SWRESET → SLPOUT → COLMOD → MADCTL → INV → NORON → DISPON）。`invert_colors` 配置项用于翻转驱动器的默认反转行为。
+ST7789 与 ILI9341 共用短初始化序列（SWRESET → SLPOUT → COLMOD `0x55` → MADCTL → INV → NORON → DISPON）。**ST7735** 在 SLPOUT 之后发送帧率、电源、伽马等寄存器，COLMOD 为 `0x05`，再接 MADCTL → INV → NORON → DISPON。`invert_colors` 用于翻转各驱动默认的反色行为。
 
 ---
 
@@ -66,13 +67,41 @@ ESP32-S3 的典型 SPI 接线：
 }
 ```
 
+### ST7735 示例（1.8 寸 128×160）
+
+```json
+{
+  "version": 1,
+  "enabled": true,
+  "driver": "st7735",
+  "bus": "spi",
+  "width": 128,
+  "height": 160,
+  "rotation": 0,
+  "color_order": "bgr",
+  "invert_colors": false,
+  "offset_x": 2,
+  "offset_y": 1,
+  "spi": {
+    "host": 2,
+    "sclk": 42,
+    "mosi": 41,
+    "cs": 21,
+    "dc": 40,
+    "rst": null,
+    "bl": null,
+    "freq_hz": 15000000
+  }
+}
+```
+
 ### 字段说明
 
 | 字段 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
 | `version` | u32 | 1 | 配置模式版本号，必须为 `1` |
 | `enabled` | bool | — | 启用/禁用显示。`false` 时不初始化任何 SPI 硬件 |
-| `driver` | string | — | `"st7789"` 或 `"ili9341"` |
+| `driver` | string | — | `"st7789"`、`"ili9341"` 或 `"st7735"` |
 | `bus` | string | — | `"spi"`（当前唯一选项） |
 | `width` | u16 | — | 面板宽度（像素，1–480） |
 | `height` | u16 | — | 面板高度（像素，1–480） |
@@ -175,10 +204,12 @@ ESP32-S3 的典型 SPI 接线：
 
 4. **色彩反转 (invert_colors)** — 如果显示效果像照片负片，切换此标志。ST7789 面板通常需要反转 ON（默认行为），ILI9341 面板通常需要反转 OFF。
 
-5. **SPI 频率** — 40 MHz 适用于大多数面板。如果出现花屏或显示异常，可尝试降低到 20 MHz 或 10 MHz。最高支持 80 MHz。
+5. **SPI 频率** — 40 MHz 适用于大多数 ST7789/ILI9341。如果出现花屏或显示异常，可尝试降低到 20 MHz 或 10 MHz。最高支持 80 MHz。**ST7735** 建议 ≤15 MHz（如 15_000_000），过高易花屏。
 
-6. **显示线程栈** — 渲染线程使用 6 KB 栈，对当前仪表板布局已足够。如果增加显著复杂的渲染逻辑，需注意栈溢出风险。
+6. **ST7735（1.8 寸 128×160 等）** — 多数模块玻璃为 132×162，可视区需窗口偏移：典型为 `offset_x: 2`、`offset_y: 1`（与 `width`/`height` 填 128/160 配合）；少数「黑板」类模块为 `0`/`0`，需按实物调整。色序常为 `bgr`，若红蓝互换再试 `rgb`。
 
-7. **Host 编译** — 在非 ESP 目标上（`cargo check`、`cargo clippy`），显示后端返回 `available: false`，所有命令为空操作。确保代码库在 host 端干净编译。
+7. **显示线程栈** — 渲染线程使用 6 KB 栈，对当前仪表板布局已足够。如果增加显著复杂的渲染逻辑，需注意栈溢出风险。
 
-8. **旋转 (rotation)** — `rotation` 字段在控制器层面应用 MADCTL 变换。帧缓冲尺寸（`width` x `height`）应匹配旋转后的可视区域。
+8. **Host 编译** — 在非 ESP 目标上（`cargo check`、`cargo clippy`），显示后端返回 `available: false`，所有命令为空操作。确保代码库在 host 端干净编译。
+
+9. **旋转 (rotation)** — `rotation` 字段在控制器层面应用 MADCTL 变换。帧缓冲尺寸（`width` x `height`）应匹配旋转后的可视区域。

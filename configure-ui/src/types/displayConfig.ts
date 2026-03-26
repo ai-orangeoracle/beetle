@@ -1,4 +1,4 @@
-export type DisplayDriver = 'st7789' | 'ili9341'
+export type DisplayDriver = 'st7789' | 'ili9341' | 'st7735'
 export type DisplayBus = 'spi'
 export type DisplayColorOrder = 'rgb' | 'bgr'
 

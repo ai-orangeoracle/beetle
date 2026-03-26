@@ -17,6 +17,8 @@ pub const DISPLAY_SPI_FREQ_MAX: u32 = 80_000_000;
 pub enum DisplayDriver {
     St7789,
     Ili9341,
+    /// ST7735 / ST7735R / ST7735S 家族（寄存器兼容）。
+    St7735,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -110,6 +112,9 @@ pub struct DisplayLayout {
     pub subtitle_top: u16,
     pub middle_top: u16,
     pub footer_top: u16,
+    /// 水平边距（与 240×240 参考设计等比缩放）。
+    /// Horizontal margin scaled from 240×240 reference layout.
+    pub margin_x: u16,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -157,16 +162,28 @@ pub enum DisplayCommand {
     Clear,
 }
 
-pub fn default_display_layout() -> DisplayLayout {
+/// 按 `width`×`height` 从 240×240 参考设计等比例计算仪表盘布局。
+/// Computes dashboard layout proportional to a 240×240 reference design.
+pub fn compute_layout(width: u16, height: u16) -> DisplayLayout {
+    const REF: u32 = 240;
+    let w = width as u32;
+    let h = height as u32;
+    let dim_min = w.min(h);
+
+    let icon_left = (w * 12 / REF) as u16;
+    let icon_size = (dim_min * 64 / REF).max(16) as u16;
+    let gap = icon_left;
+
     DisplayLayout {
-        header_top: 16,
-        icon_left: 12,
-        icon_size: 64,
-        title_left: 88,
-        title_top: 18,
-        subtitle_top: 44,
-        middle_top: 104,
-        footer_top: 168,
+        header_top: (h * 16 / REF) as u16,
+        icon_left,
+        icon_size,
+        title_left: icon_left.saturating_add(icon_size).saturating_add(gap),
+        title_top: (h * 18 / REF) as u16,
+        subtitle_top: (h * 44 / REF) as u16,
+        middle_top: (h * 104 / REF) as u16,
+        footer_top: (h * 168 / REF) as u16,
+        margin_x: ((w * 8 / REF).max(2)) as u16,
     }
 }
 

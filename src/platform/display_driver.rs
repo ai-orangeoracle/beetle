@@ -6,7 +6,8 @@
 )]
 
 use crate::display::{
-    DisplayChannelStatus, DisplayCommand, DisplayConfig, DisplayPressureLevel, DisplaySystemState,
+    compute_layout, DisplayChannelStatus, DisplayCommand, DisplayConfig, DisplayLayout,
+    DisplayPressureLevel, DisplaySystemState,
 };
 use crate::error::Result;
 use std::time::Instant;
@@ -28,7 +29,7 @@ mod esp_backend {
     };
     use esp_idf_svc::sys::*;
 
-    /// SPI-connected display backend (ST7789 / ILI9341).
+    /// SPI-connected display backend (ST7789 / ILI9341 / ST7735 family).
     /// Framebuffer lives in PSRAM; rendering via `embedded-graphics` `DrawTarget`.
     pub(super) struct SpiDisplayBackend {
         spi_host: u32,
@@ -242,9 +243,49 @@ mod esp_backend {
             self.send_cmd(0x11)?;
             std::thread::sleep(std::time::Duration::from_millis(120));
 
-            // COLMOD: 16-bit RGB565
-            self.send_cmd(0x3A)?;
-            self.send_data(&[0x55])?;
+            match config.driver {
+                DisplayDriver::St7735 => {
+                    // ST7735 / ST7735R / ST7735S: frame rate, power, gamma (not used on ST7789/ILI9341).
+                    self.send_cmd(0xB1)?;
+                    self.send_data(&[0x01, 0x2C, 0x2D])?; // FRMCTR1
+                    self.send_cmd(0xB2)?;
+                    self.send_data(&[0x01, 0x2C, 0x2D])?; // FRMCTR2
+                    self.send_cmd(0xB3)?;
+                    self.send_data(&[0x01, 0x2C, 0x2D, 0x01, 0x2C, 0x2D])?; // FRMCTR3
+                    self.send_cmd(0xB4)?;
+                    self.send_data(&[0x07])?; // INVCTR: no line inversion
+                    self.send_cmd(0xC0)?;
+                    self.send_data(&[0xA2, 0x02, 0x84])?; // PWCTR1
+                    self.send_cmd(0xC1)?;
+                    self.send_data(&[0xC5])?; // PWCTR2
+                    self.send_cmd(0xC2)?;
+                    self.send_data(&[0x0A, 0x00])?; // PWCTR3
+                    self.send_cmd(0xC3)?;
+                    self.send_data(&[0x8A, 0x2A])?; // PWCTR4
+                    self.send_cmd(0xC4)?;
+                    self.send_data(&[0x8A, 0xEE])?; // PWCTR5
+                    self.send_cmd(0xC5)?;
+                    self.send_data(&[0x0E])?; // VMCTR1
+                                              // COLMOD: 16-bit RGB565 (ST7735 uses 0x05; ST7789 uses 0x55)
+                    self.send_cmd(0x3A)?;
+                    self.send_data(&[0x05])?;
+                    self.send_cmd(0xE0)?;
+                    self.send_data(&[
+                        0x02, 0x1c, 0x07, 0x12, 0x37, 0x32, 0x29, 0x2d, 0x29, 0x25, 0x2B, 0x39,
+                        0x00, 0x01, 0x03, 0x10,
+                    ])?; // GMCTRP1
+                    self.send_cmd(0xE1)?;
+                    self.send_data(&[
+                        0x03, 0x1d, 0x07, 0x06, 0x2E, 0x2C, 0x29, 0x2D, 0x2E, 0x2E, 0x37, 0x3F,
+                        0x00, 0x00, 0x02, 0x10,
+                    ])?; // GMCTRN1
+                }
+                DisplayDriver::St7789 | DisplayDriver::Ili9341 => {
+                    // COLMOD: 16-bit RGB565 (ST7789/ILI9341)
+                    self.send_cmd(0x3A)?;
+                    self.send_data(&[0x55])?;
+                }
+            }
 
             // MADCTL: rotation + color order
             let madctl = Self::compute_madctl(config.rotation, &config.color_order);
@@ -252,12 +293,11 @@ mod esp_backend {
             self.send_data(&[madctl])?;
 
             // INVON / INVOFF
-            // ST7789 panels are typically inverted by default, so normal display needs INVON.
-            // ILI9341 panels are typically non-inverted, so normal display needs INVOFF.
-            // config.invert_colors flips the driver's default behavior.
+            // ST7789: panel often inverted by default → INVON unless invert_colors.
+            // ILI9341 / ST7735: typically non-inverted → INVOFF unless invert_colors.
             let needs_invon = match config.driver {
                 DisplayDriver::St7789 => !config.invert_colors,
-                DisplayDriver::Ili9341 => config.invert_colors,
+                DisplayDriver::Ili9341 | DisplayDriver::St7735 => config.invert_colors,
             };
             if needs_invon {
                 self.send_cmd(0x21)?; // INVON
@@ -307,7 +347,7 @@ mod esp_backend {
                 return Ok(());
             }
 
-            // ST7789/ILI9341 require full-width rows for RAMWR; we send only the dirty row band.
+            // ST7789 / ILI9341 / ST7735: full-width rows for RAMWR; send only the dirty row band.
             let x0 = offset_x.max(0) as u16;
             let y0 = offset_y.max(0) as u16 + ry;
             let x1 = x0 + self.width - 1;
@@ -386,6 +426,8 @@ mod esp_backend {
 
 pub struct DisplayState {
     pub config: DisplayConfig,
+    /// 由 `config.width`/`height` 计算的仪表盘布局（与 SPI 是否启用无关）。
+    pub layout: DisplayLayout,
     pub available: bool,
     pub last_command_at: Option<Instant>,
     /// BL GPIO pin number (if configured). Used for backlight on/off control.
@@ -405,9 +447,11 @@ const BL_LEDC_MAX_DUTY: u32 = 8191;
 
 impl DisplayState {
     pub fn init(config: &DisplayConfig) -> Result<Self> {
+        let layout = compute_layout(config.width, config.height);
         if !config.enabled {
             return Ok(Self {
                 config: config.clone(),
+                layout,
                 available: false,
                 last_command_at: None,
                 bl_pin: None,
@@ -424,6 +468,7 @@ impl DisplayState {
             let backend = esp_backend::SpiDisplayBackend::new(config)?;
             let mut state = Self {
                 config: config.clone(),
+                layout,
                 available: true,
                 last_command_at: None,
                 bl_pin,
@@ -440,6 +485,7 @@ impl DisplayState {
             log::info!("[display] host stub: init skipped (no SPI hardware)");
             Ok(Self {
                 config: config.clone(),
+                layout,
                 available: false,
                 last_command_at: None,
                 bl_pin,
@@ -530,6 +576,7 @@ impl DisplayState {
                     render_dashboard(
                         backend,
                         &DashboardParams {
+                            layout: &self.layout,
                             state: *state,
                             ip_address: ip_address.as_deref(),
                             channels,
@@ -550,8 +597,8 @@ impl DisplayState {
                 }
                 DisplayCommand::UpdateIp { ip } => {
                     let bg = DISPLAY_BG;
-                    render_ip_partial(backend, ip, bg, self.config.width);
-                    let layout = LAYOUT;
+                    render_ip_partial(backend, ip, bg, self.config.width, &self.layout);
+                    let layout = &self.layout;
                     backend.flush_rows(
                         self.config.offset_x,
                         self.config.offset_y,
@@ -573,6 +620,7 @@ impl DisplayState {
                         backend,
                         level,
                         bg,
+                        &self.layout,
                         &FooterPartialParams {
                             heap_percent: *heap_percent,
                             width: self.config.width,
@@ -584,7 +632,7 @@ impl DisplayState {
                             error_flash: *error_flash,
                         },
                     );
-                    let layout = LAYOUT;
+                    let layout = &self.layout;
                     let footer_h = self.config.height.saturating_sub(layout.footer_top);
                     backend.flush_rows(
                         self.config.offset_x,
@@ -595,8 +643,8 @@ impl DisplayState {
                 }
                 DisplayCommand::UpdateChannels { channels } => {
                     let bg = DISPLAY_BG;
-                    render_channels_partial(backend, channels, bg, self.config.width);
-                    let layout = LAYOUT;
+                    render_channels_partial(backend, channels, bg, self.config.width, &self.layout);
+                    let layout = &self.layout;
                     let ch_h = layout.footer_top.saturating_sub(layout.middle_top);
                     backend.flush_rows(
                         self.config.offset_x,
@@ -613,8 +661,9 @@ impl DisplayState {
                         self.config.width,
                         self.config.height,
                         bg,
+                        &self.layout,
                     );
-                    let layout = LAYOUT;
+                    let layout = &self.layout;
                     let footer_h = self.config.height.saturating_sub(layout.footer_top);
                     backend.flush_rows(
                         self.config.offset_x,
@@ -732,18 +781,6 @@ use embedded_graphics::{
     text::Text,
 };
 use embedded_graphics_core::pixelcolor::Rgb565;
-
-/// Cached layout constants (avoid re-creating on each call).
-const LAYOUT: crate::display::DisplayLayout = crate::display::DisplayLayout {
-    header_top: 16,
-    icon_left: 12,
-    icon_size: 64,
-    title_left: 88,
-    title_top: 18,
-    subtitle_top: 44,
-    middle_top: 104,
-    footer_top: 168,
-};
 
 /// Beetle drawing options.
 #[derive(Default)]
@@ -1060,6 +1097,7 @@ fn draw_dashed_top_arc<D: DrawTarget<Color = Rgb565>>(
 
 /// Dashboard render parameters (avoids clippy::too_many_arguments).
 struct DashboardParams<'a> {
+    layout: &'a DisplayLayout,
     state: DisplaySystemState,
     ip_address: Option<&'a str>,
     channels: &'a [DisplayChannelStatus; 5],
@@ -1082,7 +1120,7 @@ struct DashboardParams<'a> {
 
 /// Render the full dashboard UI.
 fn render_dashboard<D: DrawTarget<Color = Rgb565>>(target: &mut D, p: &DashboardParams<'_>) {
-    let layout = LAYOUT;
+    let layout = p.layout;
 
     // --- Background fill ---
     let bg_color = DISPLAY_BG;
@@ -1251,11 +1289,12 @@ fn render_dashboard<D: DrawTarget<Color = Rgb565>>(target: &mut D, p: &Dashboard
     }
 
     // --- Channel status (middle section) with F5 failure count ---
-    render_channels_inner(target, p.channels, p.width, layout.middle_top as i32);
+    render_channels_inner(target, p.channels, p.width, layout);
 
     // --- Footer: pressure level + heap progress bar ---
     render_footer(
         target,
+        layout,
         p.pressure,
         p.heap_percent,
         p.width,
@@ -1351,8 +1390,10 @@ fn render_channels_inner<D: DrawTarget<Color = Rgb565>>(
     target: &mut D,
     channels: &[DisplayChannelStatus; 5],
     width: u16,
-    middle_y: i32,
+    layout: &DisplayLayout,
 ) {
+    let middle_y = layout.middle_top as i32;
+    let margin_x = layout.margin_x as i32;
     let healthy_color = rgb565(0x22, 0xcc, 0x22);
     let unhealthy_color = rgb565(0xcc, 0x22, 0x22);
     let disabled_color = rgb565(0xbb, 0xbb, 0xbb);
@@ -1364,7 +1405,7 @@ fn render_channels_inner<D: DrawTarget<Color = Rgb565>>(
     let mut col = 0i32;
     let mut row = 0i32;
     for ch in channels.iter() {
-        let px = 8 + col * col_width;
+        let px = margin_x + col * col_width;
         let py = middle_y + row * 18;
 
         if ch.enabled {
@@ -1434,8 +1475,8 @@ fn render_ip_partial<D: DrawTarget<Color = Rgb565>>(
     ip: &str,
     bg: Rgb565,
     width: u16,
+    layout: &DisplayLayout,
 ) {
-    let layout = LAYOUT;
     // Clear subtitle row: from title_left to right edge, height = font height (13px)
     let y = layout.subtitle_top as i32;
     let x = layout.title_left as i32;
@@ -1454,8 +1495,8 @@ fn render_channels_partial<D: DrawTarget<Color = Rgb565>>(
     channels: &[DisplayChannelStatus; 5],
     bg: Rgb565,
     width: u16,
+    layout: &DisplayLayout,
 ) {
-    let layout = LAYOUT;
     let middle_y = layout.middle_top as i32;
     let ch_h = (layout.footer_top - layout.middle_top) as u32;
 
@@ -1465,7 +1506,7 @@ fn render_channels_partial<D: DrawTarget<Color = Rgb565>>(
         .draw(target);
 
     // F5: 使用共享渲染逻辑（含失败计数）
-    render_channels_inner(target, channels, width, middle_y);
+    render_channels_inner(target, channels, width, layout);
 }
 
 /// Footer partial-update parameters (avoids clippy::too_many_arguments).
@@ -1487,9 +1528,9 @@ fn render_pressure_partial<D: DrawTarget<Color = Rgb565>>(
     target: &mut D,
     level: &DisplayPressureLevel,
     bg: Rgb565,
+    layout: &DisplayLayout,
     fp: &FooterPartialParams,
 ) {
-    let layout = LAYOUT;
     let footer_y = layout.footer_top as i32;
 
     // Clear entire footer region
@@ -1503,6 +1544,7 @@ fn render_pressure_partial<D: DrawTarget<Color = Rgb565>>(
 
     render_footer(
         target,
+        layout,
         level,
         fp.heap_percent,
         fp.width,
@@ -1518,6 +1560,7 @@ fn render_pressure_partial<D: DrawTarget<Color = Rgb565>>(
 #[allow(clippy::too_many_arguments)]
 fn render_footer<D: DrawTarget<Color = Rgb565>>(
     target: &mut D,
+    layout: &DisplayLayout,
     level: &DisplayPressureLevel,
     heap_percent: u8,
     width: u16,
@@ -1527,7 +1570,8 @@ fn render_footer<D: DrawTarget<Color = Rgb565>>(
     llm_last_ms: u32,
     error_flash: bool,
 ) {
-    let footer_y = LAYOUT.footer_top as i32;
+    let footer_y = layout.footer_top as i32;
+    let margin_x = layout.margin_x as i32;
     let pressure_text = match level {
         DisplayPressureLevel::Normal => "NORMAL",
         DisplayPressureLevel::Cautious => "CAUTIOUS",
@@ -1542,17 +1586,27 @@ fn render_footer<D: DrawTarget<Color = Rgb565>>(
     // F7: 错误闪烁 — error_flash=true 时反色渲染压力标签（彩色背景 + 白字）
     if error_flash {
         let text_w = pressure_text.len() as u32 * 6 + 4; // FONT_6X13 + padding
-        let _ = Rectangle::new(Point::new(6, footer_y), Size::new(text_w, 14))
+        let _ = Rectangle::new(Point::new(margin_x - 2, footer_y), Size::new(text_w, 14))
             .into_styled(PrimitiveStyle::with_fill(pressure_color))
             .draw(target);
         let flash_style = MonoTextStyle::new(&FONT_6X13, Rgb565::WHITE);
-        let _ = Text::new(pressure_text, Point::new(8, footer_y + 11), flash_style).draw(target);
+        let _ = Text::new(
+            pressure_text,
+            Point::new(margin_x, footer_y + 11),
+            flash_style,
+        )
+        .draw(target);
     } else {
         let pressure_style = MonoTextStyle::new(&FONT_6X13, pressure_color);
-        let _ = Text::new(pressure_text, Point::new(8, footer_y + 11), pressure_style).draw(target);
+        let _ = Text::new(
+            pressure_text,
+            Point::new(margin_x, footer_y + 11),
+            pressure_style,
+        )
+        .draw(target);
     }
 
-    let bar_x = 8i32;
+    let bar_x = margin_x;
     let bar_y = footer_y + 20;
     let bar_w = (width as i32 - 56).max(40) as u32;
     let bar_h = 12u32;
@@ -1593,7 +1647,7 @@ fn render_footer<D: DrawTarget<Color = Rgb565>>(
         llm_last_ms,
         &mut stats_buf,
     );
-    let _ = Text::new(stats_str, Point::new(8, stats_y), dim_style).draw(target);
+    let _ = Text::new(stats_str, Point::new(margin_x, stats_y), dim_style).draw(target);
 }
 
 /// F8: 启动进度条渲染。4 段：WiFi → SNTP → Channels → Agent。
@@ -1603,9 +1657,10 @@ fn render_boot_progress<D: DrawTarget<Color = Rgb565>>(
     width: u16,
     height: u16,
     bg: Rgb565,
+    layout: &DisplayLayout,
 ) {
-    let layout = LAYOUT;
     let footer_y = layout.footer_top as i32;
+    let margin_x = layout.margin_x as i32;
     let footer_h = (height as i32 - footer_y).max(1) as u32;
 
     // Clear footer
@@ -1614,9 +1669,9 @@ fn render_boot_progress<D: DrawTarget<Color = Rgb565>>(
         .draw(target);
 
     let stage = stage.min(4);
-    let bar_x = 8i32;
+    let bar_x = margin_x;
     let bar_y = footer_y + 8;
-    let total_w = (width as i32 - 16).max(40);
+    let total_w = (width as i32 - 2 * margin_x).max(40);
     let seg_w = total_w / 4;
     let bar_h = 14u32;
 
