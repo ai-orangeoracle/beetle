@@ -483,7 +483,11 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
         inbound_tx.clone(),
         beetle::cron::DEFAULT_CRON_INTERVAL_SECS,
         Some(Arc::clone(&memory_store)),
-        Some((Arc::clone(&platform), config.hardware_devices.clone())),
+        Some(beetle::cron::SensorWatchContext {
+            platform: Arc::clone(&platform),
+            devices: config.hardware_devices.clone(),
+            i2c_sensors: config.i2c_sensors.clone(),
+        }),
         Arc::clone(&resolve_locale_ui),
     );
     beetle::heartbeat::run_heartbeat_loop_with_tasks(

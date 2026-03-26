@@ -3,7 +3,7 @@
 //! 同时检查持久化 cron 任务并在到期时注入消息。
 
 use crate::bus::{InboundTx, PcMsg};
-use crate::config::DeviceEntry;
+use crate::config::{DeviceEntry, I2cSensorEntry};
 use crate::i18n::Locale;
 use crate::memory::MemoryStore;
 use crate::tools::cron_manage::CronTask;
@@ -25,6 +25,13 @@ pub const DEFAULT_CRON_INTERVAL_SECS: u64 = 60;
 /// 发送失败后退避乘数（秒）。
 const BACKOFF_SECS: u64 = 5;
 
+/// `sensor_watch` 检查所需：平台 + GPIO 类设备 + I2C 传感器列表。
+pub struct SensorWatchContext {
+    pub platform: Arc<dyn crate::platform::Platform>,
+    pub devices: Vec<DeviceEntry>,
+    pub i2c_sensors: Vec<I2cSensorEntry>,
+}
+
 /// 在独立线程中循环：每隔 interval_secs 向 inbound_tx 推一条 PcMsg（channel=cron, chat_id=cron）。
 /// 同时检查持久化 cron 任务，到期的任务生成消息推入 inbound_tx。
 /// 发送失败时打日志并退避 BACKOFF_SECS，不 panic。
@@ -32,7 +39,7 @@ pub fn run_cron_loop(
     inbound_tx: InboundTx,
     interval_secs: u64,
     memory_store: Option<Arc<dyn MemoryStore + Send + Sync>>,
-    sensor_watch: Option<(Arc<dyn crate::platform::Platform>, Vec<DeviceEntry>)>,
+    sensor_watch: Option<SensorWatchContext>,
     resolve_locale: Arc<dyn Fn() -> Locale + Send + Sync>,
 ) {
     crate::util::spawn_guarded("cron", move || {
@@ -70,13 +77,14 @@ pub fn run_cron_loop(
                     &mut persisted_cron_cache,
                     &resolve_locale,
                 );
-                if let Some((ref plat, ref devs)) = sensor_watch.as_ref() {
+                if let Some(ctx) = sensor_watch.as_ref() {
                     let loc = resolve_locale();
                     crate::tools::sensor_watch::check_sensor_watches(
                         store.as_ref(),
                         &inbound_tx,
-                        plat.as_ref(),
-                        devs.as_slice(),
+                        ctx.platform.as_ref(),
+                        ctx.devices.as_slice(),
+                        ctx.i2c_sensors.as_slice(),
                         loc,
                     );
                 }

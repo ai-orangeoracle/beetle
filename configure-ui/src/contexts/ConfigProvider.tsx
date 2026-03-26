@@ -188,6 +188,7 @@ export function ConfigProvider({ children }: { children: React.ReactNode }) {
         hardware_devices: ensureHardwareDeviceIds(list),
         i2c_bus: d.i2c_bus ?? undefined,
         i2c_devices: Array.isArray(d.i2c_devices) ? d.i2c_devices : undefined,
+        i2c_sensors: Array.isArray(d.i2c_sensors) ? d.i2c_sensors : [],
       })
     } else {
       setHardwareError(

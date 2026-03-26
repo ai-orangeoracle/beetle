@@ -352,6 +352,128 @@ impl Platform for Esp32Platform {
         crate::platform::hardware_drivers::drive_dht(pins, params, options)
     }
 
+    fn drive_i2c_sensor(
+        &self,
+        addr: u8,
+        model: &str,
+        _watch_field: &str,
+        options: &serde_json::Value,
+    ) -> crate::error::Result<String> {
+        use crate::platform::hardware_drivers::{parse_aht20, parse_sht3x};
+        use std::time::Duration;
+
+        match model {
+            "sht3x" => {
+                {
+                    let mut g = self.i2c_state.lock().unwrap_or_else(|e| e.into_inner());
+                    let s = g.as_mut().ok_or_else(|| {
+                        crate::error::Error::config("drive_i2c_sensor", "I2C bus not initialized")
+                    })?;
+                    s.write(addr, 0x2C, &[0x06])?;
+                }
+                std::thread::sleep(Duration::from_millis(15));
+                let data = {
+                    let mut g = self.i2c_state.lock().unwrap_or_else(|e| e.into_inner());
+                    let s = g.as_mut().ok_or_else(|| {
+                        crate::error::Error::config("drive_i2c_sensor", "I2C bus not initialized")
+                    })?;
+                    s.receive(addr, 6)?
+                };
+                let (temperature, humidity) = parse_sht3x(&data)?;
+                Ok(format!(
+                    r#"{{"temperature":{},"humidity":{},"model":"sht3x"}}"#,
+                    temperature, humidity
+                ))
+            }
+            "aht20" => {
+                {
+                    let mut g = self.i2c_state.lock().unwrap_or_else(|e| e.into_inner());
+                    let s = g.as_mut().ok_or_else(|| {
+                        crate::error::Error::config("drive_i2c_sensor", "I2C bus not initialized")
+                    })?;
+                    s.write(addr, 0xAC, &[0x33, 0x00])?;
+                }
+                std::thread::sleep(Duration::from_millis(80));
+                let data = {
+                    let mut g = self.i2c_state.lock().unwrap_or_else(|e| e.into_inner());
+                    let s = g.as_mut().ok_or_else(|| {
+                        crate::error::Error::config("drive_i2c_sensor", "I2C bus not initialized")
+                    })?;
+                    s.receive(addr, 6)?
+                };
+                let (temperature, humidity) = parse_aht20(&data)?;
+                Ok(format!(
+                    r#"{{"temperature":{},"humidity":{},"model":"aht20"}}"#,
+                    temperature, humidity
+                ))
+            }
+            "raw" => {
+                let arr = options
+                    .get("init_cmd")
+                    .and_then(|v| v.as_array())
+                    .ok_or_else(|| {
+                        crate::error::Error::config(
+                            "drive_i2c_sensor",
+                            "raw model requires options.init_cmd",
+                        )
+                    })?;
+                let mut cmd: Vec<u8> = Vec::with_capacity(arr.len());
+                for el in arr {
+                    let b = el.as_u64().ok_or_else(|| {
+                        crate::error::Error::config("drive_i2c_sensor", "init_cmd must be u8")
+                    })?;
+                    if b > 255 {
+                        return Err(crate::error::Error::config(
+                            "drive_i2c_sensor",
+                            "init_cmd byte must be 0-255",
+                        ));
+                    }
+                    cmd.push(b as u8);
+                }
+                if cmd.is_empty() {
+                    return Err(crate::error::Error::config(
+                        "drive_i2c_sensor",
+                        "init_cmd must not be empty",
+                    ));
+                }
+                let read_len = options
+                    .get("read_len")
+                    .and_then(|v| v.as_u64())
+                    .ok_or_else(|| {
+                        crate::error::Error::config("drive_i2c_sensor", "raw requires read_len")
+                    })? as usize;
+                let wait_ms = options
+                    .get("conversion_wait_ms")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(15)
+                    .min(2000);
+                let reg = cmd[0];
+                let tail = &cmd[1..];
+                {
+                    let mut g = self.i2c_state.lock().unwrap_or_else(|e| e.into_inner());
+                    let s = g.as_mut().ok_or_else(|| {
+                        crate::error::Error::config("drive_i2c_sensor", "I2C bus not initialized")
+                    })?;
+                    s.write(addr, reg, tail)?;
+                }
+                std::thread::sleep(Duration::from_millis(wait_ms));
+                let buf = {
+                    let mut g = self.i2c_state.lock().unwrap_or_else(|e| e.into_inner());
+                    let s = g.as_mut().ok_or_else(|| {
+                        crate::error::Error::config("drive_i2c_sensor", "I2C bus not initialized")
+                    })?;
+                    s.receive(addr, read_len)?
+                };
+                let hex: String = buf.iter().map(|b| format!("{:02X}", b)).collect();
+                Ok(format!(r#"{{"raw":"{}","model":"raw"}}"#, hex))
+            }
+            other => Err(crate::error::Error::config(
+                "drive_i2c_sensor",
+                format!("unknown model '{}'", other),
+            )),
+        }
+    }
+
     fn init_i2c(&self, config: &crate::config::I2cBusConfig) -> crate::error::Result<()> {
         let state = crate::platform::hardware_drivers::I2cBusState::new(
             config.sda_pin,

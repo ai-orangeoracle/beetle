@@ -948,6 +948,92 @@ impl I2cBusState {
         }
         Ok(())
     }
+
+    /// 纯读：无寄存器前缀（`i2c_master_receive`），用于 SHT3x/AHT20 等测量后读回。
+    pub(crate) fn receive(&mut self, addr: u8, len: usize) -> Result<Vec<u8>> {
+        use esp_idf_svc::sys::{i2c_master_receive, ESP_OK};
+
+        let dev = self.ensure_device(addr)?;
+        let mut read_buf = vec![0u8; len];
+        let ret = unsafe {
+            i2c_master_receive(
+                dev,
+                read_buf.as_mut_ptr(),
+                read_buf.len(),
+                -1,
+            )
+        };
+        if ret != ESP_OK {
+            return Err(Error::esp("i2c_read", ret));
+        }
+        Ok(read_buf)
+    }
+}
+
+/// SHT3x CRC-8：多项式 0x31，初值 0xFF。
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+fn crc8_sht3x(data: &[u8]) -> u8 {
+    let mut crc = 0xFFu8;
+    for b in data {
+        crc ^= *b;
+        for _ in 0..8 {
+            if (crc & 0x80) != 0 {
+                crc = (crc << 1) ^ 0x31;
+            } else {
+                crc <<= 1;
+            }
+        }
+    }
+    crc
+}
+
+/// 解析 SHT3x 单次测量 6 字节帧（湿度 + CRC + 温度 + CRC）。
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+pub(crate) fn parse_sht3x(data: &[u8]) -> Result<(f64, f64)> {
+    if data.len() < 6 {
+        return Err(Error::config(
+            "drive_i2c_sensor",
+            format!("sht3x expected 6 bytes, got {}", data.len()),
+        ));
+    }
+    if crc8_sht3x(&data[0..2]) != data[2] {
+        return Err(Error::config("drive_i2c_sensor", "sht3x humidity CRC mismatch"));
+    }
+    if crc8_sht3x(&data[3..5]) != data[5] {
+        return Err(Error::config("drive_i2c_sensor", "sht3x temperature CRC mismatch"));
+    }
+    let rh_raw = u16::from_be_bytes([data[0], data[1]]);
+    let t_raw = u16::from_be_bytes([data[3], data[4]]);
+    let humidity = 100.0 * f64::from(rh_raw) / 65535.0;
+    let temperature = -45.0 + 175.0 * f64::from(t_raw) / 65535.0;
+    Ok((temperature, humidity))
+}
+
+/// 解析 AHT20 测量 6 字节帧（状态 + 20bit 湿度 + 20bit 温度）。
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+pub(crate) fn parse_aht20(data: &[u8]) -> Result<(f64, f64)> {
+    if data.len() < 6 {
+        return Err(Error::config(
+            "drive_i2c_sensor",
+            format!("aht20 expected 6 bytes, got {}", data.len()),
+        ));
+    }
+    if (data[0] & 0x80) != 0 {
+        return Err(Error::config(
+            "drive_i2c_sensor",
+            "aht20 sensor busy (status bit 7 set)",
+        ));
+    }
+    let h_raw: u32 = ((u32::from(data[1]) << 12)
+        | (u32::from(data[2]) << 4)
+        | (u32::from(data[3]) >> 4))
+        & 0xFFFFF;
+    let t_raw: u32 =
+        (((u32::from(data[3]) & 0x0F) << 16) | (u32::from(data[4]) << 8) | u32::from(data[5]))
+            & 0xFFFFF;
+    let humidity = (h_raw as f64) * 100.0 / f64::from(1u32 << 20);
+    let temperature = (t_raw as f64) * 200.0 / f64::from(1u32 << 20) - 50.0;
+    Ok((temperature, humidity))
 }
 
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
@@ -990,4 +1076,58 @@ pub fn drive_i2c_write(addr: u8, register: u8, data: &[u8]) -> Result<()> {
         data
     );
     Ok(())
+}
+
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+static I2C_SENSOR_LAST_READ: Mutex<Option<HashMap<i32, Instant>>> = Mutex::new(None);
+
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+fn i2c_sensor_stub_rate_limit_check(addr: u8) -> Result<()> {
+    use crate::constants::I2C_SENSOR_RATE_LIMIT_MS;
+    let pin_key = i32::from(addr);
+    let guard = I2C_SENSOR_LAST_READ.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(map) = guard.as_ref() {
+        if let Some(prev) = map.get(&pin_key) {
+            let elapsed_ms = prev.elapsed().as_millis() as u64;
+            if elapsed_ms < I2C_SENSOR_RATE_LIMIT_MS {
+                return Err(Error::config(
+                    "drive_i2c_sensor",
+                    format!(
+                        "too frequent: wait {}ms (min interval {}ms)",
+                        I2C_SENSOR_RATE_LIMIT_MS.saturating_sub(elapsed_ms),
+                        I2C_SENSOR_RATE_LIMIT_MS
+                    ),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+fn i2c_sensor_stub_rate_limit_on_success(addr: u8) {
+    let pin_key = i32::from(addr);
+    let mut guard = I2C_SENSOR_LAST_READ.lock().unwrap_or_else(|e| e.into_inner());
+    let map = guard.get_or_insert_with(HashMap::new);
+    map.insert(pin_key, Instant::now());
+}
+
+/// Host：`drive_i2c_sensor` 模拟 JSON（含速率限制）。
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+pub fn drive_i2c_sensor_stub(addr: u8, model: &str) -> Result<String> {
+    i2c_sensor_stub_rate_limit_check(addr)?;
+    log::info!(
+        "[drive_i2c_sensor] stub: addr=0x{:02X} model={}",
+        addr,
+        model
+    );
+    i2c_sensor_stub_rate_limit_on_success(addr);
+    if model == "raw" {
+        Ok(r#"{"raw":"000000000000","model":"raw","stub":true}"#.to_string())
+    } else {
+        Ok(format!(
+            r#"{{"temperature":22.0,"humidity":55.0,"model":"{}","stub":true}}"#,
+            model
+        ))
+    }
 }

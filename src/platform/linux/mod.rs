@@ -336,6 +336,16 @@ impl Platform for LinuxPlatform {
         crate::platform::hardware_drivers::drive_dht(pins, params, options)
     }
 
+    fn drive_i2c_sensor(
+        &self,
+        addr: u8,
+        model: &str,
+        _watch_field: &str,
+        _options: &serde_json::Value,
+    ) -> crate::error::Result<String> {
+        crate::platform::hardware_drivers::drive_i2c_sensor_stub(addr, model)
+    }
+
     fn i2c_read(&self, addr: u8, register: u8, len: usize) -> crate::error::Result<Vec<u8>> {
         crate::platform::hardware_drivers::drive_i2c_read(addr, register, len)
     }

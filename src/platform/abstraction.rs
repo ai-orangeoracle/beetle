@@ -366,4 +366,19 @@ pub trait Platform: Send + Sync {
             "DHT sensor not supported on this platform",
         ))
     }
+
+    /// 通用 I2C 传感器读取（SHT3x / AHT20 / raw）；内部完成测量命令、等待、读回与解析，返回 JSON。
+    /// Generic I2C sensor read; returns JSON with temperature/humidity or raw hex for `raw` model.
+    fn drive_i2c_sensor(
+        &self,
+        _addr: u8,
+        _model: &str,
+        _watch_field: &str,
+        _options: &Value,
+    ) -> Result<String> {
+        Err(crate::error::Error::config(
+            "drive_i2c_sensor",
+            "I2C sensor not supported on this platform",
+        ))
+    }
 }

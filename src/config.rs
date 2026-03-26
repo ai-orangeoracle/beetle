@@ -186,6 +186,9 @@ pub struct AppConfig {
     /// I2C 设备列表（从 SPIFFS config/hardware.json 加载），不序列化到 NVS。
     #[serde(skip, default)]
     pub i2c_devices: Vec<I2cDeviceEntry>,
+    /// I2C 温湿度等传感器条目（从 SPIFFS config/hardware.json 加载），不序列化到 NVS。
+    #[serde(skip, default)]
+    pub i2c_sensors: Vec<I2cSensorEntry>,
 
     /// 显示配置（从 SPIFFS config/display.json 加载），不序列化到 NVS。
     #[serde(skip, default)]
@@ -274,6 +277,7 @@ impl AppConfig {
             hardware_devices: vec![],
             i2c_bus: None,
             i2c_devices: vec![],
+            i2c_sensors: vec![],
             display: None,
             load_errors: None,
         }
@@ -461,6 +465,7 @@ impl AppConfig {
                 self.hardware_devices = seg.hardware_devices;
                 self.i2c_bus = seg.i2c_bus;
                 self.i2c_devices = seg.i2c_devices;
+                self.i2c_sensors = seg.i2c_sensors;
             }
             Err(e) => {
                 log::warn!("[config] merge_hardware_from_json parse failed: {}", e);
@@ -956,6 +961,22 @@ pub struct I2cDeviceEntry {
     pub options: serde_json::Value,
 }
 
+/// I2C 传感器条目（SHT3x / AHT20 / raw）；与 `I2cDeviceEntry` 分离，供 `drive_i2c_sensor` 与 `sensor_watch` 使用。
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct I2cSensorEntry {
+    pub id: String,
+    /// 7-bit I2C 地址。
+    pub addr: u8,
+    /// `sht3x` | `aht20` | `raw`
+    pub model: String,
+    /// `temperature` | `humidity`（`sensor_watch` 监控字段）。
+    pub watch_field: String,
+    pub what: String,
+    pub how: String,
+    #[serde(default)]
+    pub options: serde_json::Value,
+}
+
 /// POST /api/config/hardware 请求体；硬件设备列表。
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct HardwareSegment {
@@ -965,6 +986,8 @@ pub struct HardwareSegment {
     pub i2c_bus: Option<I2cBusConfig>,
     #[serde(default)]
     pub i2c_devices: Vec<I2cDeviceEntry>,
+    #[serde(default)]
+    pub i2c_sensors: Vec<I2cSensorEntry>,
 }
 
 /// 私有：校验 llm_sources 非空、字段长度、router/worker 下标。供 from_json_and_validate 与 save_llm_segment 复用。
@@ -1235,6 +1258,170 @@ fn validate_hardware_segment(seg: &HardwareSegment) -> Result<()> {
                 pwm_count, MAX_PWM_DEVICES
             ),
         ));
+    }
+
+    // i2c_sensors
+    use crate::constants::{
+        I2C_MAX_READ_LEN, I2C_SENSOR_ID_MAX_LEN, I2C_SENSOR_MAX_CMD_LEN, I2C_SENSOR_MAX_ENTRIES,
+    };
+    const I2C_SENSOR_MODELS: [&str; 3] = ["sht3x", "aht20", "raw"];
+    if seg.i2c_sensors.len() > I2C_SENSOR_MAX_ENTRIES {
+        return Err(Error::config(
+            "hardware",
+            format!(
+                "i2c_sensors count must be <= {}",
+                I2C_SENSOR_MAX_ENTRIES
+            ),
+        ));
+    }
+    let mut seen_i2c_sensor_ids = std::collections::HashSet::new();
+    for (i, s) in seg.i2c_sensors.iter().enumerate() {
+        if seg.hardware_devices.iter().any(|d| d.id == s.id) {
+            return Err(Error::config(
+                "hardware",
+                format!(
+                    "i2c_sensors[{}].id '{}' conflicts with hardware_devices id",
+                    i, s.id
+                ),
+            ));
+        }
+        if s.id.is_empty() || s.id.len() > I2C_SENSOR_ID_MAX_LEN {
+            return Err(Error::config(
+                "hardware",
+                format!(
+                    "i2c_sensors[{}].id must be 1..={} chars",
+                    i, I2C_SENSOR_ID_MAX_LEN
+                ),
+            ));
+        }
+        if !seen_i2c_sensor_ids.insert(&s.id) {
+            return Err(Error::config(
+                "hardware",
+                format!("i2c_sensors[{}].id '{}' is duplicated", i, s.id),
+            ));
+        }
+        if !(0x08..=0x77).contains(&s.addr) {
+            return Err(Error::config(
+                "hardware",
+                format!(
+                    "i2c_sensors[{}].addr 0x{:02X} must be in 0x08..=0x77",
+                    i, s.addr
+                ),
+            ));
+        }
+        if !I2C_SENSOR_MODELS.contains(&s.model.as_str()) {
+            return Err(Error::config(
+                "hardware",
+                format!(
+                    "i2c_sensors[{}].model '{}' must be one of {:?}",
+                    i, s.model, I2C_SENSOR_MODELS
+                ),
+            ));
+        }
+        if s.watch_field != "temperature" && s.watch_field != "humidity" {
+            return Err(Error::config(
+                "hardware",
+                format!(
+                    "i2c_sensors[{}].watch_field '{}' must be temperature|humidity",
+                    i, s.watch_field
+                ),
+            ));
+        }
+        if s.what.len() > HARDWARE_WHAT_MAX_LEN {
+            return Err(Error::config(
+                "hardware",
+                format!(
+                    "i2c_sensors[{}].what length must be <= {}",
+                    i, HARDWARE_WHAT_MAX_LEN
+                ),
+            ));
+        }
+        if s.how.len() > HARDWARE_HOW_MAX_LEN {
+            return Err(Error::config(
+                "hardware",
+                format!(
+                    "i2c_sensors[{}].how length must be <= {}",
+                    i, HARDWARE_HOW_MAX_LEN
+                ),
+            ));
+        }
+        if s.model == "raw" {
+            let init = s
+                .options
+                .get("init_cmd")
+                .and_then(|v| v.as_array())
+                .ok_or_else(|| {
+                    Error::config(
+                        "hardware",
+                        format!(
+                            "i2c_sensors[{}] raw model requires options.init_cmd as array",
+                            i
+                        ),
+                    )
+                })?;
+            if init.is_empty() || init.len() > I2C_SENSOR_MAX_CMD_LEN {
+                return Err(Error::config(
+                    "hardware",
+                    format!(
+                        "i2c_sensors[{}] raw init_cmd length must be 1..={}",
+                        i, I2C_SENSOR_MAX_CMD_LEN
+                    ),
+                ));
+            }
+            for (j, el) in init.iter().enumerate() {
+                let b = el.as_u64().ok_or_else(|| {
+                    Error::config(
+                        "hardware",
+                        format!(
+                            "i2c_sensors[{}].options.init_cmd[{}] must be integer 0-255",
+                            i, j
+                        ),
+                    )
+                })?;
+                if b > 255 {
+                    return Err(Error::config(
+                        "hardware",
+                        format!(
+                            "i2c_sensors[{}].options.init_cmd[{}] must be 0-255",
+                            i, j
+                        ),
+                    ));
+                }
+            }
+            let read_len = s
+                .options
+                .get("read_len")
+                .and_then(|v| v.as_u64())
+                .ok_or_else(|| {
+                    Error::config(
+                        "hardware",
+                        format!(
+                            "i2c_sensors[{}] raw model requires options.read_len (1..={})",
+                            i, I2C_MAX_READ_LEN
+                        ),
+                    )
+                })? as usize;
+            if read_len == 0 || read_len > I2C_MAX_READ_LEN {
+                return Err(Error::config(
+                    "hardware",
+                    format!(
+                        "i2c_sensors[{}] raw read_len must be 1..={}",
+                        i, I2C_MAX_READ_LEN
+                    ),
+                ));
+            }
+            if let Some(ms) = s.options.get("conversion_wait_ms").and_then(|v| v.as_u64()) {
+                if ms > 2000 {
+                    return Err(Error::config(
+                        "hardware",
+                        format!(
+                            "i2c_sensors[{}] conversion_wait_ms must be <= 2000",
+                            i
+                        ),
+                    ));
+                }
+            }
+        }
     }
     Ok(())
 }

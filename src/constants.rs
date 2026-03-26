@@ -181,3 +181,13 @@ pub const I2C_MAX_WRITE_LEN: usize = 32;
 pub const I2C_MAX_DEVICES: usize = 8;
 /// I2C 默认频率（Hz）。
 pub const I2C_DEFAULT_FREQ_HZ: u32 = 100_000;
+
+// ---------- i2c_sensor 工具 / drive_i2c_sensor ----------
+/// I2C 传感器配置最大条目数。
+pub const I2C_SENSOR_MAX_ENTRIES: usize = 8;
+/// I2C 传感器 `id` 最大长度（字节）。
+pub const I2C_SENSOR_ID_MAX_LEN: usize = 64;
+/// I2C 传感器读取最小间隔（毫秒）。
+pub const I2C_SENSOR_RATE_LIMIT_MS: u64 = 2_000;
+/// `raw` 模型 `options.init_cmd` 最大长度（字节）。
+pub const I2C_SENSOR_MAX_CMD_LEN: usize = 4;
