@@ -9,7 +9,7 @@ import {
   SectionLoadingSkeleton,
 } from "../../components/form";
 import { SettingsSection } from "../../components/SettingsSection";
-import { useSoulUserConfig } from "../../contexts/SoulUserConfigContext";
+import { useSoulUserConfig } from "../../hooks/useSoulUserConfig";
 import { UserFormBody } from "./formBodies";
 
 /** 个性配置 → USER Tab（路由子页） */
@@ -17,7 +17,7 @@ export function SoulUserUserPanel() {
   const { t } = useTranslation();
   const {
     ready,
-    retryLoad,
+    retryLoadUser,
     userForm,
     setUserForm,
     userState,
@@ -33,7 +33,7 @@ export function SoulUserUserPanel() {
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 4 }}>
-      <InlineAlert message={userAlert} onRetry={retryLoad} />
+      <InlineAlert message={userAlert} onRetry={retryLoadUser} />
       <SettingsSection
         icon={<PersonOutlined sx={{ fontSize: "var(--icon-size-md)" }} />}
         label={t("soulUser.sectionUser")}

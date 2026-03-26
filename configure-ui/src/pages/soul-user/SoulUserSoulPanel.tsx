@@ -9,7 +9,7 @@ import {
   SectionLoadingSkeleton,
 } from "../../components/form";
 import { SettingsSection } from "../../components/SettingsSection";
-import { useSoulUserConfig } from "../../contexts/SoulUserConfigContext";
+import { useSoulUserConfig } from "../../hooks/useSoulUserConfig";
 import { SoulFormBody } from "./formBodies";
 
 /** 个性配置 → SOUL Tab（路由子页） */
@@ -18,7 +18,7 @@ export function SoulUserSoulPanel() {
   const {
     ready,
     loadError,
-    retryLoad,
+    retryLoadSoul,
     soulForm,
     setSoulForm,
     soulState,
@@ -34,7 +34,7 @@ export function SoulUserSoulPanel() {
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 4 }}>
-      <InlineAlert message={soulAlert} onRetry={retryLoad} />
+      <InlineAlert message={soulAlert} onRetry={retryLoadSoul} />
       <SettingsSection
         icon={<PsychologyOutlined sx={{ fontSize: "var(--icon-size-md)" }} />}
         label={t("soulUser.sectionSoul")}

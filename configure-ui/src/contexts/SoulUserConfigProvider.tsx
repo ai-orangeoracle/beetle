@@ -1,18 +1,16 @@
 import {
-  createContext,
   useCallback,
-  useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
-  type Dispatch,
   type ReactNode,
-  type SetStateAction,
 } from "react";
 import { useTranslation } from "react-i18next";
+import { useLocation } from "react-router-dom";
 import { useDeviceApi, API_ERROR } from "../hooks/useDeviceApi";
 import { useUnsaved } from "../hooks/useUnsaved";
-import { createAsyncState, type AsyncState } from "../types/asyncState";
+import { createAsyncState } from "../types/asyncState";
 import {
   defaultSoulForm,
   defaultUserForm,
@@ -23,8 +21,20 @@ import {
   type SoulFormState,
   type UserFormState,
 } from "../util/soulUserFormat";
+import {
+  SoulUserConfigContext,
+  type SoulUserConfigContextValue,
+} from "./SoulUserConfigContext";
 
 const MAX_CONTENT = 32 * 1024;
+
+/** 与 `/soul-user/:tab` 路由一致，供懒加载判断当前 Tab。 */
+function soulUserTabFromPathname(pathname: string): "soul" | "user" {
+  const parts = pathname.split("/").filter(Boolean);
+  const seg = parts[1];
+  if (seg === "user") return "user";
+  return "soul";
+}
 
 function apiErrorMessage(
   error: string | undefined,
@@ -35,39 +45,23 @@ function apiErrorMessage(
   return error ?? "";
 }
 
-export type SoulUserConfigContextValue = {
-  ready: boolean;
-  loadError: string;
-  retryLoad: () => void;
-  soulForm: SoulFormState;
-  setSoulForm: Dispatch<SetStateAction<SoulFormState>>;
-  userForm: UserFormState;
-  setUserForm: Dispatch<SetStateAction<UserFormState>>;
-  soulState: AsyncState<string>;
-  userState: AsyncState<string>;
-  soulSaveStatus: "idle" | "saving" | "ok" | "fail";
-  userSaveStatus: "idle" | "saving" | "ok" | "fail";
-  soulError: string;
-  userError: string;
-  handleSaveSoul: () => Promise<void>;
-  handleSaveUser: () => Promise<void>;
-  dismissSoulSaveFeedback: () => void;
-  dismissUserSaveFeedback: () => void;
-};
-
-const SoulUserConfigContext = createContext<SoulUserConfigContextValue | null>(
-  null,
-);
-
 export function SoulUserConfigProvider({ children }: { children: ReactNode }) {
   const { t } = useTranslation();
+  const { pathname } = useLocation();
   const { api, ready } = useDeviceApi();
   const { setDirty } = useUnsaved();
 
+  const soulAutoFetched = useRef(false);
+  const userAutoFetched = useRef(false);
+
   const [soulState, setSoulState] = useState(createAsyncState(""));
   const [userState, setUserState] = useState(createAsyncState(""));
-  const [savedSoul, setSavedSoul] = useState("");
-  const [savedUser, setSavedUser] = useState("");
+  const [savedSoul, setSavedSoul] = useState(() =>
+    serializeSoul(defaultSoulForm()),
+  );
+  const [savedUser, setSavedUser] = useState(() =>
+    serializeUser(defaultUserForm()),
+  );
 
   const [soulForm, setSoulForm] = useState<SoulFormState>(defaultSoulForm);
   const [userForm, setUserForm] = useState<UserFormState>(defaultUserForm);
@@ -95,9 +89,10 @@ export function SoulUserConfigProvider({ children }: { children: ReactNode }) {
         if (res.ok) {
           const data = res.data ?? "";
           setSoulState({ data, loading: false, error: "" });
-          setSavedSoul(data);
           const parsed = parseSoul(data);
-          setSoulForm(parsed.ok ? parsed.data : defaultSoulForm());
+          const nextForm = parsed.ok ? parsed.data : defaultSoulForm();
+          setSoulForm(nextForm);
+          setSavedSoul(parsed.ok ? serializeSoul(nextForm) : data);
         } else {
           setSoulState((prev) => ({ ...prev, loading: false, error: res.error ?? "" }));
           setLoadError(res.error ?? "");
@@ -118,9 +113,10 @@ export function SoulUserConfigProvider({ children }: { children: ReactNode }) {
         if (res.ok) {
           const data = res.data ?? "";
           setUserState({ data, loading: false, error: "" });
-          setSavedUser(data);
           const parsed = parseUser(data);
-          setUserForm(parsed.ok ? parsed.data : defaultUserForm());
+          const nextForm = parsed.ok ? parsed.data : defaultUserForm();
+          setUserForm(nextForm);
+          setSavedUser(parsed.ok ? serializeUser(nextForm) : data);
         } else {
           setUserState((prev) => ({ ...prev, loading: false, error: res.error ?? "" }));
         }
@@ -130,24 +126,30 @@ export function SoulUserConfigProvider({ children }: { children: ReactNode }) {
       );
   }, [api.user, ready]);
 
-  const retryLoad = useCallback(() => {
+  const retryLoadSoul = useCallback(() => {
+    setLoadError("");
     loadSoul();
+  }, [loadSoul]);
+
+  const retryLoadUser = useCallback(() => {
     loadUser();
-  }, [loadSoul, loadUser]);
+  }, [loadUser]);
 
+  /** 仅在进入对应 Tab 时首次自动拉取，避免打开页面就请求 SOUL+USER 两份接口。 */
   useEffect(() => {
     if (!ready) return;
+    const tab = soulUserTabFromPathname(pathname);
     queueMicrotask(() => {
-      loadSoul();
+      if (tab === "soul" && !soulAutoFetched.current) {
+        soulAutoFetched.current = true;
+        loadSoul();
+      }
+      if (tab === "user" && !userAutoFetched.current) {
+        userAutoFetched.current = true;
+        loadUser();
+      }
     });
-  }, [ready, loadSoul]);
-
-  useEffect(() => {
-    if (!ready) return;
-    queueMicrotask(() => {
-      loadUser();
-    });
-  }, [ready, loadUser]);
+  }, [ready, pathname, loadSoul, loadUser]);
 
   const handleSaveSoul = useCallback(async () => {
     const payload = serializeSoul(soulForm);
@@ -201,7 +203,8 @@ export function SoulUserConfigProvider({ children }: { children: ReactNode }) {
     () => ({
       ready,
       loadError,
-      retryLoad,
+      retryLoadSoul,
+      retryLoadUser,
       soulForm,
       setSoulForm,
       userForm,
@@ -220,7 +223,8 @@ export function SoulUserConfigProvider({ children }: { children: ReactNode }) {
     [
       ready,
       loadError,
-      retryLoad,
+      retryLoadSoul,
+      retryLoadUser,
       soulForm,
       userForm,
       soulState,
@@ -241,12 +245,4 @@ export function SoulUserConfigProvider({ children }: { children: ReactNode }) {
       {children}
     </SoulUserConfigContext.Provider>
   );
-}
-
-export function useSoulUserConfig(): SoulUserConfigContextValue {
-  const v = useContext(SoulUserConfigContext);
-  if (!v) {
-    throw new Error("useSoulUserConfig must be used under SoulUserConfigProvider");
-  }
-  return v;
 }

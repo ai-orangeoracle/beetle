@@ -1,5 +1,6 @@
-//! GET /api/system_info：供系统信息页展示用，返回 product_name、system_status、current_time、firmware_version、locale。
+//! GET /api/system_info：供系统信息页展示用，返回 product_name、system_status、current_time、firmware_version、locale、lan_ip。
 //! `current_time`：Host 用系统时钟；ESP 在 SNTP 同步后由 `util::current_unix_secs()` 提供 UTC 字符串，未同步时返回 "—"。
+//! `lan_ip`：STA 模式下路由器 DHCP 分配的 IPv4（点分十进制）；未连接或无地址时为 "—"。
 
 use super::HandlerContext;
 use crate::config;
@@ -81,7 +82,7 @@ fn days_to_ymd(days: u64) -> (u32, u32, u32) {
     (y, mo, day)
 }
 
-/// 生成 system_info JSON：product_name, system_status, current_time, firmware_version。
+/// 生成 system_info JSON：product_name, system_status, current_time, firmware_version, lan_ip 等。
 pub fn body(ctx: &HandlerContext) -> Result<String, std::io::Error> {
     let memory_loaded = ctx.memory_store.get_memory().is_ok();
     let soul_loaded = ctx.memory_store.get_soul().is_ok();
@@ -107,6 +108,7 @@ pub fn body(ctx: &HandlerContext) -> Result<String, std::io::Error> {
     let firmware_version = ctx.version.as_ref();
     let ota_available = cfg!(feature = "ota");
     let locale = config::get_locale(ctx.config_store.as_ref());
+    let lan_ip = crate::platform::wifi::wifi_sta_ip().unwrap_or_else(|| "—".to_string());
     let json = serde_json::json!({
         "product_name": product_name,
         "system_status": system_status,
@@ -115,6 +117,7 @@ pub fn body(ctx: &HandlerContext) -> Result<String, std::io::Error> {
         "board_id": ctx.board_id.as_ref(),
         "ota_available": ota_available,
         "locale": locale,
+        "lan_ip": lan_ip,
     });
     serde_json::to_string(&json).map_err(to_io)
 }

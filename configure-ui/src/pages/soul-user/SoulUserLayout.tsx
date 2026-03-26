@@ -5,7 +5,7 @@ import Box from "@mui/material/Box";
 import Tab from "@mui/material/Tab";
 import Tabs from "@mui/material/Tabs";
 import { NavBlockerContext } from "../../contexts/NavBlockerContext";
-import { SoulUserConfigProvider } from "../../contexts/SoulUserConfigContext";
+import { SoulUserConfigProvider } from "../../contexts/SoulUserConfigProvider";
 
 /** 与路由 `/soul-user/:tab` 对齐 */
 const TAB_SEGMENTS = ["soul", "user"] as const;

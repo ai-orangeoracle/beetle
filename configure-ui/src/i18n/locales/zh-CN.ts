@@ -112,6 +112,7 @@ export const zhCN = {
       deviceInfoFirmware: '固件版本',
       deviceInfoStatus: '系统状态',
       deviceInfoBoardId: '板型 ID',
+      deviceInfoLanIp: '局域网 IP',
       deviceInfoLocale: '语言',
       deviceInfoOtaAvailable: '支持 OTA',
       deviceInfoCurrentTime: '设备时间',

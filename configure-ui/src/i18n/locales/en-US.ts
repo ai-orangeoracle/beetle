@@ -112,6 +112,7 @@ export const enUS = {
       deviceInfoFirmware: 'Firmware version',
       deviceInfoStatus: 'System status',
       deviceInfoBoardId: 'Board ID',
+      deviceInfoLanIp: 'LAN IP',
       deviceInfoLocale: 'Locale',
       deviceInfoOtaAvailable: 'OTA available',
       deviceInfoCurrentTime: 'Device time',
