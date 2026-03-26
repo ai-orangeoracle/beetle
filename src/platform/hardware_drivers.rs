@@ -457,7 +457,7 @@ static DHT_SAMPLE_CRIT: esp_idf_hal::interrupt::IsrCriticalSection =
 /// DHT 单总线采样：握手后读 40 位，返回 5 字节原始帧。
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 unsafe fn dht_sample_raw_frame(pin: i32) -> Result<[u8; 5]> {
-    use esp_idf_svc::sys::{gpio_get_level, ESP_OK};
+    use esp_idf_svc::sys::gpio_get_level;
 
     let _g = DHT_SAMPLE_CRIT.enter();
 
