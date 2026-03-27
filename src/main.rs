@@ -23,12 +23,133 @@ use beetle::{
 };
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 const TAG: &str = "beetle";
 const VERSION: &str = env!("CARGO_PKG_VERSION");
+const STREAM_HTTP_STATS_LOG_EVERY: u32 = 50;
+
+thread_local! {
+    static STREAM_EDITOR_HTTP_SLOT: std::cell::RefCell<Option<Box<dyn PlatformHttpClient>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+static STREAM_HTTP_SLOT_REUSE_HITS: AtomicU32 = AtomicU32::new(0);
+static STREAM_HTTP_SLOT_CREATES: AtomicU32 = AtomicU32::new(0);
+static STREAM_HTTP_SLOT_RESETS: AtomicU32 = AtomicU32::new(0);
+static STREAM_HTTP_SLOT_INVALIDATES: AtomicU32 = AtomicU32::new(0);
+static STREAM_HTTP_SLOT_OPS: AtomicU32 = AtomicU32::new(0);
+
+fn maybe_log_stream_http_stats(trigger: &str) {
+    let ops = STREAM_HTTP_SLOT_OPS.load(Ordering::Relaxed);
+    if ops == 0 || !ops.is_multiple_of(STREAM_HTTP_STATS_LOG_EVERY) {
+        return;
+    }
+    let hits = STREAM_HTTP_SLOT_REUSE_HITS.load(Ordering::Relaxed);
+    let creates = STREAM_HTTP_SLOT_CREATES.load(Ordering::Relaxed);
+    let resets = STREAM_HTTP_SLOT_RESETS.load(Ordering::Relaxed);
+    let invalidates = STREAM_HTTP_SLOT_INVALIDATES.load(Ordering::Relaxed);
+    let reuse_rate = if ops == 0 {
+        0u32
+    } else {
+        ((hits as u64 * 100) / ops as u64) as u32
+    };
+    log::info!(
+        "[{}] stream_http_stats trigger={} ops={} reuse_hits={} creates={} resets={} invalidates={} reuse_rate={}%",
+        TAG,
+        trigger,
+        ops,
+        hits,
+        creates,
+        resets,
+        invalidates,
+        reuse_rate
+    );
+}
+
+fn invalidate_stream_http_slot(reason: &str) {
+    STREAM_EDITOR_HTTP_SLOT.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        if slot.take().is_some() {
+            STREAM_HTTP_SLOT_INVALIDATES.fetch_add(1, Ordering::Relaxed);
+            log::warn!("[{}] stream_http invalidate reason={}", TAG, reason);
+        }
+    });
+}
+
+fn reset_stream_http_slot(reason: &str) -> bool {
+    let mut reset = false;
+    STREAM_EDITOR_HTTP_SLOT.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        if let Some(http) = slot.as_mut() {
+            PlatformHttpClient::reset_connection_for_retry(http.as_mut());
+            STREAM_HTTP_SLOT_RESETS.fetch_add(1, Ordering::Relaxed);
+            reset = true;
+        }
+    });
+    if reset {
+        log::warn!("[{}] stream_http reset_for_retry reason={}", TAG, reason);
+    }
+    reset
+}
+
+fn with_stream_http_slot<T>(
+    create_http: &HttpFactory,
+    op_name: &str,
+    op: &mut dyn FnMut(&mut Box<dyn PlatformHttpClient>) -> beetle::Result<T>,
+) -> beetle::Result<T> {
+    STREAM_EDITOR_HTTP_SLOT.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        if slot.is_none() {
+            *slot = Some(create_http()?);
+            STREAM_HTTP_SLOT_CREATES.fetch_add(1, Ordering::Relaxed);
+            log::info!("[{}] stream_http create op={}", TAG, op_name);
+        } else {
+            STREAM_HTTP_SLOT_REUSE_HITS.fetch_add(1, Ordering::Relaxed);
+        }
+        STREAM_HTTP_SLOT_OPS.fetch_add(1, Ordering::Relaxed);
+        let http = slot
+            .as_mut()
+            .ok_or_else(|| beetle::Error::config("stream_http", "http client missing in slot"))?;
+        op(http)
+    })
+}
+
+fn execute_stream_http_op<T, F>(
+    create_http: &HttpFactory,
+    op_name: &str,
+    mut op: F,
+) -> beetle::Result<T>
+where
+    F: FnMut(&mut Box<dyn PlatformHttpClient>) -> beetle::Result<T>,
+{
+    let first = with_stream_http_slot(create_http, op_name, &mut op);
+    match first {
+        Ok(v) => {
+            maybe_log_stream_http_stats(op_name);
+            Ok(v)
+        }
+        Err(first_err) => {
+            let reason = format!("{} first_try: {}", op_name, first_err);
+            let _ = reset_stream_http_slot(&reason);
+            let second = with_stream_http_slot(create_http, op_name, &mut op);
+            match second {
+                Ok(v) => {
+                    maybe_log_stream_http_stats(op_name);
+                    Ok(v)
+                }
+                Err(second_err) => {
+                    invalidate_stream_http_slot(&format!("{} second_try: {}", op_name, second_err));
+                    maybe_log_stream_http_stats(op_name);
+                    Err(second_err)
+                }
+            }
+        }
+    }
+}
 
 #[derive(Clone, Copy)]
 struct ThreadPlan {
@@ -44,11 +165,16 @@ fn thread_plan(name: &str) -> ThreadPlan {
             core: Some(beetle::util::SpawnCore::Core0),
             role: beetle::util::HttpThreadRole::Io,
         },
-        "agent_main_loop" | "display" | "cron" | "heartbeat" | "heartbeat_tasks" | "remind"
-        | "cli_repl" => ThreadPlan {
+        "agent_main_loop" => ThreadPlan {
             core: Some(beetle::util::SpawnCore::Core1),
             role: beetle::util::HttpThreadRole::Interactive,
         },
+        "display" | "cron" | "heartbeat" | "heartbeat_tasks" | "remind" | "cli_repl" => {
+            ThreadPlan {
+                core: Some(beetle::util::SpawnCore::Core1),
+                role: beetle::util::HttpThreadRole::Background,
+            }
+        }
         _ => ThreadPlan {
             core: None,
             role: beetle::util::HttpThreadRole::Background,
@@ -273,51 +399,30 @@ fn esp_boot_audio_after_wifi(platform: &Arc<dyn Platform>, config: &Arc<AppConfi
 }
 
 /// HTTP 工厂：与 `Platform::create_http_client` 一致（含代理），供流式编辑等独立连接使用。
-type HttpFactory = Box<dyn Fn() -> beetle::Result<Box<dyn PlatformHttpClient>> + Send + Sync>;
-
-fn ensure_http_slot<'a>(
-    slot: &'a mut Option<Box<dyn PlatformHttpClient>>,
-    create_http: &HttpFactory,
-    stage: &'static str,
-) -> beetle::Result<&'a mut Box<dyn PlatformHttpClient>> {
-    if slot.is_none() {
-        *slot = Some(create_http()?);
-    }
-    slot.as_mut()
-        .ok_or_else(|| beetle::Error::config(stage, "http client missing after init"))
-}
+type HttpFactory =
+    Box<dyn Fn() -> beetle::Result<Box<dyn PlatformHttpClient>> + Send + Sync>;
 
 /// Telegram 流式编辑器：复用同一 TLS 连接，避免每次 edit 重新握手。
 struct TelegramStreamEditor {
     token: String,
     create_http: HttpFactory,
-    http: Mutex<Option<Box<dyn PlatformHttpClient>>>,
 }
 
 impl beetle::StreamEditor for TelegramStreamEditor {
     fn send_initial(&self, chat_id: &str, content: &str) -> beetle::Result<Option<String>> {
-        let mut g = self.http.lock().unwrap_or_else(|e| e.into_inner());
-        let http = ensure_http_slot(&mut g, &self.create_http, "stream_editor")?;
-        let r = beetle::tg_send_and_get_id(http, &self.token, chat_id, content);
-        if r.is_err() {
-            *g = None;
-        }
-        r
+        execute_stream_http_op(&self.create_http, "tg_stream_send_initial", |http| {
+            beetle::tg_send_and_get_id(http, &self.token, chat_id, content)
+        })
     }
     fn edit(&self, chat_id: &str, message_id: &str, content: &str) -> beetle::Result<()> {
-        let mut g = self.http.lock().unwrap_or_else(|e| e.into_inner());
-        let http = ensure_http_slot(&mut g, &self.create_http, "stream_editor")?;
-        let r = beetle::tg_edit_message_text(http, &self.token, chat_id, message_id, content);
-        if r.is_err() {
-            *g = None;
-        }
-        r
+        execute_stream_http_op(&self.create_http, "tg_stream_edit", |http| {
+            beetle::tg_edit_message_text(http, &self.token, chat_id, message_id, content)
+        })
     }
 }
 
 /// 飞书流式编辑器：复用 HTTP + tenant_access_token（与 sender 线程相同 TTL 策略）。
 struct FeishuStreamState {
-    http: Option<Box<dyn PlatformHttpClient>>,
     token: Option<(String, Instant)>,
 }
 
@@ -332,17 +437,18 @@ struct FeishuStreamEditor {
 }
 
 impl FeishuStreamEditor {
-    fn ensure_token(&self, state: &mut FeishuStreamState) -> beetle::Result<String> {
-        let http = state
-            .http
-            .as_mut()
-            .ok_or_else(|| beetle::Error::config("feishu_stream", "http not initialized"))?;
+    fn ensure_token(
+        &self,
+        state: &mut FeishuStreamState,
+        http: &mut Box<dyn PlatformHttpClient>,
+    ) -> beetle::Result<String> {
         let need_refresh = match &state.token {
             Some((_, acquired)) => acquired.elapsed() >= FEISHU_STREAM_TOKEN_TTL,
             None => true,
         };
         if need_refresh {
-            let t = beetle::feishu_acquire_token(http, &self.app_id, &self.app_secret).ok_or_else(
+            let t = beetle::feishu_acquire_token(http, &self.app_id, &self.app_secret)
+                .ok_or_else(
                 || beetle::Error::config("feishu_stream", "failed to acquire tenant_token"),
             )?;
             state.token = Some((t.clone(), Instant::now()));
@@ -358,34 +464,26 @@ impl FeishuStreamEditor {
 impl beetle::StreamEditor for FeishuStreamEditor {
     fn send_initial(&self, chat_id: &str, content: &str) -> beetle::Result<Option<String>> {
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
-        let _ = ensure_http_slot(&mut state.http, &self.create_http, "feishu_stream")?;
-        let token = self.ensure_token(&mut state)?;
-        let http = state
-            .http
-            .as_mut()
-            .ok_or_else(|| beetle::Error::config("feishu_stream", "http not initialized"))?;
-        let r = beetle::feishu_send_and_get_id(http, &token, chat_id, content);
-        if r.is_err() {
-            state.http = None;
-            state.token = None;
-        }
-        r
+        execute_stream_http_op(&self.create_http, "feishu_stream_send_initial", |http| {
+            let token = self.ensure_token(&mut state, http)?;
+            let r = beetle::feishu_send_and_get_id(http, &token, chat_id, content);
+            if r.is_err() {
+                state.token = None;
+            }
+            r
+        })
     }
 
     fn edit(&self, _chat_id: &str, message_id: &str, content: &str) -> beetle::Result<()> {
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
-        let _ = ensure_http_slot(&mut state.http, &self.create_http, "feishu_stream")?;
-        let token = self.ensure_token(&mut state)?;
-        let http = state
-            .http
-            .as_mut()
-            .ok_or_else(|| beetle::Error::config("feishu_stream", "http not initialized"))?;
-        let r = beetle::feishu_edit_message(http, &token, message_id, content);
-        if r.is_err() {
-            state.http = None;
-            state.token = None;
-        }
-        r
+        execute_stream_http_op(&self.create_http, "feishu_stream_edit", |http| {
+            let token = self.ensure_token(&mut state, http)?;
+            let r = beetle::feishu_edit_message(http, &token, message_id, content);
+            if r.is_err() {
+                state.token = None;
+            }
+            r
+        })
     }
 }
 
@@ -962,10 +1060,10 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
         }
     }
 
+    let mut agent_handle: Option<std::thread::JoinHandle<()>> = None;
+
     // Agent / flush 与各通道工厂均经 `create_http_client`，与代理配置一致。
-    if let Ok(mut http_client) = platform.create_http_client(config.as_ref()) {
-        #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
-        beetle::platform::task_wdt::register_current_task_to_task_wdt();
+    if platform.create_http_client(config.as_ref()).is_ok() {
         let outbound_rx_for_dispatch = outbound_rx;
         let sinks_clone = Arc::clone(&sinks);
         spawn_planned("dispatch", 8192, move || {
@@ -1015,8 +1113,9 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
             }
         }
 
-        let worker_llm_box = beetle::build_llm_clients(&config, Arc::clone(&resolve_locale_ui));
-        let registry = beetle::build_default_registry(
+        let worker_llm: Arc<dyn beetle::LlmClient + Send + Sync> =
+            Arc::from(beetle::build_llm_clients(&config, Arc::clone(&resolve_locale_ui)));
+        let registry = Arc::new(beetle::build_default_registry(
             &config,
             Arc::clone(&platform),
             Arc::clone(&remind_at_store),
@@ -1024,11 +1123,11 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
             Arc::clone(&session_store),
             Arc::clone(&memory_store),
             platform.config_store(),
-        );
-        let tool_specs = registry.tool_specs_for_api(4096);
+        ));
+        let tool_specs: Arc<[beetle::llm::ToolSpec]> = registry.tool_specs_for_api(4096).into();
         let skill_meta_store_fn = Arc::clone(&skill_meta_store);
         let skill_storage_fn = Arc::clone(&skill_storage);
-        let get_skill_descriptions: Box<dyn Fn() -> String + Send> = Box::new(move || {
+        let get_skill_descriptions: Arc<dyn Fn() -> String + Send + Sync> = Arc::new(move || {
             beetle::skills::build_skill_descriptions_for_system_prompt(
                 skill_meta_store_fn.as_ref(),
                 skill_storage_fn.as_ref(),
@@ -1038,64 +1137,57 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
         let session_max = config.session_max_messages.clamp(1, 128) as usize;
         let agent_user_inbound_tx = user_inbound_tx;
         let agent_system_inbound_tx = system_inbound_tx;
-        let mut on_typing = |ch: &str, cid: &str, http: &mut _| {
+        let tg_token_for_typing = config.tg_token.clone();
+        let typing_notifier: beetle::TypingNotifier = Box::new(move |ch, cid, http| {
             if ch == "telegram" {
-                let _ = send_chat_action(http, &config.tg_token, cid, "typing");
+                let _ = send_chat_action(http, &tg_token_for_typing, cid, "typing");
             }
-        };
+        });
+
         // 流式编辑器：根据 enabled_channel 选择对应通道的 StreamEditor 实现。
-        enum StreamEditorImpl {
-            Telegram(TelegramStreamEditor),
-            Feishu(FeishuStreamEditor),
-        }
-        let stream_editor_impl: Option<StreamEditorImpl> = if config.llm_stream {
+        let stream_editor: Option<Arc<dyn beetle::StreamEditor + Send + Sync>> = if config.llm_stream
+        {
             let pf = Arc::clone(&platform);
             let cfg = Arc::clone(&config);
             let make_http: HttpFactory = Box::new(move || pf.create_http_client(cfg.as_ref()));
             match config.enabled_channel.as_str() {
-                "telegram" if !config.tg_token.trim().is_empty() => {
-                    Some(StreamEditorImpl::Telegram(TelegramStreamEditor {
+                "telegram" if !config.tg_token.trim().is_empty() => Some(Arc::new(
+                    TelegramStreamEditor {
                         token: config.tg_token.clone(),
                         create_http: make_http,
-                        http: Mutex::new(None),
-                    }))
-                }
-                "feishu" if !config.feishu_app_id.trim().is_empty() => {
-                    Some(StreamEditorImpl::Feishu(FeishuStreamEditor {
+                    },
+                ) as Arc<dyn beetle::StreamEditor + Send + Sync>),
+                "feishu" if !config.feishu_app_id.trim().is_empty() => Some(Arc::new(
+                    FeishuStreamEditor {
                         app_id: config.feishu_app_id.clone(),
                         app_secret: config.feishu_app_secret.clone(),
                         create_http: make_http,
                         state: Mutex::new(FeishuStreamState {
-                            http: None,
                             token: None,
                         }),
-                    }))
-                }
+                    },
+                ) as Arc<dyn beetle::StreamEditor + Send + Sync>),
                 _ => None,
             }
         } else {
             None
         };
-        let stream_editor_ref: Option<&dyn beetle::StreamEditor> =
-            stream_editor_impl.as_ref().map(|e| match e {
-                StreamEditorImpl::Telegram(t) => t as &dyn beetle::StreamEditor,
-                StreamEditorImpl::Feishu(f) => f as &dyn beetle::StreamEditor,
-            });
         let agent_config = beetle::AgentLoopConfig {
-            memory_store: memory_store.as_ref(),
-            session_store: session_store.as_ref(),
-            session_summary_store: session_summary_store.as_ref(),
-            tool_specs: &tool_specs,
-            get_skill_descriptions: &*get_skill_descriptions,
+            memory_store: Arc::clone(&memory_store),
+            session_store: Arc::clone(&session_store),
+            session_summary_store: Arc::clone(&session_summary_store),
+            tool_specs,
+            get_skill_descriptions,
             session_max_messages: session_max,
-            tg_group_activation: &config.tg_group_activation,
-            task_continuation: task_continuation_store.as_ref(),
+            tg_group_activation: Arc::<str>::from(config.tg_group_activation.as_str()),
+            task_continuation: Arc::clone(&task_continuation_store),
             task_continuation_max_rounds: 0u32,
-            important_message_store: important_message_store.as_ref(),
-            emotion_signal_store: emotion_signal_store.as_ref(),
-            pending_retry: pending_retry_store.as_ref(),
+            important_message_store: Arc::clone(&important_message_store),
+            emotion_signal_store: Arc::clone(&emotion_signal_store)
+                as Arc<dyn beetle::memory::EmotionSignalStore + Send + Sync>,
+            pending_retry: Arc::clone(&pending_retry_store),
             llm_stream: config.llm_stream,
-            stream_editor: stream_editor_ref,
+            stream_editor,
             resolve_locale: std::sync::Arc::clone(&resolve_locale_ui),
         };
         #[cfg(feature = "cli")]
@@ -1131,29 +1223,49 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
             let _ = platform.display_command(DisplayCommand::UpdateBootProgress { stage: 4 });
         }
 
-        beetle::orchestrator::set_current_http_thread_role(
-            beetle::orchestrator::HttpThreadRole::Interactive,
-        );
-        log::info!(
-            "[{}] agent_main_loop running on main thread (planned_core={:?})",
-            TAG,
-            thread_plan("agent_main_loop").core
-        );
-        if let Err(e) = run_agent_loop(
-            &mut http_client,
-            &*worker_llm_box,
-            &registry,
-            &agent_config,
-            agent_user_inbound_tx,
-            user_inbound_rx,
-            agent_system_inbound_tx,
-            system_inbound_rx,
-            outbound_tx,
-            Some(&mut on_typing),
-        ) {
-            log::warn!("[{}] agent loop error: {}", TAG, e);
-            beetle::state::set_last_error(&e);
-        }
+        let plan = thread_plan("agent_main_loop");
+        let tag = TAG;
+        let agent_registry = Arc::clone(&registry);
+        let agent_worker_llm = Arc::clone(&worker_llm);
+        let agent_platform = Arc::clone(&platform);
+        let agent_config_for_thread = Arc::clone(&config);
+        agent_handle = beetle::util::spawn_guarded_with_profile_handle(
+            "agent_main_loop",
+            16384,
+            plan.core,
+            plan.role,
+            move || {
+                #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+                beetle::platform::task_wdt::register_current_task_to_task_wdt();
+                let mut agent_http = match agent_platform.create_http_client(agent_config_for_thread.as_ref()) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        log::error!("[{}] agent_main_loop create_http_client failed: {}", tag, e);
+                        beetle::state::set_last_error(&e);
+                        agent_platform.request_restart();
+                        return;
+                    }
+                };
+                log::info!("[{}] agent_main_loop running on Core1 thread", tag);
+                if let Err(e) = run_agent_loop(
+                    agent_http.as_mut(),
+                    agent_worker_llm.as_ref(),
+                    agent_registry.as_ref(),
+                    &agent_config,
+                    agent_user_inbound_tx,
+                    user_inbound_rx,
+                    agent_system_inbound_tx,
+                    system_inbound_rx,
+                    outbound_tx,
+                    Some(typing_notifier),
+                ) {
+                    log::warn!("[{}] agent loop error: {}", tag, e);
+                    beetle::state::set_last_error(&e);
+                }
+                agent_platform.request_restart();
+            },
+        )
+        .ok();
     } else {
         log::warn!(
             "[{}] HTTP client not available (create_http_client failed): dispatch, agent, Telegram poll, and outbound sender threads were not started. On Linux, ensure ureq/rustls stack and network; see dev-docs/linux-migration-plan.md.",
@@ -1162,7 +1274,18 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
     }
 
     loop {
+        beetle::platform::task_wdt::feed_current_task();
+        if let Some(handle) = agent_handle.as_ref() {
+            if handle.is_finished() {
+                if let Some(done) = agent_handle.take() {
+                    let _ = done.join();
+                    log::error!("[{}] agent_main_loop exited; restart requested", TAG);
+                    platform.request_restart();
+                }
+            }
+        }
         std::thread::sleep(std::time::Duration::from_secs(10));
+        beetle::platform::task_wdt::feed_current_task();
         log::info!("[{}] running v{}", TAG, VERSION);
     }
 }

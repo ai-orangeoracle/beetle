@@ -189,7 +189,7 @@ fn map_stage(e: Error, stage: &'static str) -> Error {
 }
 
 /// 发送 typing 指示。连续 401 时 60s 内不再请求（退避）。失败 return Ok(()) 不阻塞 agent。
-pub fn send_chat_action<H: ChannelHttpClient>(
+pub fn send_chat_action<H: ChannelHttpClient + ?Sized>(
     http: &mut H,
     token: &str,
     chat_id: &str,

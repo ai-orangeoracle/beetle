@@ -47,8 +47,7 @@ mod imp {
         let _guard = PTHREAD_CFG_LOCK
             .lock()
             .map_err(|e| io_other(format!("task_affinity lock poisoned: {}", e)))?;
-        let previous_cfg = ThreadSpawnConfiguration::get();
-        let mut cfg = previous_cfg.unwrap_or_default();
+        let mut cfg = ThreadSpawnConfiguration::get().unwrap_or_default();
         cfg.pin_to_core = core.map(map_core);
         cfg.inherit = false;
         cfg.set()
@@ -59,11 +58,7 @@ mod imp {
             .stack_size(stack_size)
             .spawn(f);
 
-        let restore_result = if let Some(prev) = previous_cfg {
-            prev.set()
-        } else {
-            ThreadSpawnConfiguration::default().set()
-        };
+        let restore_result = ThreadSpawnConfiguration::default().set();
         if let Err(e) = restore_result {
             log::warn!("[task_affinity] restore pthread cfg failed: {}", e);
         }

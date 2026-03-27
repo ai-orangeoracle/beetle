@@ -37,7 +37,7 @@ pub mod orchestrator;
 pub mod skills;
 
 pub use agent::{
-    build_context, run_agent_loop, AgentLoopConfig, ContextParams, StreamEditor,
+    build_context, run_agent_loop, AgentLoopConfig, ContextParams, StreamEditor, TypingNotifier,
     DEFAULT_MESSAGES_MAX_LEN, DEFAULT_SYSTEM_MAX_LEN, SESSION_RECENT_N,
 };
 pub use bus::{MessageBus, PcMsg, DEFAULT_CAPACITY, MAX_CONTENT_LEN};
@@ -190,6 +190,41 @@ impl<T: platform::PlatformHttpClient> channels::ChannelHttpClient for T {
 }
 
 impl channels::ChannelHttpClient for dyn platform::PlatformHttpClient + '_ {
+    fn http_get(&mut self, url: &str) -> Result<(u16, platform::ResponseBody)> {
+        platform::PlatformHttpClient::get(self, url, &[])
+    }
+    fn http_get_with_headers(
+        &mut self,
+        url: &str,
+        headers: &[(&str, &str)],
+    ) -> Result<(u16, platform::ResponseBody)> {
+        platform::PlatformHttpClient::get(self, url, headers)
+    }
+    fn http_post(&mut self, url: &str, body: &[u8]) -> Result<(u16, platform::ResponseBody)> {
+        platform::PlatformHttpClient::post(self, url, &[], body)
+    }
+    fn http_post_with_headers(
+        &mut self,
+        url: &str,
+        headers: &[(&str, &str)],
+        body: &[u8],
+    ) -> Result<(u16, platform::ResponseBody)> {
+        platform::PlatformHttpClient::post(self, url, headers, body)
+    }
+    fn http_patch_with_headers(
+        &mut self,
+        url: &str,
+        headers: &[(&str, &str)],
+        body: &[u8],
+    ) -> Result<(u16, platform::ResponseBody)> {
+        platform::PlatformHttpClient::patch(self, url, headers, body)
+    }
+    fn reset_connection_for_retry(&mut self) {
+        platform::PlatformHttpClient::reset_connection_for_retry(self);
+    }
+}
+
+impl channels::ChannelHttpClient for dyn platform::PlatformHttpClient + Send + '_ {
     fn http_get(&mut self, url: &str) -> Result<(u16, platform::ResponseBody)> {
         platform::PlatformHttpClient::get(self, url, &[])
     }

@@ -18,8 +18,12 @@ fn semver_gt(a: &str, b: &str) -> bool {
         let patch = it.next().unwrap_or("0").parse().ok().unwrap_or(0);
         Some((maj, min, patch))
     };
-    let (a_maj, a_min, a_patch) = parse(a)?;
-    let (b_maj, b_min, b_patch) = parse(b)?;
+    let Some((a_maj, a_min, a_patch)) = parse(a) else {
+        return false;
+    };
+    let Some((b_maj, b_min, b_patch)) = parse(b) else {
+        return false;
+    };
     if a_maj != b_maj {
         return a_maj > b_maj;
     }
@@ -154,7 +158,7 @@ pub fn post(ctx: &HandlerContext, body: &str) -> Result<(ApiResponse, bool), std
         Ok(v) => v
             .get("url")
             .and_then(|u| u.as_str())
-            .map(|s| s.trim())
+            .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty()),
         Err(_) => None,
     };
@@ -166,12 +170,12 @@ pub fn post(ctx: &HandlerContext, body: &str) -> Result<(ApiResponse, bool), std
     if !valid {
         return Ok((ApiResponse::err_400(&tr(Message::InvalidUrl, loc)), false));
     }
-    match ctx.platform.ota_from_url(url) {
+    match ctx.platform.ota_from_url(&url) {
         Ok(()) => Ok((ApiResponse::ok_200_json("{\"ok\":true}"), true)),
         Err(e) => {
             let msg = match &e {
                 Error::Esp { stage, .. } => {
-                    let m = match stage.as_str() {
+                    let m = match *stage {
                         "ota_download" => Message::OtaDownload,
                         "ota_validate" => Message::OtaValidate,
                         "ota_write" => Message::OtaWrite,
@@ -183,5 +187,25 @@ pub fn post(ctx: &HandlerContext, body: &str) -> Result<(ApiResponse, bool), std
             };
             Ok((ApiResponse::err_500(&msg), false))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::semver_gt;
+
+    #[test]
+    fn semver_gt_works_for_basic_cases() {
+        assert!(semver_gt("1.2.4", "1.2.3"));
+        assert!(semver_gt("v2.0.0", "1.9.9"));
+        assert!(!semver_gt("1.2.3", "1.2.3"));
+        assert!(!semver_gt("1.2.2", "1.2.3"));
+    }
+
+    #[test]
+    fn semver_gt_handles_invalid_input() {
+        assert!(!semver_gt("bad", "1.2.3"));
+        assert!(!semver_gt("1.2.3", "bad"));
+        assert!(!semver_gt("v", "v"));
     }
 }

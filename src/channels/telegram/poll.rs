@@ -13,6 +13,7 @@ use super::send::set_message_reaction;
 
 const TAG_POLL: &str = "telegram";
 /// Telegram 控制命令（/activation、/session clear、/status）执行所需的上下文，由 main 传入轮询线程。
+/// NOTE: 该结构体持有多种回调与共享状态，短期保留 type_complexity 以维持调用侧显式依赖注入。
 #[allow(clippy::type_complexity)]
 pub struct TelegramCommandCtx {
     pub outbound_tx: OutboundTx,
@@ -102,6 +103,7 @@ fn message_mentions_bot(
 const TELEGRAM_API_BASE: &str = "https://api.telegram.org/bot";
 
 /// 轮询一次 getUpdates，解析消息并推入 inbound_tx；失败返回 Err 带 stage，调用方退避。
+/// NOTE: 保留参数显式传递，避免把状态收敛到全局可变对象；待后续仅提取参数对象时再移除 allow。
 #[allow(clippy::too_many_arguments)]
 pub fn poll_telegram_once<H: ChannelHttpClient>(
     http: &mut H,

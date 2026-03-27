@@ -132,7 +132,7 @@ pub trait PendingRetryStore: Send + Sync {
 }
 
 /// 长期记忆与每日笔记存储。实现由 platform 注入（如 SpiffsMemoryStore）。
-pub trait MemoryStore {
+pub trait MemoryStore: Send + Sync {
     fn get_memory(&self) -> Result<String>;
     fn set_memory(&self, content: &str) -> Result<()>;
     fn get_soul(&self) -> Result<String>;
@@ -155,7 +155,7 @@ pub struct SessionMessage {
 }
 
 /// 按 chat_id 的会话存储。实现由 platform 注入（如 SpiffsSessionStore）。
-pub trait SessionStore {
+pub trait SessionStore: Send + Sync {
     fn append(&self, chat_id: &str, role: &str, content: &str) -> Result<()>;
     fn load_recent(&self, chat_id: &str, n: usize) -> Result<Vec<SessionMessage>>;
     /// 返回当前会话消息条数（不含可选头注释）。默认实现回退到 `load_recent(MAX_SESSION_ENTRIES)`。

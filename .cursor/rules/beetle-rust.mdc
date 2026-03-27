@@ -47,7 +47,7 @@ alwaysApply: false
 ### 后台线程与资源
 
 - **禁止重复线程**：同一职责（如显示刷新）只允许一个后台线程。若需要不同频率执行不同逻辑，在单一线程内用计数器区分，不得为此多开线程。ESP32 每个线程占 ~4KB 栈，资源宝贵。
-- **禁止虚假度量**：显示、日志、API 返回的度量值（heap、CPU、温度等）必须来自真实数据源（如 `orchestrator::snapshot()`、`platform::heap`）。禁止用固定映射或占位值冒充真实度量；暂时不可用的度量应传 0 或在 UI 标注 N/A。
+- **禁止虚假度量**：显示、日志、API 返回的度量值（heap、CPU、温度等）必须来自真实数据源；对外口径以 `orchestrator::snapshot()` / `format_resource_baseline_line()` 为权威，heap 维度通过 `Platform::memory_snapshot()` 注入编排路径，业务域禁止直读 `platform::heap` 作为观测口径。禁止用固定映射或占位值冒充真实度量；暂时不可用的度量应传 0 或在 UI 标注 N/A。
 
 ### 嵌入式字节序
 
@@ -95,7 +95,8 @@ alwaysApply: false
 
 ### LLM（阶段 5）
 
-- **LlmClient**：Agent/main 只依赖此 trait。`chat(&self, http: &mut dyn LlmHttpClient, system, messages, tools) -> Result<LlmResponse>`；**llm 不依赖 platform**，HTTP 由调用方注入。
+- **LlmClient**：Agent/main 只依赖此 trait。`chat(&self, http: &mut dyn LlmHttpClient, system, messages, tools) -> Result<LlmResponse>`；llm 通过注入的 HTTP trait 工作，不直接依赖 `esp_idf_svc`。
+- **LLM 分层例外口径**：当前 `LlmHttpClient::do_post` 复用 `platform::ResponseBody`，且 `fallback/retry` 会调用 `platform::task_wdt::feed_current_task()`；这是为嵌入式内存与 TWDT 稳定性的有意折中。若要实现“llm 字面零 platform 依赖”，需单独立项引入 llm 自有 response/watchdog 抽象并由 `lib` 桥接。
 - **LlmHttpClient**：在 **lib** 中由 `EspHttpClient` 实现（`do_post(url, headers, body)`）；新增 LLM 厂商时仅新增实现 `LlmClient` 的类型，不修改 platform。
 - **类型与常量**：`Message`、`LlmResponse`、`ToolSpec` 在 `llm::types`；`MAX_REQUEST_BODY_LEN`（512KB）、`MAX_MESSAGE_CONTENT_LEN`（64KB）；序列化超限用 `Error::Config`。
 - **错误 stage**：LLM 用 `llm_request`、`llm_parse`。

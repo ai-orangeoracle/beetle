@@ -246,8 +246,8 @@ fn compact_early_tool_rounds(messages: &mut [Message], initial_count: usize) {
 }
 
 /// 在 run_worker_path 内包装 http，注入当前 msg 的 chat_id/channel，供 remind_at 等工具使用。
-struct AgentToolCtx<'a, H: PlatformHttpClient> {
-    http: &'a mut H,
+struct AgentToolCtx<'a> {
+    http: &'a mut dyn PlatformHttpClient,
     chat_id: Arc<str>,
     channel: Arc<str>,
     locale: UiLocale,
@@ -267,7 +267,7 @@ fn try_send_outbound(outbound_tx: &OutboundTx, msg: PcMsg, log_prefix: &str) -> 
     }
 }
 
-impl<H: PlatformHttpClient> LlmHttpClient for AgentToolCtx<'_, H> {
+impl LlmHttpClient for AgentToolCtx<'_> {
     fn do_post(
         &mut self,
         url: &str,
@@ -292,7 +292,7 @@ impl<H: PlatformHttpClient> LlmHttpClient for AgentToolCtx<'_, H> {
     }
 }
 
-impl<H: PlatformHttpClient> ToolContext for AgentToolCtx<'_, H> {
+impl ToolContext for AgentToolCtx<'_> {
     fn get_with_headers(
         &mut self,
         url: &str,
@@ -343,10 +343,10 @@ impl<H: PlatformHttpClient> ToolContext for AgentToolCtx<'_, H> {
 }
 
 /// 程序性触发：用最近会话生成摘要并 `set_with_count`。LLM 失败时确定性回退，仍落盘。
-fn generate_session_summary<H: PlatformHttpClient>(
-    http: &mut H,
-    llm: &dyn LlmClient,
-    config: &AgentLoopConfig<'_>,
+fn generate_session_summary(
+    http: &mut dyn PlatformHttpClient,
+    llm: &(dyn LlmClient + Send + Sync),
+    config: &AgentLoopConfig,
     chat_id: &str,
     current_count: usize,
 ) -> Result<()> {
@@ -422,41 +422,45 @@ pub trait StreamEditor {
 }
 
 /// Agent 循环的存储与运行参数，由 main 构建并传入 run_agent_loop，减少参数数量。
-pub struct AgentLoopConfig<'a> {
-    pub memory_store: &'a dyn MemoryStore,
-    pub session_store: &'a dyn SessionStore,
-    pub session_summary_store: &'a dyn SessionSummaryStore,
-    pub tool_specs: &'a [ToolSpec],
-    pub get_skill_descriptions: &'a dyn Fn() -> String,
+pub struct AgentLoopConfig {
+    pub memory_store: Arc<dyn MemoryStore + Send + Sync>,
+    pub session_store: Arc<dyn SessionStore + Send + Sync>,
+    pub session_summary_store: Arc<dyn SessionSummaryStore + Send + Sync>,
+    pub tool_specs: Arc<[ToolSpec]>,
+    pub get_skill_descriptions: Arc<dyn Fn() -> String + Send + Sync>,
     pub session_max_messages: usize,
-    pub tg_group_activation: &'a str,
-    pub task_continuation: &'a dyn TaskContinuationStore,
+    pub tg_group_activation: Arc<str>,
+    pub task_continuation: Arc<dyn TaskContinuationStore + Send + Sync>,
     pub task_continuation_max_rounds: u32,
-    pub important_message_store: &'a dyn ImportantMessageStore,
-    pub emotion_signal_store: &'a dyn EmotionSignalStore,
-    pub pending_retry: &'a dyn PendingRetryStore,
+    pub important_message_store: Arc<dyn ImportantMessageStore + Send + Sync>,
+    pub emotion_signal_store: Arc<dyn EmotionSignalStore + Send + Sync>,
+    pub pending_retry: Arc<dyn PendingRetryStore + Send + Sync>,
     /// 全局 LLM 流式模式；true 时 agent 使用 chat_with_progress 回调。
     pub llm_stream: bool,
     /// 流式编辑器；llm_stream 开且通道支持编辑时由 main 传入。
-    pub stream_editor: Option<&'a dyn StreamEditor>,
+    pub stream_editor: Option<Arc<dyn StreamEditor + Send + Sync>>,
     /// 当前 NVS 语言；工具与降级文案按此本地化。
     pub resolve_locale: std::sync::Arc<dyn Fn() -> UiLocale + Send + Sync>,
 }
 
+pub type TypingNotifier = Box<dyn FnMut(&str, &str, &mut dyn PlatformHttpClient) + Send>;
+
 /// 从 inbound_rx 取一条 PcMsg，构建 context，多轮 chat（含 tool 执行），写会话并发送一条出站。
 /// worker_llm：执行完整 context + tools 的客户端（可为 FallbackLlmClient）。
+/// NOTE: 主调路径需要显式传递总线、stores、notifier 与线程角色相关上下文；本阶段保持签名稳定，
+/// 避免在多核与准入治理周期内引入行为性拆分。
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
-pub fn run_agent_loop<H: PlatformHttpClient>(
-    http: &mut H,
-    worker_llm: &dyn LlmClient,
+pub fn run_agent_loop(
+    http: &mut dyn PlatformHttpClient,
+    worker_llm: &(dyn LlmClient + Send + Sync),
     registry: &crate::tools::ToolRegistry,
-    config: &AgentLoopConfig<'_>,
+    config: &AgentLoopConfig,
     user_inbound_tx: UserInboundTx,
     user_inbound_rx: UserInboundRx,
     system_inbound_tx: SystemInboundTx,
     system_inbound_rx: SystemInboundRx,
     outbound_tx: OutboundTx,
-    mut typing_notifier: Option<&mut dyn FnMut(&str, &str, &mut H)>,
+    mut typing_notifier: Option<TypingNotifier>,
 ) -> Result<()> {
     let tool_descriptions = registry.format_descriptions_for_system_prompt(8 * 1024);
 
@@ -1044,12 +1048,12 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
 
 /// 完整 context + worker LLM + ReAct 循环，返回 (WorkerOutcome, consumed_round, streamed, latency)。不写 session，由调用方写。
 /// streamed=true 表示已通过流式编辑发送到通道，调用方应跳过 outbound_tx。
-fn run_worker_path<H: PlatformHttpClient>(
-    http: &mut H,
-    worker_llm: &dyn LlmClient,
+fn run_worker_path(
+    http: &mut dyn PlatformHttpClient,
+    worker_llm: &(dyn LlmClient + Send + Sync),
     msg: &crate::bus::PcMsg,
     registry: &crate::tools::ToolRegistry,
-    config: &AgentLoopConfig<'_>,
+    config: &AgentLoopConfig,
     tool_descriptions: &str,
     loc: UiLocale,
 ) -> Result<(WorkerOutcome, Option<u32>, bool, WorkerLatency)> {
@@ -1097,15 +1101,15 @@ fn run_worker_path<H: PlatformHttpClient>(
     let context_start = Instant::now();
     let (system, mut messages) = build_context(&super::ContextParams {
         msg,
-        memory: config.memory_store,
-        session: config.session_store,
-        important_message_store: config.important_message_store,
+        memory: config.memory_store.as_ref(),
+        session: config.session_store.as_ref(),
+        important_message_store: config.important_message_store.as_ref(),
         tool_descriptions,
         skill_descriptions: &skill_descriptions,
         system_max_len: budget.system_prompt_max,
         messages_max_len: budget.messages_max,
         session_max_messages: config.session_max_messages,
-        group_activation: config.tg_group_activation,
+        group_activation: config.tg_group_activation.as_ref(),
         system_continuation_suffix: suffix.as_deref(),
         emotion_signal_suffix,
         summary_text,
@@ -1121,7 +1125,7 @@ fn run_worker_path<H: PlatformHttpClient>(
     let mut final_content = String::with_capacity(4096);
     // 流式编辑状态（跨 ReAct 轮次共享）。
     let editor = if config.llm_stream {
-        config.stream_editor
+        config.stream_editor.as_deref()
     } else {
         None
     };
@@ -1223,11 +1227,11 @@ fn run_worker_path<H: PlatformHttpClient>(
                 &mut tool_ctx,
                 &system,
                 &messages,
-                Some(config.tool_specs),
+                Some(config.tool_specs.as_ref()),
                 &mut progress_cb,
             )
         } else {
-            worker_llm.chat(&mut tool_ctx, &system, &messages, Some(config.tool_specs))
+            worker_llm.chat(&mut tool_ctx, &system, &messages, Some(config.tool_specs.as_ref()))
         };
         let response = match response {
             Ok(r) => {

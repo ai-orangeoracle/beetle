@@ -8,13 +8,13 @@ use std::sync::Mutex;
 /// 多源回退客户端；持有一组 LlmClient，chat 时按序尝试。
 /// last_error 用 Mutex 以支持多线程安全访问。
 pub struct FallbackLlmClient {
-    clients: Vec<Box<dyn LlmClient>>,
+    clients: Vec<Box<dyn LlmClient + Send + Sync>>,
     last_error: Mutex<Option<String>>,
 }
 
 impl FallbackLlmClient {
     /// 使用给定的 client 列表构造；空列表会导致 chat 时返回错误。
-    pub fn new(clients: Vec<Box<dyn LlmClient>>) -> Self {
+    pub fn new(clients: Vec<Box<dyn LlmClient + Send + Sync>>) -> Self {
         Self {
             clients,
             last_error: Mutex::new(None),

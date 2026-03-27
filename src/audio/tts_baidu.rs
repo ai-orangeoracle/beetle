@@ -68,9 +68,9 @@ where
         if take_samples == 0 {
             break;
         }
-        for i in 0..take_samples {
+        for (i, sample) in chunk.iter_mut().enumerate().take(take_samples) {
             let pos = idx + i * 2;
-            chunk[i] = i16::from_le_bytes([bytes[pos], bytes[pos + 1]]);
+            *sample = i16::from_le_bytes([bytes[pos], bytes[pos + 1]]);
         }
         on_chunk(&chunk[..take_samples])?;
         played += take_samples;
@@ -150,4 +150,58 @@ fn extract_tts_error_message(bytes: &[u8]) -> String {
     std::str::from_utf8(bytes)
         .map(|s| s.to_string())
         .unwrap_or_else(|_| "unknown tts error".to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{extract_tts_error_message, wav_data_chunk};
+
+    #[test]
+    fn wav_data_chunk_parses_minimal_pcm_wav() {
+        let mut wav = Vec::new();
+        wav.extend_from_slice(b"RIFF");
+        wav.extend_from_slice(&(44u32).to_le_bytes());
+        wav.extend_from_slice(b"WAVE");
+        wav.extend_from_slice(b"fmt ");
+        wav.extend_from_slice(&(16u32).to_le_bytes());
+        wav.extend_from_slice(&[1, 0, 1, 0]);
+        wav.extend_from_slice(&(16000u32).to_le_bytes());
+        wav.extend_from_slice(&(32000u32).to_le_bytes());
+        wav.extend_from_slice(&[2, 0, 16, 0]);
+        wav.extend_from_slice(b"data");
+        wav.extend_from_slice(&(4u32).to_le_bytes());
+        wav.extend_from_slice(&[0u8, 0, 1, 0]);
+
+        let (start, len) = wav_data_chunk(&wav).expect("valid wav");
+        assert_eq!(len, 4);
+        assert_eq!(&wav[start..start + len], &[0u8, 0, 1, 0]);
+    }
+
+    #[test]
+    fn wav_data_chunk_rejects_odd_data_length() {
+        let mut wav = Vec::new();
+        wav.extend_from_slice(b"RIFF");
+        wav.extend_from_slice(&(43u32).to_le_bytes());
+        wav.extend_from_slice(b"WAVE");
+        wav.extend_from_slice(b"fmt ");
+        wav.extend_from_slice(&(16u32).to_le_bytes());
+        wav.extend_from_slice(&[1, 0, 1, 0]);
+        wav.extend_from_slice(&(16000u32).to_le_bytes());
+        wav.extend_from_slice(&(32000u32).to_le_bytes());
+        wav.extend_from_slice(&[2, 0, 16, 0]);
+        wav.extend_from_slice(b"data");
+        wav.extend_from_slice(&(3u32).to_le_bytes());
+        wav.extend_from_slice(&[0u8, 1, 2]);
+
+        assert!(wav_data_chunk(&wav).is_err());
+    }
+
+    #[test]
+    fn extract_tts_error_message_prefers_json_fields() {
+        let err_msg = br#"{"err_msg":"token expired","message":"fallback"}"#;
+        assert_eq!(extract_tts_error_message(err_msg), "token expired");
+
+        let only_message = br#"{"message":"bad request"}"#;
+        assert_eq!(extract_tts_error_message(only_message), "bad request");
+    }
 }

@@ -78,7 +78,7 @@ fn llm_fallback_source_indices(config: &AppConfig) -> Vec<usize> {
     }
 }
 
-fn box_client_for_source(s: &LlmSource, global_stream: bool) -> Box<dyn LlmClient> {
+fn box_client_for_source(s: &LlmSource, global_stream: bool) -> Box<dyn LlmClient + Send + Sync> {
     match s.provider.as_str() {
         "openai" | "openai_compatible" | "gemini" | "glm" | "qwen" | "deepseek" | "moonshot"
         | "ollama" => Box::new(OpenAiCompatibleClient::from_source(s, global_stream)),
@@ -91,12 +91,12 @@ fn box_client_for_source(s: &LlmSource, global_stream: bool) -> Box<dyn LlmClien
 pub fn build_llm_clients(
     config: &AppConfig,
     resolve_locale: Arc<dyn Fn() -> Locale + Send + Sync>,
-) -> Box<dyn LlmClient> {
+) -> Box<dyn LlmClient + Send + Sync> {
     const TAG: &str = "beetle";
 
     let global_stream = config.llm_stream;
 
-    let llm_clients: Vec<Box<dyn LlmClient>> = llm_fallback_source_indices(config)
+    let llm_clients: Vec<Box<dyn LlmClient + Send + Sync>> = llm_fallback_source_indices(config)
         .into_iter()
         .filter_map(|i| config.llm_sources.get(i))
         .map(|s| box_client_for_source(s, global_stream))
@@ -145,7 +145,7 @@ pub trait LlmHttpClient {
 }
 
 /// LLM 客户端 trait；Agent 只依赖此接口。
-pub trait LlmClient {
+pub trait LlmClient: Send + Sync {
     /// 发起一次 chat；tools 本阶段传 None。HTTP 客户端由调用方注入。
     fn chat(
         &self,

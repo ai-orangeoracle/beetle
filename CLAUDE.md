@@ -49,6 +49,7 @@
 - **禁止虚假度量**：显示、日志、API 返回的度量值（heap、CPU、温度等）必须来自真实数据源：对外口径以 `orchestrator::snapshot()` / `format_resource_baseline_line()` 等为权威；堆与内存维度由 `Platform::memory_snapshot()`（经 `run_app` 注册的 `register_memory_snapshot_provider` 闭包注入编排路径）与真实实现支撑。**禁止**业务域以直读 `platform::heap` 作为观测口径。禁止用固定映射或占位值冒充真实度量；暂时不可用的度量应传 0 或在 UI 标注 N/A。
 - **绑核唯一入口**：多核/绑核改造只能通过 `platform/task_affinity.rs` 与 `util::spawn_guarded_with_profile*` 执行；业务域禁止直接使用 `esp_pthread_*`/`xTaskCreatePinnedToCore`。
 - **线程角色一致性**：涉及 HTTP/TLS 的线程必须设置统一角色（`Interactive` / `Io` / `Background`），由 orchestrator 准入层统一消费；禁止各模块自行实现第二套 TLS 抢占策略。
+- **Agent 独立线程**：`agent_main_loop` 必须在 Core1 独立线程运行并自行注册/喂 TWDT；主线程只负责监管与故障恢复（记录 + `request_restart`），不得再直接执行 agent 正文。
 
 ### 嵌入式字节序
 
@@ -84,7 +85,7 @@
 - 新通道：实现 `MessageSink` trait 并注册，不修改 bus/agent。
 - 新工具：实现 `Tool` trait 并注册到 `ToolRegistry`。
 - 新 LLM：实现 `LlmClient` trait 并注入。
-- 新流式编辑通道：实现 `StreamEditor` trait（`send_initial` + `edit`），在 `main.rs` 根据 `enabled_channel` 创建并注入 `AgentLoopConfig.stream_editor`。实现方自行创建 HTTP 连接，不依赖 agent 的 LLM 连接。
+- 新流式编辑通道：实现 `StreamEditor` trait（`send_initial` + `edit`），在 `main.rs` 根据 `enabled_channel` 创建并注入 `AgentLoopConfig.stream_editor`。实现方使用 **agent 线程内 `thread_local` 连接槽位**复用 HTTP 客户端，禁止跨线程共享非 `Send` 客户端；失败路径统一 `reset_connection_for_retry` 后重试，仍失败则失效槽位重建。
 - 新平台：实现 `Platform` trait（含 `init`、`init_nvs`、`init_spiffs`、`connect_wifi`、`create_http_client`、`request_restart`、`init_sntp`、`ota_from_url` 等）及 `PlatformHttpClient`、`ChannelHttpClient`、`WssConnection` 等 trait，在 main 中替换平台实例与工厂闭包。业务层代码无需改动。
 
 ---
@@ -95,13 +96,14 @@
 
 - **WiFi**：`connect_wifi(config: &AppConfig) -> Result<()>`。调用前对 config 做 `validate_for_wifi()`；Linux STA 墙钟轮询用 `constants::WIFI_CONNECT_TIMEOUT_SECS`；ESP 主线程等待 WiFi 线程首包 `Ok` 用 **`WIFI_ESP_CONNECT_MAIN_WAIT_SECS`**（与 Linux 解耦）。错误 stage 为 `wifi_connect`。**P0 语义（ESP 与 Linux 嵌入式一致）**：只要 **SoftAP 已起且 `wifi_scan()` 可用**，`connect_wifi` 应返回 **`Ok(())`**；用户配置的 **STA 密码错误或暂时连不上** 时 **不得** 因 STA 失败而让整次 `connect_wifi` 失败（否则配网页/扫描不可用、设备等同失联）。**用户可见「WiFi 是否连上路由器」**（`/api/health` 的 `wifi`、CLI、Telegram `/status` 等）一律以 **`is_wifi_sta_connected()`** 为准；**不得** 与「`connect_wifi` 成功 / 仅配网栈就绪」混用。仅在 **AP/驱动无法启动** 等致命错误时返回 `Err`。
 - **Linux 嵌入式 WiFi（补充）**：启动前 `iw dev … info` + `iw phy … info` 探测 **AP 能力** 与 **`valid interface combinations` 是否同时含 managed+AP**（启发式）；无 AP 能力则 `wifi_capability_check` 失败。未声明并发时 **只保 SoftAP**，不启 `wpa_supplicant` STA，`GET /api/wifi/scan` 走 **`iw dev <iface> scan`**；守护线程周期 **`WIFI_LINUX_DAEMON_WATCH_INTERVAL_SECS`**，用 PID 文件 + `kill -0` 检测 **hostapd/dnsmasq**，死则 `stop_ap`+`start_ap`；若存在 **wpa_supplicant** PID 文件且进程已死则 `ensure_daemon`。stage **`wifi_daemon_watch`** 仅用于看门狗路径。
-- **HTTP 客户端**：由 **main 构造一次**，LLM、工具、通道均**注入**同一 `EspHttpClient`，不在各处再 `EspHttpClient::new()`。直连用 `new()`，走 proxy 用 `new_with_config(&config)`。响应体上限 512KB，请求超时 30s。**例外**：`StreamEditor` 实现和 sender 线程需自行创建独立 HTTP 连接（主连接被 LLM 流占用或运行在独立线程）。
+- **HTTP 客户端**：由 **main 构造一次**，LLM、工具、通道均**注入**同一 `EspHttpClient`，不在各处再 `EspHttpClient::new()`。直连用 `new()`，走 proxy 用 `new_with_config(&config)`。响应体上限 512KB，请求超时 30s。**例外**：`StreamEditor` 与 sender 线程使用独立连接；`StreamEditor` 在 agent 线程内通过 `thread_local` 槽位复用，不允许新增跨线程共享路径。
 - **Error stage**：网络/HTTP 错误带 stage（`wifi_connect`、`http_client_new`、`http_get_request`、`http_get_submit`、`proxy_connect`）；不新增未使用 Error 变体。
 - **platform 边界**：platform 是唯一依赖 esp-idf-svc 的模块；核心域（llm、agent、tools、channels）不直接依赖 platform，通过 main 注入的客户端或 trait 使用。GPIO/PWM/ADC/Buzzer 等硬件能力仅通过 **`Platform` trait**（如 `drive_gpio_out`、`drive_adc_in` 等）暴露，由 `Esp32Platform` / `LinuxPlatform` 委托 `platform/hardware_drivers`；业务域（含 `tools`）**禁止** `use crate::platform::hardware_drivers`（见 §14.2 门禁脚本）。`lib.rs` 中 ESP 专有类型的 re-export 均有 `#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]` 守卫。
 
 ### LLM
 
 - **LlmClient**：Agent/main 只依赖此 trait。`chat(&self, http: &mut dyn LlmHttpClient, system, messages, tools) -> Result<LlmResponse>`；**llm 不依赖 platform**，HTTP 由调用方注入。
+- **LLM 分层例外口径**：当前 `llm::LlmHttpClient` 仍复用 `platform::ResponseBody`，且 `fallback/retry` 会调用 `platform::task_wdt::feed_current_task()`；这是为嵌入式内存与 TWDT 稳定性的有意工程折中。若未来要求“llm 字面零 platform 依赖”，需单独立项引入 llm 侧自有响应体/喂狗抽象，再由 `lib` 桥接实现。
 - **chat_with_progress**：可选流式回调方法；默认回退到 `chat`。`StreamProgressFn<'a> = &'a mut dyn FnMut(&str, &str)` 传递 `(delta, accumulated)`。`FallbackLlmClient` 仅第一源走 progress，后续降级普通 chat。
 - **LlmHttpClient**：在 **lib** 中由 `EspHttpClient` 实现（`do_post(url, headers, body)`）；新增 LLM 厂商时仅新增实现 `LlmClient` 的类型，不修改 platform。
 - **类型与常量**：`Message`、`LlmResponse`、`ToolSpec` 在 `llm::types`；`MAX_REQUEST_BODY_LEN`（512KB）、`MAX_MESSAGE_CONTENT_LEN`（64KB）；序列化超限用 `Error::Config`。

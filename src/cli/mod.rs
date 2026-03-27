@@ -206,7 +206,7 @@ fn cmd_config_reset(ctx: &CliContext, args: Vec<&str>) -> String {
     }
 }
 
-fn cmd_health(_ctx: &CliContext) -> String {
+fn cmd_health(ctx: &CliContext) -> String {
     let wifi = if crate::platform::is_wifi_sta_connected() {
         "connected"
     } else {

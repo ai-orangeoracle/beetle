@@ -823,12 +823,12 @@ fn dispatch_ota(
             let channel = channel_from_uri(uri);
             let body = crate::platform::http_server::handlers::ota::get_check(ctx, &channel)
                 .map_err(|e| err_other("http_router_dispatch", e))?;
-            return Ok(Some(OutgoingResponse::json(
+            Ok(Some(OutgoingResponse::json(
                 200,
                 "OK",
                 CORS_HEADERS,
                 body.into_bytes(),
-            )));
+            )))
         }
         ("POST", "/api/ota") => {
             if let Some(r) = auth::require_pairing_code(store, uri, &incoming.headers) {
@@ -847,7 +847,7 @@ fn dispatch_ota(
             if do_restart {
                 out.restart = RestartAction::After300Ms;
             }
-            return Ok(Some(out));
+            Ok(Some(out))
         }
         _ => Ok(None),
     }

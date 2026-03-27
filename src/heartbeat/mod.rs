@@ -66,6 +66,7 @@ pub fn run_heartbeat_loop(version: &'static str, interval_secs: u64) {
 /// 周期打日志并在有待办时向 inbound 注入一条 PcMsg；同一待办 30s 内不重复注入。
 /// 同时更新 orchestrator 的队列深度快照。定期执行会话 GC。
 /// 会话/存储相关指标中的存储用量来自注入的 [`crate::Platform`]（`spiffs_usage`），不直引 `platform::spiffs`。
+/// NOTE: 参数数量较多源于启动装配的显式依赖下传（避免全局状态）；后续若拆分仅做等价重构。
 #[allow(clippy::too_many_arguments)]
 pub fn run_heartbeat_loop_with_tasks(
     version: &'static str,
