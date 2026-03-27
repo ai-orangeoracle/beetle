@@ -36,11 +36,62 @@ pub enum ToolDecision {
     Deny { reason: &'static str },
 }
 
+const LOW_MEM_DEFER_SLEEP_MS_MIN: u64 = 650;
+const LLM_RETRY_LATER_DELAY_MS_MIN: u64 = 240;
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+const OUTBOUND_DEFER_DELAY_MS_CAUTIOUS_MIN: u64 = 120;
+
 #[inline]
-fn is_queue_congested(state: &OrchestratorState) -> bool {
+fn queue_total(state: &OrchestratorState) -> u32 {
     let inbound = state.inbound_depth.load(Ordering::Relaxed);
     let outbound = state.outbound_depth.load(Ordering::Relaxed);
-    inbound.saturating_add(outbound) >= PRESSURE_QUEUE_CONGESTION_THRESHOLD
+    inbound.saturating_add(outbound)
+}
+
+#[inline]
+fn is_queue_congested(state: &OrchestratorState) -> bool {
+    queue_total(state) >= PRESSURE_QUEUE_CONGESTION_THRESHOLD
+}
+
+#[inline]
+fn critical_inbound_defer_delay_ms(state: &OrchestratorState) -> u64 {
+    // Keep protective backoff under pressure, but avoid fixed 1.8s stall on near-threshold cases.
+    let base = LOW_MEM_DEFER_SLEEP_MS;
+    let total = queue_total(state) as u64;
+    let threshold = (PRESSURE_QUEUE_CONGESTION_THRESHOLD as u64).max(1);
+    if total >= threshold {
+        return base;
+    }
+    let scaled = LOW_MEM_DEFER_SLEEP_MS_MIN
+        + (base.saturating_sub(LOW_MEM_DEFER_SLEEP_MS_MIN)) * total / threshold;
+    scaled.clamp(LOW_MEM_DEFER_SLEEP_MS_MIN, base)
+}
+
+#[inline]
+fn cautious_llm_retry_delay_ms(state: &OrchestratorState) -> u64 {
+    let largest = state.heap_largest_block.load(Ordering::Relaxed) as u64;
+    let need = TLS_ADMISSION_MIN_LARGEST_BLOCK_BYTES as u64;
+    let deficit = need.saturating_sub(largest);
+    let range = LLM_RETRY_LATER_DELAY_MS.saturating_sub(LLM_RETRY_LATER_DELAY_MS_MIN);
+    if range == 0 || need == 0 {
+        return LLM_RETRY_LATER_DELAY_MS;
+    }
+    let scaled = LLM_RETRY_LATER_DELAY_MS_MIN + range * deficit.min(need) / need;
+    scaled.clamp(LLM_RETRY_LATER_DELAY_MS_MIN, LLM_RETRY_LATER_DELAY_MS)
+}
+
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+#[inline]
+fn cautious_outbound_defer_delay_ms(state: &OrchestratorState) -> u64 {
+    let base = OUTBOUND_DEFER_DELAY_MS_CAUTIOUS;
+    let total = queue_total(state) as u64;
+    let threshold = (PRESSURE_QUEUE_CONGESTION_THRESHOLD as u64).max(1);
+    // only called when congested; just-over-threshold uses minimum defer for better responsiveness.
+    let over = total.saturating_sub(threshold);
+    let scaled = OUTBOUND_DEFER_DELAY_MS_CAUTIOUS_MIN
+        + (base.saturating_sub(OUTBOUND_DEFER_DELAY_MS_CAUTIOUS_MIN)) * over.min(threshold)
+            / threshold;
+    scaled.clamp(OUTBOUND_DEFER_DELAY_MS_CAUTIOUS_MIN, base)
 }
 
 /// agent loop 收到消息后、处理前调用。
@@ -61,7 +112,7 @@ pub fn should_accept_inbound(
                 };
             }
             AdmissionDecision::Defer {
-                delay_ms: LOW_MEM_DEFER_SLEEP_MS,
+                delay_ms: critical_inbound_defer_delay_ms(state),
             }
         }
         PressureLevel::Cautious => {
@@ -89,7 +140,7 @@ pub fn can_call_llm(state: &OrchestratorState) -> LlmDecision {
             let largest_block = state.heap_largest_block.load(Ordering::Relaxed);
             if largest_block < TLS_ADMISSION_MIN_LARGEST_BLOCK_BYTES as u32 {
                 LlmDecision::RetryLater {
-                    delay_ms: LLM_RETRY_LATER_DELAY_MS,
+                    delay_ms: cautious_llm_retry_delay_ms(state),
                 }
             } else {
                 LlmDecision::Proceed
@@ -156,7 +207,7 @@ pub fn should_accept_outbound(state: &OrchestratorState, _channel: &str) -> Admi
             {
                 if congested {
                     AdmissionDecision::Defer {
-                        delay_ms: OUTBOUND_DEFER_DELAY_MS_CAUTIOUS,
+                        delay_ms: cautious_outbound_defer_delay_ms(state),
                     }
                 } else {
                     AdmissionDecision::Accept

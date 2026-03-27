@@ -15,6 +15,7 @@ const TLS_ADMISSION_RETRY_SLEEP_SECS: u64 = 5;
 const HEARTBEAT_INTERVAL_MIN_MS: u64 = 10_000;
 const HEARTBEAT_INTERVAL_MAX_MS: u64 = 300_000;
 const DEFAULT_HEARTBEAT_INTERVAL_MS: u64 = 120_000;
+const ACK_SEND_DELAY_MS: u64 = 20;
 /// recv_timeout 单次上限（秒）；须小于 TWDT 超时（sdkconfig 60s），
 /// 避免长心跳间隔通道（如飞书 120s）在空闲时触发看门狗。
 const WDT_RECV_CHUNK_SECS: u64 = 25;
@@ -199,16 +200,23 @@ pub fn run_wss_gateway_loop<D, H, C, CreateHttp, Conn>(
                                 );
                             } else {
                                 let mut enqueued = false;
+                                let mut pending_msg = Some(msg);
                                 for _ in 0..3 {
-                                    match inbound_tx.try_send(msg.clone()) {
+                                    let Some(try_msg) = pending_msg.take() else {
+                                        log::warn!("[{}] pending msg missing before try_send", tag);
+                                        break;
+                                    };
+                                    match inbound_tx.try_send(try_msg) {
                                         Ok(()) => {
                                             enqueued = true;
                                             break;
                                         }
-                                        Err(std::sync::mpsc::TrySendError::Full(_)) => {
+                                        Err(std::sync::mpsc::TrySendError::Full(m)) => {
+                                            pending_msg = Some(m);
                                             std::thread::sleep(Duration::from_millis(200));
                                         }
-                                        Err(std::sync::mpsc::TrySendError::Disconnected(_)) => {
+                                        Err(std::sync::mpsc::TrySendError::Disconnected(m)) => {
+                                            pending_msg = Some(m);
                                             log::warn!(
                                                 "[{}] inbound disconnected, dropping msg chat_id={}",
                                                 tag,
@@ -226,7 +234,9 @@ pub fn run_wss_gateway_loop<D, H, C, CreateHttp, Conn>(
                                         tag,
                                         chat_id
                                     );
-                                    let _ = pending_retry.save_pending_retry(&msg);
+                                    if let Some(m) = pending_msg.as_ref() {
+                                        let _ = pending_retry.save_pending_retry(m);
+                                    }
                                 }
                             }
                         }
@@ -269,7 +279,7 @@ pub fn run_wss_gateway_loop<D, H, C, CreateHttp, Conn>(
                                 true
                             };
                             if enqueued {
-                                std::thread::sleep(Duration::from_millis(100));
+                                std::thread::sleep(Duration::from_millis(ACK_SEND_DELAY_MS));
                                 log::debug!("[{}] send ack len={}", tag, ack.len());
                                 if conn.send_binary_owned(ack).is_err() {
                                     log::warn!("[{}] send ack failed", tag);

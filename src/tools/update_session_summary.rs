@@ -51,8 +51,7 @@ impl Tool for UpdateSessionSummaryTool {
         // Get current message count for tracking when summary was last updated.
         let message_count = self
             .session_store
-            .load_recent(chat_id, 128)
-            .map(|msgs| msgs.len())
+            .message_count(chat_id)
             .unwrap_or(0);
         self.store.set_with_count(chat_id, summary, message_count)?;
         Ok(tr(UiMessage::SessionSummaryUpdated, ctx.user_locale()))
