@@ -175,6 +175,11 @@ pub fn connect(config: &AppConfig) -> Result<Option<WifiScanHandle>> {
 /// **重连策略**：只调 `wifi.connect()` 发起重连，**不调 `wait_netif_up()`**。
 /// `wait_netif_up()` 会阻塞线程数秒，阻止 WiFi 驱动处理内部事件，导致
 /// Mixed(AP+STA) 模式下 STA 反复断连。改为非阻塞后靠后续 poll 自然检测到连接恢复。
+///
+/// **判定 STA 是否仍在线**：勿单独使用 `Wifi::is_connected()`。在 APSTA 下该值为
+/// `(AP started) ∧ (STA connected)`，与 SoftAP 事件不同步时会出现短暂假阴性，进而误触发
+/// `connect()`，把已关联 STA 打回 `run -> init`。此处以 `WifiDriver::is_sta_connected` 与
+/// STA netif 上的有效 IPv4 为准；二者任一成立则视为链路仍在，不发起重连。
 fn run_scan_loop(
     wifi: &mut BlockingWifi<EspWifi>,
     scan_req_rx: &mpsc::Receiver<()>,
@@ -189,11 +194,25 @@ fn run_scan_loop(
         if has_sta {
             let in_cooldown = cooldown_until.is_some_and(|t| Instant::now() < t);
             if !in_cooldown {
-                let connected = wifi.is_connected().unwrap_or(false);
-                if connected {
-                    if !WIFI_STA_CONNECTED.load(Ordering::Relaxed) {
+                let sta_l2 = wifi
+                    .wifi()
+                    .driver()
+                    .is_sta_connected()
+                    .unwrap_or(false);
+                let sta_ip_ok = read_sta_ipv4_string()
+                    .map(|s| s != "0.0.0.0")
+                    .unwrap_or(false);
+                let sta_link_up = sta_l2 || sta_ip_ok;
+
+                if sta_link_up {
+                    if sta_ip_ok {
+                        if !WIFI_STA_CONNECTED.load(Ordering::Relaxed) {
+                            log::info!("[{}] STA connected (detected in poll)", TAG);
+                        }
                         WIFI_STA_CONNECTED.store(true, Ordering::Relaxed);
-                        log::info!("[{}] STA connected (detected in poll)", TAG);
+                    } else {
+                        // 已关联但尚未拿到 IP：不调用 connect()，避免打断 DHCP。
+                        WIFI_STA_CONNECTED.store(false, Ordering::Relaxed);
                     }
                     update_sta_ip_cache();
                     cooldown_until = None;

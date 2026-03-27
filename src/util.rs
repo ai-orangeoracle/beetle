@@ -635,16 +635,23 @@ where
             core_target,
             role
         );
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
-        if let Err(e) = result {
-            let msg = if let Some(s) = e.downcast_ref::<&str>() {
-                (*s).to_string()
-            } else if let Some(s) = e.downcast_ref::<String>() {
-                s.clone()
-            } else {
-                "unknown panic".to_string()
-            };
-            log::error!("[{}] thread panicked: {}", tag, msg);
+        #[cfg(feature = "thread_panic_catch")]
+        {
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
+            if let Err(e) = result {
+                let msg = if let Some(s) = e.downcast_ref::<&str>() {
+                    (*s).to_string()
+                } else if let Some(s) = e.downcast_ref::<String>() {
+                    s.clone()
+                } else {
+                    "unknown panic".to_string()
+                };
+                log::error!("[{}] thread panicked: {}", tag, msg);
+            }
+        }
+        #[cfg(not(feature = "thread_panic_catch"))]
+        {
+            f();
         }
     };
     let spawn_res = crate::platform::task_affinity::spawn_named_with_affinity(

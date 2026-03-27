@@ -61,6 +61,7 @@ fn collect_headers(req: &impl Headers) -> Vec<(String, String)> {
     v
 }
 
+#[inline(never)]
 fn read_body_esp<C: Connection>(
     req: &mut Request<C>,
     store: &dyn ConfigStore,
@@ -132,6 +133,7 @@ fn read_body_esp<C: Connection>(
     }
 }
 
+#[inline(never)]
 fn write_api_resp<C: Connection>(req: Request<C>, r: ApiResponse) -> HandlerResult {
     let mut resp = req
         .into_response(r.status, Some(r.status_text), CORS_HEADERS)
@@ -140,6 +142,7 @@ fn write_api_resp<C: Connection>(req: Request<C>, r: ApiResponse) -> HandlerResu
     Ok(())
 }
 
+#[inline(never)]
 fn write_outgoing<C: Connection>(
     ctx: &Arc<HandlerContext>,
     req: Request<C>,
@@ -165,6 +168,7 @@ fn write_outgoing<C: Connection>(
     Ok(())
 }
 
+#[inline(never)]
 pub(super) fn esp_dispatch_route<C: Connection>(
     ctx: &Arc<HandlerContext>,
     env: &RouterEnv,

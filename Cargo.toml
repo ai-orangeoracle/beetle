@@ -63,13 +63,22 @@ tokio = { version = "1", features = ["rt", "macros", "net", "time"] }
 futures = "0.3"
 
 [features]
-default = ["config_api", "feishu"]
+default = [
+    "config_api",
+    "feishu",
+    "tools_diagnostics",
+    "tools_network_extra",
+    "thread_panic_catch",
+]
 config_api = []
 telegram = []
 feishu = ["prost", "bytes"]  # 通道核心功能，默认开启
 websocket = []
 cli = []
 ota = []
+tools_diagnostics = []
+tools_network_extra = []
+thread_panic_catch = []
 
 [profile.release]
 opt-level = "s"

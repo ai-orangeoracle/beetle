@@ -1,6 +1,9 @@
 # beetle (甲壳虫) - Common defaults
 # Target-specific: sdkconfig.defaults.esp32s3 / sdkconfig.defaults.esp32c3
 
+# 固件体积优先：IDF 组件按 size 优化（与 Rust release opt-level="s" 对齐）。
+CONFIG_COMPILER_OPTIMIZATION_SIZE=y
+
 # 不用蓝牙时显式关闭，减少链接进固件的组件（若需 BLE 可删此行）
 CONFIG_BT_ENABLED=n
 

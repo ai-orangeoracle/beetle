@@ -3,6 +3,7 @@
 
 mod registry;
 
+#[cfg(feature = "tools_network_extra")]
 pub mod analyze_image;
 pub mod board_info;
 pub mod cron;
@@ -10,48 +11,71 @@ pub mod cron_manage;
 pub mod file_write;
 pub mod files;
 pub mod get_time;
+#[cfg(feature = "tools_diagnostics")]
 pub mod hardware;
 mod http_bridge;
+#[cfg(feature = "tools_network_extra")]
 pub mod http_request;
+#[cfg(feature = "tools_diagnostics")]
 pub mod i2c_device;
+#[cfg(feature = "tools_diagnostics")]
 pub mod i2c_sensor;
 pub mod kv_store;
+#[cfg(feature = "tools_diagnostics")]
 pub mod memory_manage;
+#[cfg(feature = "tools_network_extra")]
 pub mod model_config;
+#[cfg(feature = "tools_diagnostics")]
 pub mod network_scan;
+#[cfg(feature = "tools_network_extra")]
 pub mod proxy_config;
 pub mod remind_at;
 pub mod sensor_watch;
+#[cfg(feature = "tools_diagnostics")]
 pub mod session_manage;
+#[cfg(feature = "tools_diagnostics")]
 pub mod system_control;
 pub mod update_session_summary;
 pub mod voice_input;
 pub mod voice_output;
+#[cfg(feature = "tools_network_extra")]
 pub mod web_search;
 
+#[cfg(feature = "tools_network_extra")]
 pub use analyze_image::AnalyzeImageTool;
 pub use board_info::BoardInfoTool;
 pub use cron_manage::CronManageTool;
 pub use file_write::FileWriteTool;
 pub use files::FilesTool;
 pub use get_time::GetTimeTool;
+#[cfg(feature = "tools_diagnostics")]
 pub use hardware::DeviceControlTool;
+#[cfg(feature = "tools_network_extra")]
 pub use http_request::HttpRequestTool;
+#[cfg(feature = "tools_diagnostics")]
 pub use i2c_device::I2cDeviceTool;
+#[cfg(feature = "tools_diagnostics")]
 pub use i2c_sensor::I2cSensorTool;
 pub use kv_store::KvStoreTool;
+#[cfg(feature = "tools_diagnostics")]
 pub use memory_manage::MemoryManageTool;
+#[cfg(feature = "tools_network_extra")]
 pub use model_config::ModelConfigTool;
+#[cfg(feature = "tools_diagnostics")]
 pub use network_scan::NetworkScanTool;
+#[cfg(feature = "tools_network_extra")]
 pub use proxy_config::ProxyConfigTool;
 pub use registry::{build_default_registry, ToolRegistry};
 pub use remind_at::{RemindAtTool, RemindListTool};
 pub use sensor_watch::SensorWatchTool;
+#[cfg(feature = "tools_diagnostics")]
 pub use session_manage::SessionManageTool;
+#[cfg(feature = "tools_diagnostics")]
 pub use system_control::SystemControlTool;
 pub use update_session_summary::UpdateSessionSummaryTool;
 pub use voice_input::VoiceInputTool;
 pub use voice_output::VoiceOutputTool;
+#[cfg(feature = "tools_network_extra")]
 pub use web_search::WebSearchTool;
 
 use crate::error::{Error, Result};

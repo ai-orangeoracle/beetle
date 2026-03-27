@@ -37,6 +37,7 @@ pub const CONFIG_FIELD_MAX_LEN: usize = 64;
 /// URL 类字段长度上界（如 dingtalk_webhook_url）。
 pub const CONFIG_URL_MAX_LEN: usize = 512;
 
+#[cfg(any(test, feature = "cli"))]
 fn validate_field_len(s: &str, max: usize, field_name: &str) -> Result<()> {
     if s.len() > max {
         Err(Error::config(
@@ -48,6 +49,7 @@ fn validate_field_len(s: &str, max: usize, field_name: &str) -> Result<()> {
     }
 }
 
+#[cfg(any(test, feature = "cli"))]
 fn validate_url_len(s: &str, field_name: &str) -> Result<()> {
     validate_field_len(s, CONFIG_URL_MAX_LEN, field_name)
 }
@@ -723,14 +725,16 @@ pub fn parse_proxy_url_to_host_port(url: &str) -> Option<(String, String)> {
 
 // 以下仍属 impl AppConfig（与 parse_proxy_url_to_host_port 并列的 impl 块继续）
 impl AppConfig {
-    /// 序列化为 JSON，供 GET /api/config 与 CLI 使用。
-    /// NOTE: 含明文密钥，仅限本地 UI 使用，不得用于日志或公开接口。
-    /// For local UI only; contains plaintext secrets.
+    /// 序列化为 JSON，供 CLI 使用。
+    /// NOTE: 含明文密钥，仅限本地使用，不得用于日志或公开接口。
+    /// For local use only; contains plaintext secrets.
+    #[cfg(feature = "cli")]
     pub fn to_full_json(&self) -> Result<String> {
         serde_json::to_string_pretty(self).map_err(|e| Error::config("serialize", e.to_string()))
     }
 
     /// 从 JSON 反序列化并校验（validate_for_wifi、validate_proxy、tg_group_activation、session_max_messages、llm_sources）。
+    #[cfg(any(test, feature = "cli"))]
     pub fn from_json_and_validate(body: &[u8]) -> Result<Self> {
         let mut c: AppConfig = serde_json::from_slice(body)
             .map_err(|e| Error::config("deserialize", e.to_string()))?;

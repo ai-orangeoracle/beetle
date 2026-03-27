@@ -109,13 +109,15 @@ pub fn build_default_registry(
     remind_at_store: Arc<dyn crate::memory::RemindAtStore + Send + Sync>,
     session_summary_store: Arc<dyn crate::memory::SessionSummaryStore + Send + Sync>,
     session_store: Arc<dyn crate::memory::SessionStore + Send + Sync>,
-    memory_store: Arc<dyn crate::memory::MemoryStore + Send + Sync>,
-    config_store: Arc<dyn crate::platform::ConfigStore + Send + Sync>,
+    _memory_store: Arc<dyn crate::memory::MemoryStore + Send + Sync>,
+    _config_store: Arc<dyn crate::platform::ConfigStore + Send + Sync>,
 ) -> ToolRegistry {
     let mut registry = ToolRegistry::new();
     registry.register(Box::new(super::GetTimeTool));
     registry.register(Box::new(super::FilesTool::new(platform.state_fs())));
+    #[cfg(feature = "tools_network_extra")]
     registry.register(Box::new(super::WebSearchTool::new(config)));
+    #[cfg(feature = "tools_network_extra")]
     registry.register(Box::new(super::AnalyzeImageTool::new(config)));
     let remind_at_store_for_list = Arc::clone(&remind_at_store);
     registry.register(Box::new(super::RemindAtTool::new(remind_at_store)));
@@ -128,6 +130,7 @@ pub fn build_default_registry(
     )));
     registry.register(Box::new(super::BoardInfoTool::new(Arc::clone(&platform))));
     registry.register(Box::new(super::KvStoreTool::new(platform.state_fs())));
+    #[cfg(feature = "tools_diagnostics")]
     if !config.hardware_devices.is_empty() {
         registry.register(Box::new(super::DeviceControlTool::new(
             config.hardware_devices.clone(),
@@ -135,34 +138,45 @@ pub fn build_default_registry(
         )));
     }
     // --- New tools ---
+    #[cfg(feature = "tools_diagnostics")]
     registry.register(Box::new(super::MemoryManageTool::new(Arc::clone(
-        &memory_store,
+        &_memory_store,
     ))));
+    #[cfg(feature = "tools_network_extra")]
     registry.register(Box::new(super::HttpRequestTool));
+    #[cfg(feature = "tools_diagnostics")]
     registry.register(Box::new(super::SessionManageTool::new(session_store)));
     registry.register(Box::new(super::FileWriteTool::new(platform.state_fs())));
+    #[cfg(feature = "tools_diagnostics")]
     registry.register(Box::new(super::SystemControlTool::new(Arc::clone(
         &platform,
     ))));
+    #[cfg(feature = "tools_diagnostics")]
     registry.register(Box::new(super::CronManageTool::new(Arc::clone(
-        &memory_store,
+        &_memory_store,
     ))));
-    registry.register(Box::new(super::ProxyConfigTool::new(config_store)));
+    #[cfg(feature = "tools_network_extra")]
+    registry.register(Box::new(super::ProxyConfigTool::new(_config_store)));
+    #[cfg(feature = "tools_network_extra")]
     registry.register(Box::new(super::ModelConfigTool::new(Arc::clone(&platform))));
+    #[cfg(feature = "tools_diagnostics")]
     registry.register(Box::new(super::NetworkScanTool::new(Arc::clone(&platform))));
+    #[cfg(feature = "tools_diagnostics")]
     if !config.hardware_devices.is_empty() || !config.i2c_sensors.is_empty() {
         registry.register(Box::new(super::SensorWatchTool::new(
-            Arc::clone(&memory_store),
+            Arc::clone(&_memory_store),
             config.hardware_devices.clone(),
             config.i2c_sensors.clone(),
         )));
     }
+    #[cfg(feature = "tools_diagnostics")]
     if config.i2c_bus.is_some() && !config.i2c_devices.is_empty() {
         registry.register(Box::new(super::I2cDeviceTool::new(
             Arc::clone(&platform),
             config.i2c_devices.clone(),
         )));
     }
+    #[cfg(feature = "tools_diagnostics")]
     if config.i2c_bus.is_some() && !config.i2c_sensors.is_empty() {
         registry.register(Box::new(super::I2cSensorTool::new(
             Arc::clone(&platform),

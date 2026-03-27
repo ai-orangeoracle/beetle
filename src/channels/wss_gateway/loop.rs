@@ -56,6 +56,8 @@ fn wait_for_wifi(_tag: &str) -> bool {
     true
 }
 
+/// 各通道在 main 中独立线程调用，泛型 `D`/`H`/`C` 为不同实现；有意保留多组单态以隔离 TLS/HTTP 与重连语义，
+/// 而非合并为 enum（体积换可维护性；若前序优化仍不足再评估）。
 pub fn run_wss_gateway_loop<D, H, C, CreateHttp, Conn>(
     tag: &str,
     mut driver: D,

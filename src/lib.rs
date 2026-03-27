@@ -79,12 +79,16 @@ pub use platform::{
 };
 pub use platform::{ConfigStore, MemorySnapshot, Platform, SkillStorage, StateFs};
 pub use tools::{
-    build_default_registry, CronManageTool, DeviceControlTool, FileWriteTool, FilesTool,
-    GetTimeTool, HttpRequestTool, I2cDeviceTool, I2cSensorTool, KvStoreTool, MemoryManageTool,
-    ModelConfigTool, NetworkScanTool, ProxyConfigTool, RemindAtTool, SensorWatchTool,
-    SessionManageTool, SystemControlTool, Tool, ToolContext, ToolRegistry,
-    UpdateSessionSummaryTool, VoiceInputTool, VoiceOutputTool, WebSearchTool,
+    build_default_registry, FileWriteTool, FilesTool, GetTimeTool, KvStoreTool, RemindAtTool,
+    Tool, ToolContext, ToolRegistry, UpdateSessionSummaryTool, VoiceInputTool, VoiceOutputTool,
 };
+#[cfg(feature = "tools_diagnostics")]
+pub use tools::{
+    CronManageTool, DeviceControlTool, I2cDeviceTool, I2cSensorTool, MemoryManageTool,
+    NetworkScanTool, SensorWatchTool, SessionManageTool, SystemControlTool,
+};
+#[cfg(feature = "tools_network_extra")]
+pub use tools::{HttpRequestTool, ModelConfigTool, ProxyConfigTool, WebSearchTool};
 
 /// 任何 PlatformHttpClient 均可作为 LlmHttpClient、ToolContext、ChannelHttpClient 使用。
 impl<T: platform::PlatformHttpClient> llm::LlmHttpClient for T {

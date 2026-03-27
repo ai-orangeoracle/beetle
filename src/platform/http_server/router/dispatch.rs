@@ -15,10 +15,12 @@ use std::sync::Arc;
 
 const OPTIONS_BODY: &[u8] = b" ";
 
+#[inline(never)]
 fn path_only(uri: &str) -> &str {
     uri.split('?').next().unwrap_or("/")
 }
 
+#[inline(never)]
 fn api_to_out(r: ApiResponse) -> OutgoingResponse {
     OutgoingResponse {
         status: r.status,
@@ -29,6 +31,30 @@ fn api_to_out(r: ApiResponse) -> OutgoingResponse {
     }
 }
 
+#[inline(never)]
+fn utf8_body(body: &[u8]) -> Result<&str> {
+    std::str::from_utf8(body).map_err(|_| Error::Other {
+        source: Box::new(std::io::Error::other("invalid utf8")),
+        stage: "http_router_dispatch",
+    })
+}
+
+/// 写操作鉴权：配对码 + CSRF；命中则返回已组装的 JSON 响应。
+#[inline(never)]
+fn guard_pairing_csrf(
+    store: &dyn crate::platform::ConfigStore,
+    uri: &str,
+    headers: &[(String, String)],
+) -> Option<OutgoingResponse> {
+    if let Some(r) = auth::require_pairing_code(store, uri, headers) {
+        return Some(api_to_out(r));
+    }
+    if let Some(r) = auth::require_csrf(store, headers) {
+        return Some(api_to_out(r));
+    }
+    None
+}
+
 fn err_other(stage: &'static str, msg: impl std::fmt::Display) -> Error {
     Error::Other {
         source: Box::new(std::io::Error::other(msg.to_string())),
@@ -37,6 +63,7 @@ fn err_other(stage: &'static str, msg: impl std::fmt::Display) -> Error {
 }
 
 /// 配置 API 唯一入口：ESP / Linux 在组装 `IncomingRequest` 后调用。
+#[inline(never)]
 pub fn dispatch(
     ctx: &HandlerContext,
     env: &RouterEnv,
@@ -124,10 +151,7 @@ pub fn dispatch(
             ))
         }
         ("POST", "/api/pairing_code") => {
-            let body_str = std::str::from_utf8(&incoming.body).map_err(|_| Error::Other {
-                source: Box::new(std::io::Error::other("invalid utf8")),
-                stage: "http_router_dispatch",
-            })?;
+            let body_str = utf8_body(&incoming.body)?;
             let r = handlers::pairing::post_body(ctx, body_str);
             Ok(api_to_out(r))
         }
@@ -145,16 +169,10 @@ pub fn dispatch(
             ))
         }
         ("POST", "/api/config/wifi") => {
-            if let Some(r) = auth::require_pairing_code(store, uri, &incoming.headers) {
-                return Ok(api_to_out(r));
+            if let Some(o) = guard_pairing_csrf(store, uri, &incoming.headers) {
+                return Ok(o);
             }
-            if let Some(r) = auth::require_csrf(store, &incoming.headers) {
-                return Ok(api_to_out(r));
-            }
-            let body_str = std::str::from_utf8(&incoming.body).map_err(|_| Error::Other {
-                source: Box::new(std::io::Error::other("invalid utf8")),
-                stage: "http_router_dispatch",
-            })?;
+            let body_str = utf8_body(&incoming.body)?;
             let r = handlers::config::post_wifi(ctx, body_str)
                 .map_err(|e| err_other("http_router_dispatch", e))?;
             let mut restart = RestartAction::None;
@@ -166,46 +184,28 @@ pub fn dispatch(
             Ok(out)
         }
         ("POST", "/api/config/llm") => {
-            if let Some(r) = auth::require_pairing_code(store, uri, &incoming.headers) {
-                return Ok(api_to_out(r));
+            if let Some(o) = guard_pairing_csrf(store, uri, &incoming.headers) {
+                return Ok(o);
             }
-            if let Some(r) = auth::require_csrf(store, &incoming.headers) {
-                return Ok(api_to_out(r));
-            }
-            let body_str = std::str::from_utf8(&incoming.body).map_err(|_| Error::Other {
-                source: Box::new(std::io::Error::other("invalid utf8")),
-                stage: "http_router_dispatch",
-            })?;
+            let body_str = utf8_body(&incoming.body)?;
             let r = handlers::config::post_llm(ctx, body_str)
                 .map_err(|e| err_other("http_router_dispatch", e))?;
             Ok(api_to_out(r))
         }
         ("POST", "/api/config/channels") => {
-            if let Some(r) = auth::require_pairing_code(store, uri, &incoming.headers) {
-                return Ok(api_to_out(r));
+            if let Some(o) = guard_pairing_csrf(store, uri, &incoming.headers) {
+                return Ok(o);
             }
-            if let Some(r) = auth::require_csrf(store, &incoming.headers) {
-                return Ok(api_to_out(r));
-            }
-            let body_str = std::str::from_utf8(&incoming.body).map_err(|_| Error::Other {
-                source: Box::new(std::io::Error::other("invalid utf8")),
-                stage: "http_router_dispatch",
-            })?;
+            let body_str = utf8_body(&incoming.body)?;
             let r = handlers::config::post_channels(ctx, body_str)
                 .map_err(|e| err_other("http_router_dispatch", e))?;
             Ok(api_to_out(r))
         }
         ("POST", "/api/config/system") => {
-            if let Some(r) = auth::require_pairing_code(store, uri, &incoming.headers) {
-                return Ok(api_to_out(r));
+            if let Some(o) = guard_pairing_csrf(store, uri, &incoming.headers) {
+                return Ok(o);
             }
-            if let Some(r) = auth::require_csrf(store, &incoming.headers) {
-                return Ok(api_to_out(r));
-            }
-            let body_str = std::str::from_utf8(&incoming.body).map_err(|_| Error::Other {
-                source: Box::new(std::io::Error::other("invalid utf8")),
-                stage: "http_router_dispatch",
-            })?;
+            let body_str = utf8_body(&incoming.body)?;
             let r = handlers::config::post_system(ctx, body_str)
                 .map_err(|e| err_other("http_router_dispatch", e))?;
             Ok(api_to_out(r))
@@ -224,16 +224,10 @@ pub fn dispatch(
             ))
         }
         ("POST", "/api/config/hardware") => {
-            if let Some(r) = auth::require_pairing_code(store, uri, &incoming.headers) {
-                return Ok(api_to_out(r));
+            if let Some(o) = guard_pairing_csrf(store, uri, &incoming.headers) {
+                return Ok(o);
             }
-            if let Some(r) = auth::require_csrf(store, &incoming.headers) {
-                return Ok(api_to_out(r));
-            }
-            let body_str = std::str::from_utf8(&incoming.body).map_err(|_| Error::Other {
-                source: Box::new(std::io::Error::other("invalid utf8")),
-                stage: "http_router_dispatch",
-            })?;
+            let body_str = utf8_body(&incoming.body)?;
             let r = handlers::config::post_hardware(ctx, body_str)
                 .map_err(|e| err_other("http_router_dispatch", e))?;
             Ok(api_to_out(r))
@@ -252,16 +246,10 @@ pub fn dispatch(
             ))
         }
         ("POST", "/api/config/audio") => {
-            if let Some(r) = auth::require_pairing_code(store, uri, &incoming.headers) {
-                return Ok(api_to_out(r));
+            if let Some(o) = guard_pairing_csrf(store, uri, &incoming.headers) {
+                return Ok(o);
             }
-            if let Some(r) = auth::require_csrf(store, &incoming.headers) {
-                return Ok(api_to_out(r));
-            }
-            let body_str = std::str::from_utf8(&incoming.body).map_err(|_| Error::Other {
-                source: Box::new(std::io::Error::other("invalid utf8")),
-                stage: "http_router_dispatch",
-            })?;
+            let body_str = utf8_body(&incoming.body)?;
             let r = handlers::config::post_audio(ctx, body_str)
                 .map_err(|e| err_other("http_router_dispatch", e))?;
             let mut restart = RestartAction::None;
@@ -286,16 +274,10 @@ pub fn dispatch(
             ))
         }
         ("POST", "/api/config/display") => {
-            if let Some(r) = auth::require_pairing_code(store, uri, &incoming.headers) {
-                return Ok(api_to_out(r));
+            if let Some(o) = guard_pairing_csrf(store, uri, &incoming.headers) {
+                return Ok(o);
             }
-            if let Some(r) = auth::require_csrf(store, &incoming.headers) {
-                return Ok(api_to_out(r));
-            }
-            let body_str = std::str::from_utf8(&incoming.body).map_err(|_| Error::Other {
-                source: Box::new(std::io::Error::other("invalid utf8")),
-                stage: "http_router_dispatch",
-            })?;
+            let body_str = utf8_body(&incoming.body)?;
             let r = handlers::config::post_display(ctx, body_str)
                 .map_err(|e| err_other("http_router_dispatch", e))?;
             let mut restart = RestartAction::None;
@@ -471,11 +453,8 @@ pub fn dispatch(
             }
         }
         ("DELETE", "/api/sessions") => {
-            if let Some(r) = auth::require_pairing_code(store, uri, &incoming.headers) {
-                return Ok(api_to_out(r));
-            }
-            if let Some(r) = auth::require_csrf(store, &incoming.headers) {
-                return Ok(api_to_out(r));
+            if let Some(o) = guard_pairing_csrf(store, uri, &incoming.headers) {
+                return Ok(o);
             }
             let chat_id = {
                 let query = uri.find('?').map(|i| &uri[i + 1..]).unwrap_or("");
@@ -538,25 +517,16 @@ pub fn dispatch(
             }
         }
         ("POST", "/api/skills") => {
-            if let Some(r) = auth::require_pairing_code(store, uri, &incoming.headers) {
-                return Ok(api_to_out(r));
+            if let Some(o) = guard_pairing_csrf(store, uri, &incoming.headers) {
+                return Ok(o);
             }
-            if let Some(r) = auth::require_csrf(store, &incoming.headers) {
-                return Ok(api_to_out(r));
-            }
-            let body_str = std::str::from_utf8(&incoming.body).map_err(|_| Error::Other {
-                source: Box::new(std::io::Error::other("invalid utf8")),
-                stage: "http_router_dispatch",
-            })?;
+            let body_str = utf8_body(&incoming.body)?;
             let r = handlers::skills::post(ctx, body_str);
             Ok(api_to_out(r))
         }
         ("DELETE", "/api/skills") => {
-            if let Some(r) = auth::require_pairing_code(store, uri, &incoming.headers) {
-                return Ok(api_to_out(r));
-            }
-            if let Some(r) = auth::require_csrf(store, &incoming.headers) {
-                return Ok(api_to_out(r));
+            if let Some(o) = guard_pairing_csrf(store, uri, &incoming.headers) {
+                return Ok(o);
             }
             let name = match common::name_from_uri(uri) {
                 Some(n) => n,
@@ -570,16 +540,10 @@ pub fn dispatch(
             Ok(api_to_out(r))
         }
         ("POST", "/api/skills/import") => {
-            if let Some(r) = auth::require_pairing_code(store, uri, &incoming.headers) {
-                return Ok(api_to_out(r));
+            if let Some(o) = guard_pairing_csrf(store, uri, &incoming.headers) {
+                return Ok(o);
             }
-            if let Some(r) = auth::require_csrf(store, &incoming.headers) {
-                return Ok(api_to_out(r));
-            }
-            let body_str = std::str::from_utf8(&incoming.body).map_err(|_| Error::Other {
-                source: Box::new(std::io::Error::other("invalid utf8")),
-                stage: "http_router_dispatch",
-            })?;
+            let body_str = utf8_body(&incoming.body)?;
             let r = handlers::skills::import(ctx, body_str)
                 .map_err(|e| err_other("http_router_dispatch", e))?;
             Ok(api_to_out(r))
@@ -621,47 +585,32 @@ pub fn dispatch(
             }
         }
         ("POST", "/api/soul") => {
-            if let Some(r) = auth::require_pairing_code(store, uri, &incoming.headers) {
-                return Ok(api_to_out(r));
-            }
-            if let Some(r) = auth::require_csrf(store, &incoming.headers) {
-                return Ok(api_to_out(r));
+            if let Some(o) = guard_pairing_csrf(store, uri, &incoming.headers) {
+                return Ok(o);
             }
             let is_json = incoming
                 .header_ci("Content-Type")
                 .map(|ct| ct.contains("application/json"))
                 .unwrap_or(false);
-            let body_str = std::str::from_utf8(&incoming.body).map_err(|_| Error::Other {
-                source: Box::new(std::io::Error::other("invalid utf8")),
-                stage: "http_router_dispatch",
-            })?;
+            let body_str = utf8_body(&incoming.body)?;
             let r = handlers::soul::post(ctx, body_str.to_string(), is_json);
             Ok(api_to_out(r))
         }
         ("POST", "/api/user") => {
-            if let Some(r) = auth::require_pairing_code(store, uri, &incoming.headers) {
-                return Ok(api_to_out(r));
-            }
-            if let Some(r) = auth::require_csrf(store, &incoming.headers) {
-                return Ok(api_to_out(r));
+            if let Some(o) = guard_pairing_csrf(store, uri, &incoming.headers) {
+                return Ok(o);
             }
             let is_json = incoming
                 .header_ci("Content-Type")
                 .map(|ct| ct.contains("application/json"))
                 .unwrap_or(false);
-            let body_str = std::str::from_utf8(&incoming.body).map_err(|_| Error::Other {
-                source: Box::new(std::io::Error::other("invalid utf8")),
-                stage: "http_router_dispatch",
-            })?;
+            let body_str = utf8_body(&incoming.body)?;
             let r = handlers::user::post(ctx, body_str.to_string(), is_json);
             Ok(api_to_out(r))
         }
         ("POST", "/api/restart") => {
-            if let Some(r) = auth::require_pairing_code(store, uri, &incoming.headers) {
-                return Ok(api_to_out(r));
-            }
-            if let Some(r) = auth::require_csrf(store, &incoming.headers) {
-                return Ok(api_to_out(r));
+            if let Some(o) = guard_pairing_csrf(store, uri, &incoming.headers) {
+                return Ok(o);
             }
             let (r, do_restart) =
                 handlers::restart::post(ctx).map_err(|e| err_other("http_router_dispatch", e))?;
@@ -672,27 +621,18 @@ pub fn dispatch(
             Ok(out)
         }
         ("POST", "/api/config_reset") => {
-            if let Some(r) = auth::require_pairing_code(store, uri, &incoming.headers) {
-                return Ok(api_to_out(r));
-            }
-            if let Some(r) = auth::require_csrf(store, &incoming.headers) {
-                return Ok(api_to_out(r));
+            if let Some(o) = guard_pairing_csrf(store, uri, &incoming.headers) {
+                return Ok(o);
             }
             let r = handlers::config_reset::post(ctx)
                 .map_err(|e| err_other("http_router_dispatch", e))?;
             Ok(api_to_out(r))
         }
         ("POST", "/api/webhook") => {
-            if let Some(r) = auth::require_pairing_code(store, uri, &incoming.headers) {
-                return Ok(api_to_out(r));
+            if let Some(o) = guard_pairing_csrf(store, uri, &incoming.headers) {
+                return Ok(o);
             }
-            if let Some(r) = auth::require_csrf(store, &incoming.headers) {
-                return Ok(api_to_out(r));
-            }
-            let body_str = std::str::from_utf8(&incoming.body).map_err(|_| Error::Other {
-                source: Box::new(std::io::Error::other("invalid utf8")),
-                stage: "http_router_dispatch",
-            })?;
+            let body_str = utf8_body(&incoming.body)?;
             let token = incoming
                 .header_ci("X-Webhook-Token")
                 .or_else(|| incoming.header_ci("x-webhook-token"))
@@ -703,19 +643,13 @@ pub fn dispatch(
             Ok(api_to_out(r))
         }
         ("POST", "/api/feishu/event") => {
-            let body_str = std::str::from_utf8(&incoming.body).map_err(|_| Error::Other {
-                source: Box::new(std::io::Error::other("invalid utf8")),
-                stage: "http_router_dispatch",
-            })?;
+            let body_str = utf8_body(&incoming.body)?;
             let r = handlers::feishu_event::post(ctx, &env.inbound_tx, body_str)
                 .map_err(|e| err_other("http_router_dispatch", e))?;
             Ok(api_to_out(r))
         }
         ("POST", "/api/dingtalk/webhook") => {
-            let body_str = std::str::from_utf8(&incoming.body).map_err(|_| Error::Other {
-                source: Box::new(std::io::Error::other("invalid utf8")),
-                stage: "http_router_dispatch",
-            })?;
+            let body_str = utf8_body(&incoming.body)?;
             let r = handlers::dingtalk_webhook::post(&env.inbound_tx, body_str)
                 .map_err(|e| err_other("http_router_dispatch", e))?;
             Ok(api_to_out(r))
@@ -734,10 +668,7 @@ pub fn dispatch(
             ))
         }
         ("POST", "/api/wecom/webhook") => {
-            let body_str = std::str::from_utf8(&incoming.body).map_err(|_| Error::Other {
-                source: Box::new(std::io::Error::other("invalid utf8")),
-                stage: "http_router_dispatch",
-            })?;
+            let body_str = utf8_body(&incoming.body)?;
             let r = handlers::wecom_webhook::post(ctx, uri, &env.inbound_tx, body_str)
                 .map_err(|e| err_other("http_router_dispatch", e))?;
             Ok(api_to_out(r))
@@ -831,16 +762,10 @@ fn dispatch_ota(
             )))
         }
         ("POST", "/api/ota") => {
-            if let Some(r) = auth::require_pairing_code(store, uri, &incoming.headers) {
-                return Ok(Some(api_to_out(r)));
+            if let Some(o) = guard_pairing_csrf(store, uri, &incoming.headers) {
+                return Ok(Some(o));
             }
-            if let Some(r) = auth::require_csrf(store, &incoming.headers) {
-                return Ok(Some(api_to_out(r)));
-            }
-            let body_str = std::str::from_utf8(&incoming.body).map_err(|_| Error::Other {
-                source: Box::new(std::io::Error::other("invalid utf8")),
-                stage: "http_router_dispatch",
-            })?;
+            let body_str = utf8_body(&incoming.body)?;
             let (r, do_restart) = crate::platform::http_server::handlers::ota::post(ctx, body_str)
                 .map_err(|e| err_other("http_router_dispatch", e))?;
             let mut out = api_to_out(r);
