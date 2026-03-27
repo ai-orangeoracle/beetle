@@ -97,6 +97,21 @@ fn disk_usage_for_path(path: &std::path::Path) -> Option<(u64, u64, u64)> {
     Some((total, used, free))
 }
 
+/// 返回 state_root 所在文件系统的 (total_bytes, used_bytes)，语义对齐 ESP `spiffs_usage`。
+/// Non-unix 返回 None。
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+pub fn host_state_root_usage() -> Option<(usize, usize)> {
+    #[cfg(unix)]
+    {
+        let path = crate::platform::state_mount_path();
+        disk_usage_for_path(&path).map(|(total, used, _free)| (total as usize, used as usize))
+    }
+    #[cfg(not(unix))]
+    {
+        None
+    }
+}
+
 #[cfg(all(not(any(target_arch = "xtensa", target_arch = "riscv32")), unix))]
 fn disk_storage_json(path: &std::path::Path) -> serde_json::Value {
     disk_usage_for_path(path).map_or(serde_json::Value::Null, |(total, used, free)| {

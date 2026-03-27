@@ -111,7 +111,7 @@ pub fn spiffs_usage() -> Option<(usize, usize)> {
     }
     #[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
     {
-        None
+        crate::platform::board_info::host_state_root_usage()
     }
 }
 

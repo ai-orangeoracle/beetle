@@ -1,10 +1,10 @@
 //! 四维门禁决策：入站/出站/LLM/工具，基于统一资源快照做全局协调。
 //! Four-dimensional admission: inbound/outbound/LLM/tool, coordinated via unified resource snapshot.
 
-use crate::constants::{
-    LOW_MEM_DEFER_SLEEP_MS, OUTBOUND_DEFER_DELAY_MS, OUTBOUND_DEFER_DELAY_MS_CAUTIOUS,
-    TLS_ADMISSION_MIN_INTERNAL_BYTES, TLS_ADMISSION_MIN_LARGEST_BLOCK_BYTES,
-};
+use crate::constants::{LOW_MEM_DEFER_SLEEP_MS, OUTBOUND_DEFER_DELAY_MS};
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+use crate::constants::OUTBOUND_DEFER_DELAY_MS_CAUTIOUS;
+use crate::constants::{TLS_ADMISSION_MIN_INTERNAL_BYTES, TLS_ADMISSION_MIN_LARGEST_BLOCK_BYTES};
 use std::sync::atomic::Ordering;
 
 use super::pressure::PressureLevel;
@@ -129,9 +129,15 @@ pub fn should_accept_outbound(state: &OrchestratorState, _channel: &str) -> Admi
         PressureLevel::Critical => AdmissionDecision::Defer {
             delay_ms: OUTBOUND_DEFER_DELAY_MS,
         },
-        PressureLevel::Cautious => AdmissionDecision::Defer {
-            delay_ms: OUTBOUND_DEFER_DELAY_MS_CAUTIOUS,
-        },
+        PressureLevel::Cautious => {
+            // Linux Cautious 不做出站延迟——已有真实内存阈值保障，避免无意义拖慢。
+            #[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+            return AdmissionDecision::Accept;
+            #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+            AdmissionDecision::Defer {
+                delay_ms: OUTBOUND_DEFER_DELAY_MS_CAUTIOUS,
+            }
+        }
         PressureLevel::Normal => AdmissionDecision::Accept,
     }
 }

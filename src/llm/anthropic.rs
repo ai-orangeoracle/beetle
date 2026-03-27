@@ -96,14 +96,22 @@ impl LlmClient for AnthropicClient {
             return self.chat(http, system, messages, tools);
         }
         let body = build_request_body(&self.model, self.max_tokens, system, messages, tools, true)?;
-        // Cannot use retry wrapper with mutable on_progress, so do single attempt.
-        do_request_streaming(
+        match do_request_streaming(
             http,
             &self.api_base,
             &self.api_key,
             &body,
             Some(on_progress),
-        )
+        ) {
+            Ok(r) => Ok(r),
+            Err(e) if e.is_connect_error() => {
+                log::warn!("[{}] streaming connect error, retry once: {}", TAG, e);
+                http.reset_connection_for_retry();
+                std::thread::sleep(std::time::Duration::from_millis(500));
+                do_request_streaming(http, &self.api_base, &self.api_key, &body, None)
+            }
+            Err(e) => Err(e),
+        }
     }
 }
 

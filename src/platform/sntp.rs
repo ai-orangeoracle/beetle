@@ -48,31 +48,71 @@ const SNTP_QUERY_TIMEOUT_SECS: u64 = 5;
 #[cfg(all(not(any(target_arch = "xtensa", target_arch = "riscv32")), target_os = "linux"))]
 const UNIX_TIME_SYNC_THRESHOLD_SECS: u64 = 1_700_000_000;
 
+/// 每 6 小时重新同步一次，防止长时间运行后漂移。
+#[cfg(all(not(any(target_arch = "xtensa", target_arch = "riscv32")), target_os = "linux"))]
+const SNTP_RESYNC_SECS: u64 = 6 * 3600;
+
 #[cfg(all(not(any(target_arch = "xtensa", target_arch = "riscv32")), target_os = "linux"))]
 pub fn init_sntp() {
     SNTP_ONCE.call_once(|| {
         crate::util::spawn_guarded("sntp", || {
-            log::info!(
-                "[{}] Linux SNTP background sync started (pool.ntp.org), waiting for STA",
-                TAG
-            );
+            log::info!("[{}] Linux SNTP background sync started", TAG);
+
+            // 先判断系统时间是否已正确（RTC 或 NTP 已设置过）。
+            if current_unix_secs() >= UNIX_TIME_SYNC_THRESHOLD_SECS {
+                log::info!("[{}] system time already looks valid (>2023)", TAG);
+            } else {
+                // 不再严格等待 STA：先快速尝试几次（可能有有线网络、其它连接方式）。
+                let mut synced = false;
+                for attempt in 0u32..60 {
+                    if current_unix_secs() >= UNIX_TIME_SYNC_THRESHOLD_SECS {
+                        log::info!("[{}] system time became valid during wait", TAG);
+                        synced = true;
+                        break;
+                    }
+                    match sync_once() {
+                        Ok(epoch) => {
+                            log::info!(
+                                "[{}] SNTP synchronized on attempt {}, unix={}",
+                                TAG,
+                                attempt + 1,
+                                epoch
+                            );
+                            synced = true;
+                            break;
+                        }
+                        Err(_) => {
+                            std::thread::sleep(Duration::from_secs(SNTP_RETRY_SECS));
+                        }
+                    }
+                }
+                if !synced {
+                    log::warn!("[{}] SNTP initial sync failed after 60 attempts; will keep retrying in background", TAG);
+                }
+            }
+
+            // 周期重同步：已同步则 6h 间隔；未同步则 30s 快轮询直到成功。
+            let mut ever_synced = current_unix_secs() >= UNIX_TIME_SYNC_THRESHOLD_SECS;
             loop {
-                if current_unix_secs() >= UNIX_TIME_SYNC_THRESHOLD_SECS {
-                    log::info!("[{}] system time already synchronized", TAG);
-                    return;
-                }
-                if !crate::platform::is_wifi_sta_connected() {
-                    std::thread::sleep(Duration::from_secs(SNTP_RETRY_SECS));
-                    continue;
-                }
+                let interval = if ever_synced {
+                    SNTP_RESYNC_SECS
+                } else {
+                    30
+                };
+                std::thread::sleep(Duration::from_secs(interval));
                 match sync_once() {
                     Ok(epoch) => {
-                        log::info!("[{}] SNTP synchronized, unix={}", TAG, epoch);
-                        return;
+                        if !ever_synced {
+                            log::info!("[{}] SNTP late sync ok, unix={}", TAG, epoch);
+                        }
+                        ever_synced = true;
                     }
                     Err(e) => {
-                        log::warn!("[{}] SNTP sync failed: {}", TAG, e);
-                        std::thread::sleep(Duration::from_secs(SNTP_RETRY_SECS));
+                        if !ever_synced {
+                            log::debug!("[{}] SNTP retry failed: {}", TAG, e);
+                        } else {
+                            log::warn!("[{}] SNTP resync failed: {}", TAG, e);
+                        }
                     }
                 }
             }

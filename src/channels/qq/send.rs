@@ -265,13 +265,15 @@ fn is_v2_chat(chat_id: &str) -> bool {
     chat_id.starts_with("group:") || chat_id.starts_with("c2c:")
 }
 
+/// 发送单条 QQ 消息（含自动分片）。返回 `Ok(())` 表示所有分片都成功（HTTP 2xx）。
+/// 任一分片 HTTP 失败或 4xx+ 即返回 `Err`，供 sender loop 决定重试/熔断。
 fn send_one_qq<H: ChannelHttpClient>(
     http: &mut H,
     token: &str,
     chat_id: &str,
     content: &str,
     msg_id: Option<&str>,
-) {
+) -> crate::error::Result<()> {
     const TAG: &str = "qq_send";
     let url = build_qq_message_url(chat_id);
     let v2 = is_v2_chat(chat_id);
@@ -279,8 +281,7 @@ fn send_one_qq<H: ChannelHttpClient>(
     for (i, chunk) in chunks.iter().enumerate() {
         let mut body_obj = serde_json::json!({ "content": chunk });
         if v2 {
-            body_obj["msg_type"] = serde_json::json!(0); // 0 = 文本
-                                                         // v2 API（群聊/C2C）需要 msg_seq 去重；每个分片递增
+            body_obj["msg_type"] = serde_json::json!(0);
             body_obj["msg_seq"] = serde_json::json!(i + 1);
         }
         if i == 0 {
@@ -288,13 +289,9 @@ fn send_one_qq<H: ChannelHttpClient>(
                 body_obj["msg_id"] = serde_json::json!(id);
             }
         }
-        let body_bytes = match serde_json::to_vec(&body_obj) {
-            Ok(b) => b,
-            Err(e) => {
-                log::warn!("[{}] message json: {}", TAG, e);
-                continue;
-            }
-        };
+        let body_bytes = serde_json::to_vec(&body_obj).map_err(|e| {
+            crate::error::Error::config("qq_send_json", format!("serialize failed: {}", e))
+        })?;
         let auth_header = format!("QQBot {}", token);
         let mut cl_buf = [0u8; 20];
         let content_length = crate::util::usize_to_decimal_buf(&mut cl_buf, body_bytes.len());
@@ -309,13 +306,16 @@ fn send_one_qq<H: ChannelHttpClient>(
                 let preview =
                     String::from_utf8_lossy(&body.as_ref()[..body.as_ref().len().min(256)]);
                 log::warn!("[{}] send status={} body={}", TAG, status, preview);
+                return Err(crate::error::Error::http("qq_send_http", status));
             }
-            Err(ref e) => {
+            Err(e) => {
                 log::warn!("[{}] send error: {}", TAG, e);
+                return Err(e);
             }
             _ => {}
         }
     }
+    Ok(())
 }
 
 fn pop_msg_id(cache: &QqMsgIdCache, chat_id: &str) -> Option<String> {
@@ -358,7 +358,9 @@ pub fn flush_qq_channel_sends<H: ChannelHttpClient>(
     };
     while let Ok((chat_id, content)) = rx.try_recv() {
         let msg_id = pop_msg_id(&cache, &chat_id);
-        send_one_qq(http, &token, &chat_id, &content, msg_id.as_deref());
+        if let Err(e) = send_one_qq(http, &token, &chat_id, &content, msg_id.as_deref()) {
+            log::warn!("[qq_flush] send failed for chat_id={}: {}", chat_id, e);
+        }
     }
 }
 
@@ -469,10 +471,34 @@ pub fn run_qq_sender_loop<H, F>(
                 continue;
             };
             let msg_id = pop_msg_id(&cache, &chat_id);
-            send_one_qq(h, &token, &chat_id, &content, msg_id.as_deref());
+            match send_one_qq(h, &token, &chat_id, &content, msg_id.as_deref()) {
+                Ok(()) => {
+                    crate::orchestrator::record_channel_result_pub("qq_channel", true);
+                }
+                Err(ref e) => {
+                    crate::orchestrator::record_channel_result_pub("qq_channel", false);
+                    log::warn!(
+                        "[{}] send failed (attempt {}): {}",
+                        TAG,
+                        retry + 1,
+                        e
+                    );
+                    http = None;
+                    token_cache = None;
+                    continue;
+                }
+            }
             while let Ok((cid, cnt)) = rx.try_recv() {
                 let mid = pop_msg_id(&cache, &cid);
-                send_one_qq(h, &token, &cid, &cnt, mid.as_deref());
+                match send_one_qq(h, &token, &cid, &cnt, mid.as_deref()) {
+                    Ok(()) => {
+                        crate::orchestrator::record_channel_result_pub("qq_channel", true);
+                    }
+                    Err(ref e) => {
+                        crate::orchestrator::record_channel_result_pub("qq_channel", false);
+                        log::warn!("[{}] drain send failed for {}: {}", TAG, cid, e);
+                    }
+                }
             }
             sent = true;
             break;
@@ -483,6 +509,7 @@ pub fn run_qq_sender_loop<H, F>(
                 TAG,
                 chat_id
             );
+            crate::orchestrator::record_channel_result_pub("qq_channel", false);
         }
     }
 }

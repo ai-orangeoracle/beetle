@@ -704,10 +704,15 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
                 content: reply_content,
                 is_group: false,
             };
-            metrics::record_message_out();
             crate::platform::task_wdt::feed_current_task();
-            if let Err(e) = outbound_tx.try_send(out) {
-                log::warn!("[agent] outbound queue full or disconnected: {}", e);
+            match outbound_tx.try_send(out) {
+                Ok(()) => {
+                    metrics::record_message_out();
+                }
+                Err(e) => {
+                    metrics::record_outbound_enqueue_fail();
+                    log::error!("[agent] outbound enqueue failed (reply lost): {}", e);
+                }
             }
         } else {
             metrics::record_message_out();

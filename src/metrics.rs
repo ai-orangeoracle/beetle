@@ -25,6 +25,7 @@ static TOOL_ERRORS: AtomicU32 = AtomicU32::new(0);
 static WDT_FEEDS: AtomicU32 = AtomicU32::new(0);
 static DISPATCH_SEND_OK: AtomicU32 = AtomicU32::new(0);
 static DISPATCH_SEND_FAIL: AtomicU32 = AtomicU32::new(0);
+static OUTBOUND_ENQUEUE_FAIL: AtomicU32 = AtomicU32::new(0);
 static LAST_ACTIVE_EPOCH_SECS: AtomicU32 = AtomicU32::new(0);
 
 /// Linux 嵌入式 WiFi：wpa 守护恢复、AP 栈重启计数；失败 stage 摘要（脱敏，固定长度）。
@@ -98,6 +99,12 @@ pub fn record_dispatch_send(ok: bool) {
     }
 }
 
+/// agent 侧 outbound_tx.try_send 失败（队列满或断开）时调用。
+#[inline]
+pub fn record_outbound_enqueue_fail() {
+    OUTBOUND_ENQUEUE_FAIL.fetch_add(1, Ordering::Relaxed);
+}
+
 /// 按 stage 记录错误，用于故障画像 TopN；已知 stage 用常量匹配，其余归入 other。
 /// wpa_supplicant 由看门狗重新拉起（PID 丢失或进程死亡）。
 /// wpa_supplicant re-ensured by watchdog (missing PID or dead process).
@@ -155,6 +162,7 @@ pub fn snapshot() -> MetricsSnapshot {
         wdt_feeds: WDT_FEEDS.load(Ordering::Relaxed) as u64,
         dispatch_send_ok: DISPATCH_SEND_OK.load(Ordering::Relaxed) as u64,
         dispatch_send_fail: DISPATCH_SEND_FAIL.load(Ordering::Relaxed) as u64,
+        outbound_enqueue_fail: OUTBOUND_ENQUEUE_FAIL.load(Ordering::Relaxed) as u64,
         errors_agent_router: ERRORS_AGENT_ROUTER.load(Ordering::Relaxed) as u64,
         errors_agent_chat: ERRORS_AGENT_CHAT.load(Ordering::Relaxed) as u64,
         errors_agent_context: ERRORS_AGENT_CONTEXT.load(Ordering::Relaxed) as u64,
@@ -187,6 +195,7 @@ pub struct MetricsSnapshot {
     pub wdt_feeds: u64,
     pub dispatch_send_ok: u64,
     pub dispatch_send_fail: u64,
+    pub outbound_enqueue_fail: u64,
     pub errors_agent_router: u64,
     pub errors_agent_chat: u64,
     pub errors_agent_context: u64,
@@ -210,7 +219,7 @@ impl MetricsSnapshot {
         let mut buf = String::with_capacity(384);
         let _ = write!(
             buf,
-            "metrics msg_in={} msg_out={} llm_calls={} llm_err={} llm_last_ms={} tool_calls={} tool_err={} wdt_feeds={} dispatch_ok={} dispatch_fail={} err_router={} err_chat={} err_ctx={} err_tool={} err_llm_req={} err_llm_parse={} err_dispatch={} err_session={} err_other={} last_active_epoch={} wifi_reconn={} wifi_ap_restart={} wifi_last_fail_stage={}",
+            "metrics msg_in={} msg_out={} llm_calls={} llm_err={} llm_last_ms={} tool_calls={} tool_err={} wdt_feeds={} dispatch_ok={} dispatch_fail={} outbound_enq_fail={} err_router={} err_chat={} err_ctx={} err_tool={} err_llm_req={} err_llm_parse={} err_dispatch={} err_session={} err_other={} last_active_epoch={} wifi_reconn={} wifi_ap_restart={} wifi_last_fail_stage={}",
             self.messages_in,
             self.messages_out,
             self.llm_calls,
@@ -221,6 +230,7 @@ impl MetricsSnapshot {
             self.wdt_feeds,
             self.dispatch_send_ok,
             self.dispatch_send_fail,
+            self.outbound_enqueue_fail,
             self.errors_agent_router,
             self.errors_agent_chat,
             self.errors_agent_context,

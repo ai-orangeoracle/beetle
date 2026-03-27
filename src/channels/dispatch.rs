@@ -81,7 +81,11 @@ impl Default for ChannelSinks {
 }
 
 /// 可选重试次数（含首次）；重试间隔（毫秒），避免连续锤击失败通道。
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 const SEND_RETRY: u32 = 2;
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+const SEND_RETRY: u32 = 3;
+
 const SEND_RETRY_DELAY_MS: u64 = 500;
 
 fn is_channel_in_cooldown(channel: &str) -> bool {
@@ -97,7 +101,10 @@ fn record_channel_ok(channel: &str) {
 }
 
 /// 熔断冷却期暂存的消息上限，防止无限积累。
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 const COOLDOWN_BUFFER_MAX: usize = 16;
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+const COOLDOWN_BUFFER_MAX: usize = 64;
 
 /// 循环接收出站消息，按 msg.channel 查找 sink 并调用 send；失败打日志并重试；
 /// 单通道熔断冷却期内暂存消息，冷却结束后重放。
@@ -253,6 +260,12 @@ pub struct QqChannelRxConfig {
     pub msg_id_cache: super::QqMsgIdCache,
 }
 
+/// Sender 二级队列深度。ESP 受内存限制为 8，Linux 有充足内存用 32。
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+const SENDER_QUEUE_DEPTH: usize = 8;
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+const SENDER_QUEUE_DEPTH: usize = 32;
+
 /// 根据 config.enabled_channel 与凭证创建 ChannelSinks 并注册，返回 sinks 与各通道 rx 集合。
 pub fn build_channel_sinks(
     config: &AppConfig,
@@ -262,7 +275,7 @@ pub fn build_channel_sinks(
     let enabled = config.enabled_channel.as_str();
 
     let telegram = if enabled == "telegram" && !config.tg_token.trim().is_empty() {
-        let (tx, rx) = mpsc::sync_channel(8);
+        let (tx, rx) = mpsc::sync_channel(SENDER_QUEUE_DEPTH);
         sinks.register(
             "telegram",
             Box::new(QueuedSink::new(tx, "telegram_send_queue")),
@@ -276,7 +289,7 @@ pub fn build_channel_sinks(
         && !config.feishu_app_id.trim().is_empty()
         && !config.feishu_app_secret.trim().is_empty()
     {
-        let (tx, rx) = mpsc::sync_channel(8);
+        let (tx, rx) = mpsc::sync_channel(SENDER_QUEUE_DEPTH);
         sinks.register("feishu", Box::new(QueuedSink::new(tx, "feishu_send_queue")));
         Some(FeishuRxConfig {
             rx,
@@ -288,7 +301,7 @@ pub fn build_channel_sinks(
     };
 
     let dingtalk = if enabled == "dingtalk" && !config.dingtalk_webhook_url.trim().is_empty() {
-        let (tx, rx) = mpsc::sync_channel(8);
+        let (tx, rx) = mpsc::sync_channel(SENDER_QUEUE_DEPTH);
         sinks.register(
             "dingtalk",
             Box::new(QueuedSink::new(tx, "dingtalk_send_queue")),
@@ -306,7 +319,7 @@ pub fn build_channel_sinks(
         && !config.wecom_corp_secret.trim().is_empty()
         && config.wecom_agent_id.trim().parse::<u32>().is_ok()
     {
-        let (tx, rx) = mpsc::sync_channel(8);
+        let (tx, rx) = mpsc::sync_channel(SENDER_QUEUE_DEPTH);
         sinks.register("wecom", Box::new(QueuedSink::new(tx, "wecom_send_queue")));
         Some(WecomRxConfig {
             rx,
@@ -323,7 +336,7 @@ pub fn build_channel_sinks(
         && !config.qq_channel_app_id.trim().is_empty()
         && !config.qq_channel_secret.trim().is_empty()
     {
-        let (tx, rx) = mpsc::sync_channel(8);
+        let (tx, rx) = mpsc::sync_channel(SENDER_QUEUE_DEPTH);
         sinks.register(
             "qq_channel",
             Box::new(QueuedSink::new(tx, "qq_channel_send_queue")),

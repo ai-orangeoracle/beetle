@@ -87,13 +87,24 @@ pub const MAX_CONCURRENT_HTTP: usize = 3;
 #[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
 pub const MAX_CONCURRENT_HTTP: usize = 16;
 
-/// 压力判级：Normal 阈值的 internal 空闲下限（字节）。
+/// 压力判级（ESP32）：Normal 阈值的 internal 空闲下限（字节）。
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 pub const PRESSURE_NORMAL_INTERNAL_MIN_BYTES: usize = 70 * 1024;
-/// 压力判级：Normal 阈值的 PSRAM 空闲下限（字节）。
+/// 压力判级（Linux）：Normal 阈值的可用内存下限（字节）。64MB 以下视为紧张。
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+pub const PRESSURE_NORMAL_INTERNAL_MIN_BYTES: usize = 64 * 1024 * 1024;
+
+/// 压力判级：Normal 阈值的 PSRAM 空闲下限（字节）。Linux 无 PSRAM，此值不参与判定。
 pub const PRESSURE_NORMAL_PSRAM_MIN_BYTES: usize = 4 * 1024 * 1024;
-/// 压力判级：Cautious 阈值的 internal 空闲下限（字节）。
+
+/// 压力判级（ESP32）：Cautious 阈值的 internal 空闲下限（字节）。
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 pub const PRESSURE_CAUTIOUS_INTERNAL_MIN_BYTES: usize = 48 * 1024;
-/// 压力判级：Cautious 阈值的 PSRAM 空闲下限（字节）。
+/// 压力判级（Linux）：Cautious 阈值的可用内存下限（字节）。32MB 以下视为严重。
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+pub const PRESSURE_CAUTIOUS_INTERNAL_MIN_BYTES: usize = 32 * 1024 * 1024;
+
+/// 压力判级：Cautious 阈值的 PSRAM 空闲下限（字节）。Linux 无 PSRAM，此值不参与判定。
 pub const PRESSURE_CAUTIOUS_PSRAM_MIN_BYTES: usize = 1024 * 1024;
 /// 压力判级：队列拥塞阈值（入站+出站总深度），默认容量下为 75%。
 pub const PRESSURE_QUEUE_CONGESTION_THRESHOLD: u32 = (DEFAULT_CAPACITY as u32) * 2 * 3 / 4;
