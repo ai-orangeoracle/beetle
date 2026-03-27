@@ -18,7 +18,7 @@ impl Default for LinuxStateFs {
 }
 
 fn abs(rel_path: &str) -> Result<PathBuf> {
-    let rel = super::normalize_state_rel_path(rel_path)?;
+    let rel = crate::util::normalize_state_rel_path(rel_path)?;
     Ok(state_mount_path().join(rel))
 }
 
@@ -57,7 +57,7 @@ impl StateFs for LinuxStateFs {
     }
 
     fn list_dir(&self, rel_path: &str) -> Result<Vec<String>> {
-        let rel = super::normalize_state_rel_path(rel_path)?;
+        let rel = crate::util::normalize_state_rel_path(rel_path)?;
         let path = state_mount_path().join(rel);
         let mut names = Vec::new();
         for e in std::fs::read_dir(&path).map_err(|e| Error::io("state_fs", e))? {

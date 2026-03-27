@@ -59,17 +59,18 @@ pub fn run_heartbeat_loop(version: &'static str, interval_secs: u64) {
 
 /// 周期打日志并在有待办时向 inbound 注入一条 PcMsg；同一待办 30s 内不重复注入。
 /// 同时更新 orchestrator 的队列深度快照。定期执行会话 GC。
-/// 会话/存储相关指标中的存储用量来自注入的 [`crate::platform::Platform`]（`spiffs_usage`），不直引 `platform::spiffs`。
+/// 会话/存储相关指标中的存储用量来自注入的 [`crate::Platform`]（`spiffs_usage`），不直引 `platform::spiffs`。
 #[allow(clippy::too_many_arguments)]
 pub fn run_heartbeat_loop_with_tasks(
     version: &'static str,
     interval_secs: u64,
-    inbound_tx: crate::bus::InboundTx,
+    inbound_tx: crate::bus::SystemInboundTx,
     read_heartbeat: impl Fn() -> String + Send + 'static,
-    inbound_depth: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    user_inbound_depth: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    system_inbound_depth: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     outbound_depth: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     session_store: std::sync::Arc<dyn crate::memory::SessionStore + Send + Sync>,
-    platform: Arc<dyn crate::platform::Platform>,
+    platform: Arc<dyn crate::Platform>,
     resolve_locale: Arc<dyn Fn() -> Locale + Send + Sync>,
 ) {
     let interval = Duration::from_secs(interval_secs);
@@ -99,7 +100,9 @@ pub fn run_heartbeat_loop_with_tasks(
             }
 
             // Update queue depth snapshot for pressure computation.
-            let in_d = inbound_depth.load(std::sync::atomic::Ordering::Relaxed) as u32;
+            let in_user = user_inbound_depth.load(std::sync::atomic::Ordering::Relaxed) as u32;
+            let in_system = system_inbound_depth.load(std::sync::atomic::Ordering::Relaxed) as u32;
+            let in_d = in_user.saturating_add(in_system);
             let out_d = outbound_depth.load(std::sync::atomic::Ordering::Relaxed) as u32;
             crate::orchestrator::update_queue_depth(in_d, out_d);
             crate::orchestrator::update_heap_state();
@@ -138,7 +141,7 @@ pub fn run_heartbeat_loop_with_tasks(
             }
             let loc = resolve_locale();
             let body = tr(UiMessage::HeartbeatPendingTasksReminder, loc);
-            let msg = match crate::bus::PcMsg::new("heartbeat", "heartbeat", body) {
+            let msg = match crate::bus::PcMsg::new_system("heartbeat", "heartbeat", body) {
                 Ok(m) => m,
                 Err(e) => {
                     log::warn!("[{}] PcMsg::new failed: {}", TAG, e);
@@ -157,8 +160,8 @@ pub fn run_heartbeat_loop_with_tasks(
     );
 }
 
-/// 存储用量（KB）。经 [`crate::platform::Platform::spiffs_usage`]；无数据时为 (0, 0)。
-fn storage_usage_kb(platform: &dyn crate::platform::Platform) -> (u32, u32) {
+/// 存储用量（KB）。经 [`crate::Platform::spiffs_usage`]；无数据时为 (0, 0)。
+fn storage_usage_kb(platform: &dyn crate::Platform) -> (u32, u32) {
     match platform.spiffs_usage() {
         Some((total, used)) => ((used / 1024) as u32, (total / 1024) as u32),
         None => (0, 0),

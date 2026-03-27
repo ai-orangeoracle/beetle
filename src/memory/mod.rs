@@ -218,7 +218,7 @@ pub fn build_system_prompt(
 /// 每 `poll_interval_secs` 秒检查一次 RemindAtStore，到点的条目通过 inbound_tx 注入。
 pub fn run_remind_loop(
     remind_store: std::sync::Arc<dyn RemindAtStore + Send + Sync>,
-    inbound_tx: crate::bus::InboundTx,
+    inbound_tx: crate::bus::SystemInboundTx,
     poll_interval_secs: u64,
     resolve_locale: std::sync::Arc<dyn Fn() -> crate::i18n::Locale + Send + Sync>,
 ) {
@@ -232,7 +232,13 @@ pub fn run_remind_loop(
             let loc = resolve_locale();
             let prefix = crate::i18n::tr(crate::i18n::Message::RemindPrefix, loc);
             let content = format!("{}{}", prefix, context);
-            if let Ok(msg) = PcMsg::new(channel, chat_id, content) {
+            if let Ok(msg) = PcMsg::new_inbound_with_ingress(
+                channel,
+                chat_id,
+                content,
+                false,
+                crate::bus::IngressKind::System,
+            ) {
                 let _ = inbound_tx.send(msg);
             }
         }

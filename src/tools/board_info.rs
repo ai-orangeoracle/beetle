@@ -2,7 +2,7 @@
 //! board_info tool: delegates to `Platform::board_info_json`; payload per target (ESP32 / Linux / other OS per `std::env::consts::OS`).
 
 use crate::error::Result;
-use crate::platform::Platform;
+use crate::Platform;
 use crate::tools::{Tool, ToolContext};
 use serde_json::json;
 use std::sync::Arc;

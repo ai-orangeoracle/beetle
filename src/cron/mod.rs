@@ -2,7 +2,7 @@
 //! Cron: push system message to bus at interval; backoff on failure, log only.
 //! 同时检查持久化 cron 任务并在到期时注入消息。
 
-use crate::bus::{InboundTx, PcMsg};
+use crate::bus::{PcMsg, SystemInboundTx};
 use crate::config::{DeviceEntry, I2cSensorEntry};
 use crate::i18n::Locale;
 use crate::memory::MemoryStore;
@@ -27,7 +27,7 @@ const BACKOFF_SECS: u64 = 5;
 
 /// `sensor_watch` 检查所需：平台 + GPIO 类设备 + I2C 传感器列表。
 pub struct SensorWatchContext {
-    pub platform: Arc<dyn crate::platform::Platform>,
+    pub platform: Arc<dyn crate::Platform>,
     pub devices: Vec<DeviceEntry>,
     pub i2c_sensors: Vec<I2cSensorEntry>,
 }
@@ -36,7 +36,7 @@ pub struct SensorWatchContext {
 /// 同时检查持久化 cron 任务，到期的任务生成消息推入 inbound_tx。
 /// 发送失败时打日志并退避 BACKOFF_SECS，不 panic。
 pub fn run_cron_loop(
-    inbound_tx: InboundTx,
+    inbound_tx: SystemInboundTx,
     interval_secs: u64,
     memory_store: Option<Arc<dyn MemoryStore + Send + Sync>>,
     sensor_watch: Option<SensorWatchContext>,
@@ -50,7 +50,7 @@ pub fn run_cron_loop(
             std::thread::sleep(interval + Duration::from_secs(backoff));
 
             // 1. Push standard cron tick
-            let msg = match PcMsg::new("cron", "cron", "tick") {
+            let msg = match PcMsg::new_system("cron", "cron", "tick") {
                 Ok(m) => m,
                 Err(e) => {
                     log::warn!("[{}] PcMsg::new failed: {}", TAG, e);
@@ -97,7 +97,7 @@ pub fn run_cron_loop(
 /// Check persisted cron tasks and fire any that match the current minute.
 fn fire_persisted_tasks(
     store: &dyn MemoryStore,
-    inbound_tx: &InboundTx,
+    inbound_tx: &SystemInboundTx,
     cache: &mut Vec<CronTask>,
     resolve_locale: &Arc<dyn Fn() -> Locale + Send + Sync>,
 ) {
@@ -127,7 +127,13 @@ fn fire_persisted_tasks(
                     },
                     loc,
                 );
-                match PcMsg::new(&task.channel, &task.chat_id, content) {
+                match PcMsg::new_inbound_with_ingress(
+                    &task.channel,
+                    &task.chat_id,
+                    content,
+                    false,
+                    crate::bus::IngressKind::System,
+                ) {
                     Ok(msg) => {
                         if let Err(e) = inbound_tx.send(msg) {
                             log::warn!("[{}] failed to fire cron task {}: {}", TAG, task.id, e);

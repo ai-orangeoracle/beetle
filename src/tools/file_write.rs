@@ -3,8 +3,8 @@
 
 use crate::constants::FILE_WRITE_MAX_CONTENT_LEN;
 use crate::error::{Error, Result};
-use crate::platform::state_fs::normalize_state_rel_path;
 use crate::tools::{parse_tool_args, Tool, ToolContext};
+use crate::util::normalize_state_rel_path;
 use serde_json::json;
 use std::sync::Arc;
 
@@ -19,11 +19,11 @@ const PROTECTED_PATHS: &[&str] = &[
 ];
 
 pub struct FileWriteTool {
-    state_fs: Arc<dyn crate::platform::StateFs + Send + Sync>,
+    state_fs: Arc<dyn crate::StateFs + Send + Sync>,
 }
 
 impl FileWriteTool {
-    pub(crate) fn new(state_fs: Arc<dyn crate::platform::StateFs + Send + Sync>) -> Self {
+    pub(crate) fn new(state_fs: Arc<dyn crate::StateFs + Send + Sync>) -> Self {
         Self { state_fs }
     }
 }

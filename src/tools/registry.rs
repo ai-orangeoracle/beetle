@@ -105,7 +105,7 @@ impl ToolRegistry {
 /// 构建包含所有内置工具的注册表。`platform` 用于 `board_info` 等依赖平台能力的工具。
 pub fn build_default_registry(
     config: &AppConfig,
-    platform: Arc<dyn crate::platform::Platform>,
+    platform: Arc<dyn crate::Platform>,
     remind_at_store: Arc<dyn crate::memory::RemindAtStore + Send + Sync>,
     session_summary_store: Arc<dyn crate::memory::SessionSummaryStore + Send + Sync>,
     session_store: Arc<dyn crate::memory::SessionStore + Send + Sync>,

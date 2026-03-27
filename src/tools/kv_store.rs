@@ -5,7 +5,7 @@
 
 use crate::constants::{KV_STORE_MAX_ENTRIES, KV_STORE_MAX_KEY_LEN, KV_STORE_MAX_VALUE_LEN};
 use crate::error::{Error, Result};
-use crate::platform::StateFs;
+use crate::StateFs;
 use crate::tools::{parse_tool_args, Tool, ToolContext};
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -52,7 +52,7 @@ fn validate_key(key: &str) -> Result<()> {
     Ok(())
 }
 
-/// 构造时注入与 [`crate::platform::Platform::state_fs`] 同一套实现。
+/// 构造时注入与 [`crate::Platform::state_fs`] 同一套实现。
 pub struct KvStoreTool {
     state_fs: Arc<dyn StateFs + Send + Sync>,
 }

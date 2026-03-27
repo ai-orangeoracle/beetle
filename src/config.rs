@@ -486,7 +486,7 @@ impl AppConfig {
 }
 
 /// 将 Platform 转为 ConfigFileStore，供 load/save 使用。
-pub struct PlatformConfigFileStore(pub std::sync::Arc<dyn crate::platform::Platform>);
+pub struct PlatformConfigFileStore(pub std::sync::Arc<dyn crate::Platform>);
 
 impl ConfigFileStore for PlatformConfigFileStore {
     fn read_config_file(&self, rel_path: &str) -> Result<Option<Vec<u8>>> {

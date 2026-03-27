@@ -32,7 +32,7 @@ pub const TLS_ADMISSION_MIN_LARGEST_BLOCK_BYTES: usize = 24 * 1024;
 pub const TLS_ADMISSION_NO_PSRAM_MIN_BYTES: usize = 72 * 1024;
 
 /// 低内存且非 cron 时，重入队后休眠毫秒数，避免忙等、给 internal 恢复时间。
-pub const LOW_MEM_DEFER_SLEEP_MS: u64 = 4000;
+pub const LOW_MEM_DEFER_SLEEP_MS: u64 = 1800;
 
 /// 入站 defer 最大重试次数；超过后降级回复"设备忙碌"，不再重入队。
 /// Max defer retries for the same inbound message before degraded reply.
@@ -69,7 +69,7 @@ pub const AGENT_RETRY_BASE_MS: u64 = 100;
 /// Agent 重试退避上限（毫秒）。
 pub const AGENT_RETRY_MAX_MS: u64 = 500;
 /// Cautious 压力下 LLM RetryLater 的等待毫秒数，避免固定 3s 造成体感卡顿。
-pub const LLM_RETRY_LATER_DELAY_MS: u64 = 1000;
+pub const LLM_RETRY_LATER_DELAY_MS: u64 = 700;
 /// pending_retry 重放次数上限；超过则清除不再注入，避免重复饥饿。
 pub const PENDING_RETRY_MAX_REPLAY: u32 = 3;
 /// Dispatch 单通道连续失败后熔断冷却时间（秒）；冷却期内不再向该通道发送。
@@ -129,14 +129,14 @@ pub const SESSION_METRICS_INTERVAL_ROUNDS: u32 = 10;
 
 /// 出站门禁 Critical 压力时延迟毫秒数。
 /// Outbound admission defer delay under Critical pressure.
-pub const OUTBOUND_DEFER_DELAY_MS: u64 = 2000;
+pub const OUTBOUND_DEFER_DELAY_MS: u64 = 1400;
 /// 出站门禁 Cautious 压力时轻量退避毫秒数（短于 Critical，与队列拥塞→Cautious 闭环）。
 /// Light outbound defer under Cautious pressure (shorter than Critical).
-pub const OUTBOUND_DEFER_DELAY_MS_CAUTIOUS: u64 = 500;
+pub const OUTBOUND_DEFER_DELAY_MS_CAUTIOUS: u64 = 350;
 /// QQ sender 第一次重试前等待毫秒数（attempt=2）。
 pub const QQ_SEND_RETRY_DELAY_MS_STEP1: u64 = 300;
 /// QQ sender 第二次重试前等待毫秒数（attempt=3）。
-pub const QQ_SEND_RETRY_DELAY_MS_STEP2: u64 = 800;
+pub const QQ_SEND_RETRY_DELAY_MS_STEP2: u64 = 550;
 
 // ---------- 显示自适应刷新频率 ----------
 /// 显示刷新间隔：Busy 状态（秒）。

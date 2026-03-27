@@ -3,7 +3,7 @@
 
 use crate::constants::NETWORK_SCAN_MIN_INTERVAL_MS;
 use crate::error::{Error, Result};
-use crate::platform::Platform;
+use crate::Platform;
 use crate::tools::{parse_tool_args, Tool, ToolContext};
 use serde_json::{json, Value};
 use std::sync::{Arc, Mutex};

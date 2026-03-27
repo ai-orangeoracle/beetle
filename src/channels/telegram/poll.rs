@@ -253,6 +253,11 @@ pub fn poll_telegram_once<H: ChannelHttpClient>(
                 chat_id: Arc::from(chat_id.as_str()),
                 content,
                 req_id: None,
+                ingress: crate::bus::IngressKind::User,
+                enqueue_ts_ms: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis().min(u64::MAX as u128) as u64)
+                    .unwrap_or(0),
                 is_group,
             };
             let mut enqueued = false;

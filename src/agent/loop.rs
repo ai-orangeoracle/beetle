@@ -1,8 +1,10 @@
 //! Agent ReAct 循环：入站一条 → context → chat（含 tool_use 多轮）→ 会话持久化 → 出站一条。
 //! 仅依赖 trait；HTTP/Tool 由 main 注入同一实现（如 EspHttpClient）。
-
 use crate::agent::context::build_context;
-use crate::bus::{InboundTx, OutboundTx, PcMsg, MAX_CONTENT_LEN};
+use crate::bus::{
+    IngressKind, OutboundTx, PcMsg, SystemInboundRx, SystemInboundTx, UserInboundRx, UserInboundTx,
+    MAX_CONTENT_LEN,
+};
 use crate::constants::{
     AGENT_MARKER_MARK_IMPORTANT, AGENT_MARKER_SIGNAL_COMFORT, AGENT_MARKER_STOP,
     AGENT_RETRY_BASE_MS, AGENT_RETRY_MAX_MS, INBOUND_RECV_TIMEOUT_SECS, MAX_DEFER_RETRIES,
@@ -50,6 +52,7 @@ const SUMMARY_SYSTEM: &str = "You are a conversation summarizer. Compress the fo
 /// 同一 chat_id 的 "low memory, defer" 日志最少间隔，避免刷屏。
 const LOW_MEM_DEFER_LOG_INTERVAL: Duration = Duration::from_secs(60);
 static REQ_SEQ: AtomicU32 = AtomicU32::new(1);
+const USER_QUEUE_WEIGHT: usize = 3;
 
 fn next_req_id(channel: &str, chat_id: &str) -> String {
     let seq = REQ_SEQ.fetch_add(1, Ordering::Relaxed);
@@ -62,6 +65,66 @@ fn next_req_id(channel: &str, chat_id: &str) -> String {
     chat_id.hash(&mut hasher);
     let short = (hasher.finish() & 0xffff) as u16;
     format!("r{}-{}-{:04x}", ts_ms, seq, short)
+}
+
+fn now_unix_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis().min(u64::MAX as u128) as u64)
+        .unwrap_or(0)
+}
+
+fn choose_inbound_tx<'a>(
+    ingress: IngressKind,
+    user_inbound_tx: &'a UserInboundTx,
+    system_inbound_tx: &'a SystemInboundTx,
+) -> &'a crate::bus::InboundTx {
+    match ingress {
+        IngressKind::User => user_inbound_tx,
+        IngressKind::System => system_inbound_tx,
+    }
+}
+
+fn recv_weighted(
+    user_inbound_rx: &UserInboundRx,
+    system_inbound_rx: &SystemInboundRx,
+    slot: &mut usize,
+    timeout: Duration,
+) -> std::result::Result<PcMsg, RecvTimeoutError> {
+    let prefer_user = *slot < USER_QUEUE_WEIGHT;
+    let (primary, secondary) = if prefer_user {
+        (user_inbound_rx, system_inbound_rx)
+    } else {
+        (system_inbound_rx, user_inbound_rx)
+    };
+    if let Ok(m) = primary.try_recv() {
+        *slot = (*slot + 1) % (USER_QUEUE_WEIGHT + 1);
+        return Ok(m);
+    }
+    if let Ok(m) = secondary.try_recv() {
+        *slot = (*slot + 1) % (USER_QUEUE_WEIGHT + 1);
+        return Ok(m);
+    }
+    match primary.recv_timeout(timeout) {
+        Ok(m) => {
+            *slot = (*slot + 1) % (USER_QUEUE_WEIGHT + 1);
+            Ok(m)
+        }
+        Err(RecvTimeoutError::Timeout) => match secondary.try_recv() {
+            Ok(m) => {
+                *slot = (*slot + 1) % (USER_QUEUE_WEIGHT + 1);
+                Ok(m)
+            }
+            Err(_) => Err(RecvTimeoutError::Timeout),
+        },
+        Err(RecvTimeoutError::Disconnected) => match secondary.recv_timeout(timeout) {
+            Ok(m) => {
+                *slot = (*slot + 1) % (USER_QUEUE_WEIGHT + 1);
+                Ok(m)
+            }
+            Err(e) => Err(e),
+        },
+    }
 }
 
 #[derive(Default)]
@@ -388,8 +451,10 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
     worker_llm: &dyn LlmClient,
     registry: &crate::tools::ToolRegistry,
     config: &AgentLoopConfig<'_>,
-    inbound_tx: InboundTx,
-    inbound_rx: crate::bus::InboundRx,
+    user_inbound_tx: UserInboundTx,
+    user_inbound_rx: UserInboundRx,
+    system_inbound_tx: SystemInboundTx,
+    system_inbound_rx: SystemInboundRx,
     outbound_tx: OutboundTx,
     mut typing_notifier: Option<&mut dyn FnMut(&str, &str, &mut H)>,
 ) -> Result<()> {
@@ -412,12 +477,19 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
 
     if let Ok(Some(m)) = config.pending_retry.load_pending_retry() {
         let _ = config.pending_retry.clear_pending_retry();
+        let inbound_tx = choose_inbound_tx(m.ingress, &user_inbound_tx, &system_inbound_tx);
         let _ = inbound_tx.send(m);
     }
 
     let recv_timeout = Duration::from_secs(INBOUND_RECV_TIMEOUT_SECS);
+    let mut sched_slot = 0usize;
     loop {
-        let mut msg = match inbound_rx.recv_timeout(recv_timeout) {
+        let mut msg = match recv_weighted(
+            &user_inbound_rx,
+            &system_inbound_rx,
+            &mut sched_slot,
+            recv_timeout,
+        ) {
             Ok(m) => m,
             Err(RecvTimeoutError::Timeout) => {
                 crate::platform::task_wdt::feed_current_task();
@@ -434,6 +506,12 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
             msg.req_id = Some(next_req_id(&msg.channel, &msg.chat_id));
         }
         let req_id = msg.req_id.clone().unwrap_or_default();
+        let queue_wait_ms = now_unix_ms().saturating_sub(msg.enqueue_ts_ms) as u128;
+        if msg.ingress == IngressKind::System {
+            metrics::record_system_queue_wait_ms(queue_wait_ms);
+        } else {
+            metrics::record_user_queue_wait_ms(queue_wait_ms);
+        }
 
         // Periodic GC: evict expired failure/defer entries to prevent unbounded growth.
         msg_since_gc += 1;
@@ -465,6 +543,8 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
                 chat_id: msg.chat_id.clone(),
                 content: tr(UiMessage::NodeMaintenance, loc),
                 req_id: Some(req_id.clone()),
+                ingress: IngressKind::User,
+                enqueue_ts_ms: now_unix_ms(),
                 is_group: false,
             };
             let _ = try_send_outbound(&outbound_tx, out, "maintenance");
@@ -489,26 +569,37 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
                         msg.chat_id
                     );
                     defer_tracker.remove(&msg_key);
+                    if msg.ingress == IngressKind::User {
+                        let defer_out = PcMsg {
+                            channel: msg.channel.clone(),
+                            chat_id: msg.chat_id.clone(),
+                            content: tr(UiMessage::LowMemoryUserDefer, loc),
+                            req_id: Some(req_id.clone()),
+                            ingress: IngressKind::User,
+                            enqueue_ts_ms: now_unix_ms(),
+                            is_group: false,
+                        };
+                        let _ = try_send_outbound(&outbound_tx, defer_out, "defer-limit");
+                    }
+                    continue;
+                }
+
+                if msg.ingress == IngressKind::User {
                     let defer_out = PcMsg {
                         channel: msg.channel.clone(),
                         chat_id: msg.chat_id.clone(),
                         content: tr(UiMessage::LowMemoryUserDefer, loc),
                         req_id: Some(req_id.clone()),
+                        ingress: IngressKind::User,
+                        enqueue_ts_ms: now_unix_ms(),
                         is_group: false,
                     };
-                    let _ = try_send_outbound(&outbound_tx, defer_out, "defer-limit");
-                    continue;
+                    let _ = try_send_outbound(&outbound_tx, defer_out, "defer");
                 }
-
-                let defer_out = PcMsg {
-                    channel: msg.channel.clone(),
-                    chat_id: msg.chat_id.clone(),
-                    content: tr(UiMessage::LowMemoryUserDefer, loc),
-                    req_id: Some(req_id.clone()),
-                    is_group: false,
-                };
-                let _ = try_send_outbound(&outbound_tx, defer_out, "defer");
                 let chat_id = msg.chat_id.clone();
+                msg.enqueue_ts_ms = now_unix_ms();
+                let inbound_tx =
+                    choose_inbound_tx(msg.ingress, &user_inbound_tx, &system_inbound_tx);
                 match inbound_tx.try_send(msg) {
                     Ok(()) => {
                         let now = Instant::now();
@@ -565,51 +656,109 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
             f(&msg.channel, &msg.chat_id, http);
         }
 
-        // LLM 门控：Critical 压力下降级，Cautious 堆不足时延迟重试
-        crate::orchestrator::refresh_heap_if_stale();
-        match crate::orchestrator::can_call_llm_pub() {
-            LlmDecision::Proceed => {}
-            LlmDecision::RetryLater { delay_ms } => {
-                match inbound_tx.try_send(msg.clone()) {
-                    Ok(()) => {}
-                    Err(std::sync::mpsc::TrySendError::Full(m)) => {
-                        let _ = config.pending_retry.save_pending_retry(&m);
-                        log::warn!(
-                            "[agent] llm retry-later: inbound full, pending_retry saved chat_id={}",
-                            m.chat_id
-                        );
+        let final_content = if msg.ingress == IngressKind::System {
+            crate::orchestrator::refresh_heap_if_stale();
+            match crate::orchestrator::can_call_llm_pub() {
+                LlmDecision::Proceed => {}
+                LlmDecision::RetryLater { delay_ms } => {
+                    let mut retry_msg = msg.clone();
+                    retry_msg.enqueue_ts_ms = now_unix_ms();
+                    let inbound_tx =
+                        choose_inbound_tx(retry_msg.ingress, &user_inbound_tx, &system_inbound_tx);
+                    match inbound_tx.try_send(retry_msg) {
+                        Ok(()) => {}
+                        Err(std::sync::mpsc::TrySendError::Full(m)) => {
+                            let _ = config.pending_retry.save_pending_retry(&m);
+                            log::warn!(
+                                "[agent] llm retry-later(system): inbound full, pending_retry saved chat_id={}",
+                                m.chat_id
+                            );
+                        }
+                        Err(std::sync::mpsc::TrySendError::Disconnected(_)) => {
+                            log::error!(
+                                "[agent] inbound_tx disconnected during retry-later(system)"
+                            );
+                        }
                     }
-                    Err(std::sync::mpsc::TrySendError::Disconnected(_)) => {
-                        log::error!("[agent] inbound_tx disconnected during retry-later");
-                    }
+                    std::thread::sleep(Duration::from_millis(delay_ms));
+                    crate::platform::task_wdt::feed_current_task();
+                    continue;
                 }
-                std::thread::sleep(Duration::from_millis(delay_ms));
-                crate::platform::task_wdt::feed_current_task();
-                continue;
+                LlmDecision::Degrade { reason } => {
+                    log::info!("[agent] system task degraded, retry later: {}", reason);
+                    let mut retry_msg = msg.clone();
+                    retry_msg.enqueue_ts_ms = now_unix_ms();
+                    let inbound_tx =
+                        choose_inbound_tx(retry_msg.ingress, &user_inbound_tx, &system_inbound_tx);
+                    if let Err(std::sync::mpsc::TrySendError::Full(m)) =
+                        inbound_tx.try_send(retry_msg)
+                    {
+                        let _ = config.pending_retry.save_pending_retry(&m);
+                    }
+                    continue;
+                }
             }
-            LlmDecision::Degrade { reason } => {
-                log::info!("[agent] LLM degraded: {}", reason);
-                let out = PcMsg {
-                    channel: msg.channel.clone(),
-                    chat_id: msg.chat_id.clone(),
-                    content: tr(UiMessage::LowMemoryUserDefer, loc),
-                    req_id: Some(req_id.clone()),
-                    is_group: false,
-                };
-                let _ = try_send_outbound(&outbound_tx, out, "llm-degrade");
-                continue;
+            run_worker_path(
+                http,
+                worker_llm,
+                &msg,
+                registry,
+                config,
+                &tool_descriptions,
+                loc,
+            )
+        } else {
+            // LLM 门控：Critical 压力下降级，Cautious 堆不足时延迟重试
+            crate::orchestrator::refresh_heap_if_stale();
+            match crate::orchestrator::can_call_llm_pub() {
+                LlmDecision::Proceed => {}
+                LlmDecision::RetryLater { delay_ms } => {
+                    let mut retry_msg = msg.clone();
+                    retry_msg.enqueue_ts_ms = now_unix_ms();
+                    let inbound_tx =
+                        choose_inbound_tx(retry_msg.ingress, &user_inbound_tx, &system_inbound_tx);
+                    match inbound_tx.try_send(retry_msg) {
+                        Ok(()) => {}
+                        Err(std::sync::mpsc::TrySendError::Full(m)) => {
+                            let _ = config.pending_retry.save_pending_retry(&m);
+                            log::warn!(
+                                "[agent] llm retry-later: inbound full, pending_retry saved chat_id={}",
+                                m.chat_id
+                            );
+                        }
+                        Err(std::sync::mpsc::TrySendError::Disconnected(_)) => {
+                            log::error!("[agent] inbound_tx disconnected during retry-later");
+                        }
+                    }
+                    std::thread::sleep(Duration::from_millis(delay_ms));
+                    crate::platform::task_wdt::feed_current_task();
+                    continue;
+                }
+                LlmDecision::Degrade { reason } => {
+                    log::info!("[agent] LLM degraded: {}", reason);
+                    let out = PcMsg {
+                        channel: msg.channel.clone(),
+                        chat_id: msg.chat_id.clone(),
+                        content: tr(UiMessage::LowMemoryUserDefer, loc),
+                        req_id: Some(req_id.clone()),
+                        ingress: IngressKind::User,
+                        enqueue_ts_ms: now_unix_ms(),
+                        is_group: false,
+                    };
+                    let _ = try_send_outbound(&outbound_tx, out, "llm-degrade");
+                    continue;
+                }
             }
-        }
-
-        let final_content = run_worker_path(
-            http,
-            worker_llm,
-            &msg,
-            registry,
-            config,
-            &tool_descriptions,
-            loc,
-        );
+            run_worker_path(
+                http,
+                worker_llm,
+                &msg,
+                registry,
+                config,
+                &tool_descriptions,
+                loc,
+            )
+        };
 
         let (outcome, consumed_round, streamed, mut worker_latency) = match final_content {
             Ok(ok) => ok,
@@ -637,7 +786,11 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
                 *counter = counter.saturating_add(1);
 
                 if *counter < 3 && !is_conn {
-                    match inbound_tx.try_send(msg.clone()) {
+                    let mut retry_msg = msg.clone();
+                    retry_msg.enqueue_ts_ms = now_unix_ms();
+                    let inbound_tx =
+                        choose_inbound_tx(retry_msg.ingress, &user_inbound_tx, &system_inbound_tx);
+                    match inbound_tx.try_send(retry_msg) {
                         Ok(()) => {}
                         Err(std::sync::mpsc::TrySendError::Full(_)) => {
                             let _ = config.pending_retry.save_pending_retry(&msg);
@@ -661,6 +814,8 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
                     chat_id: msg.chat_id.clone(),
                     content: tr(UiMessage::NodeMaintenance, loc),
                     req_id: Some(req_id.clone()),
+                    ingress: IngressKind::User,
+                    enqueue_ts_ms: now_unix_ms(),
                     is_group: false,
                 };
                 let _ = try_send_outbound(&outbound_tx, reply, "chat-failure");
@@ -732,6 +887,18 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
         {
             llm_failure_count.remove(&msg_key);
             defer_tracker.remove(&msg_key);
+            let total_ms = msg_start.elapsed().as_millis();
+            metrics::record_e2e_ms(total_ms);
+            if msg.ingress == IngressKind::System {
+                let is_cron = msg.channel.as_ref() == "cron";
+                metrics::record_system_message_done(is_cron);
+                if is_cron {
+                    let cron_e2e = now_unix_ms().saturating_sub(msg.enqueue_ts_ms) as u128;
+                    metrics::record_cron_e2e_ms(cron_e2e);
+                }
+            } else {
+                metrics::record_user_message_done();
+            }
             continue;
         }
 
@@ -762,6 +929,8 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
                 chat_id: msg.chat_id.clone(),
                 content: reply_content.clone(),
                 req_id: Some(req_id.clone()),
+                ingress: IngressKind::User,
+                enqueue_ts_ms: now_unix_ms(),
                 is_group: false,
             };
             crate::platform::task_wdt::feed_current_task();
@@ -819,6 +988,16 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
         metrics::record_tool_calls_last(worker_latency.tool_calls);
         metrics::record_ttft_ms(worker_latency.ttft_ms.unwrap_or(0));
         metrics::record_e2e_ms(total_ms);
+        if msg.ingress == IngressKind::System {
+            let is_cron = msg.channel.as_ref() == "cron";
+            metrics::record_system_message_done(is_cron);
+            if is_cron {
+                let cron_e2e = now_unix_ms().saturating_sub(msg.enqueue_ts_ms) as u128;
+                metrics::record_cron_e2e_ms(cron_e2e);
+            }
+        } else {
+            metrics::record_user_message_done();
+        }
         if total_ms >= LATENCY_WARN_MS {
             log::warn!(
                 "[latency][agent] req_id={} channel={} chat_id={} admission_ms={} context_ms={} llm_round_total_ms={} tool_exec_ms={} session_write_ms={} llm_ms={} outbound_enqueue_ms={} total_ms={} react_rounds={} tool_calls={} ttft_ms={} streamed={} delivered={} level=slow",

@@ -37,6 +37,7 @@ thiserror = "1.0"
 # QQ 频道 Ed25519 验签；关 default features 省体积（去掉 fast 预计算表、zeroize）
 ed25519-dalek = { version = "2.1", default-features = false, features = ["std"] }
 hex = "0.4"
+getrandom = "0.2"
 indexmap = "2.0"
 
 [target.'cfg(any(target_arch = "xtensa", target_arch = "riscv32"))'.dependencies]

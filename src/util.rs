@@ -2,6 +2,7 @@
 //! Lightweight helpers; secret redaction for safe logging.
 
 use crate::constants::AGENT_MARKER_STOP;
+use std::path::Path;
 
 /// 按字符边界截断内容至最多 max 个字符；不截断时零分配返回借用。
 /// Truncate to at most `max` chars; returns `Cow::Borrowed` (zero alloc) when no truncation needed.
@@ -15,6 +16,19 @@ pub fn truncate_content_to_max(s: &str, max: usize) -> std::borrow::Cow<'_, str>
         Some((byte_offset, _)) => std::borrow::Cow::Owned(s[..byte_offset].to_string()),
         None => std::borrow::Cow::Borrowed(s), // fewer than max chars despite byte len > max
     }
+}
+
+/// 规范化状态根相对路径：trim、去前导 `/`、禁止 `..` 与绝对路径。
+/// Normalize state-root relative path: trim, strip leading `/`, reject `..` and absolute path.
+pub fn normalize_state_rel_path(path_arg: &str) -> crate::Result<String> {
+    let s = path_arg.trim().trim_start_matches('/');
+    if s.contains("..") {
+        return Err(crate::Error::config("state_rel_path", "invalid path"));
+    }
+    if Path::new(s).is_absolute() {
+        return Err(crate::Error::config("state_rel_path", "invalid path"));
+    }
+    Ok(s.to_string())
 }
 
 /// 移除 `s` 中所有非重叠的 `needle` 子串（`needle` 按字节匹配；模型标记为 ASCII）。
@@ -401,12 +415,12 @@ pub fn usize_to_decimal_buf(buf: &mut [u8], n: usize) -> &str {
     let max = buf.len().min(20);
     if max == 0 {
         // SAFETY: empty slice is trivially valid UTF-8.
-        return std::str::from_utf8(&[]).unwrap();
+        return unsafe { std::str::from_utf8_unchecked(&[]) };
     }
     if n == 0 {
         buf[0] = b'0';
         // SAFETY: single ASCII digit byte is valid UTF-8.
-        return std::str::from_utf8(&buf[..1]).unwrap();
+        return unsafe { std::str::from_utf8_unchecked(&buf[..1]) };
     }
     let mut i = max;
     let mut n = n as u64;
@@ -416,7 +430,7 @@ pub fn usize_to_decimal_buf(buf: &mut [u8], n: usize) -> &str {
         n /= 10;
     }
     // SAFETY: all bytes in buf[i..max] are ASCII digits (0x30..0x39), which is valid UTF-8.
-    std::str::from_utf8(&buf[i..max]).unwrap()
+    unsafe { std::str::from_utf8_unchecked(&buf[i..max]) }
 }
 
 // ---------- SHA-1（企微验签用，纯 Rust，无外部依赖） ----------

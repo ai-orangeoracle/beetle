@@ -65,12 +65,12 @@ pub struct DeviceControlTool {
     pwm_channels: HashMap<String, (u8, u8)>,
     description: String,
     schema: Value,
-    platform: Arc<dyn crate::platform::Platform>,
+    platform: Arc<dyn crate::Platform>,
 }
 
 impl DeviceControlTool {
     /// 从配置构造。`devices` 为空时不应调用（调用方在注册前检查）。
-    pub fn new(devices: Vec<DeviceEntry>, platform: Arc<dyn crate::platform::Platform>) -> Self {
+    pub fn new(devices: Vec<DeviceEntry>, platform: Arc<dyn crate::Platform>) -> Self {
         let device_map: HashMap<String, usize> = devices
             .iter()
             .enumerate()

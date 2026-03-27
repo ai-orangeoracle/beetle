@@ -2,7 +2,7 @@
 //! model_config tool: runtime LLM model configuration management.
 
 use crate::error::{Error, Result};
-use crate::platform::Platform;
+use crate::Platform;
 use crate::tools::{parse_tool_args, Tool, ToolContext};
 use serde_json::json;
 use std::sync::Arc;

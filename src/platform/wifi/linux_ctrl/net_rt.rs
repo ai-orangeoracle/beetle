@@ -13,15 +13,21 @@ use std::sync::OnceLock;
 use std::time::Duration;
 use tokio::runtime::Runtime;
 
-static RTNETLINK_RUNTIME: OnceLock<Runtime> = OnceLock::new();
+static RTNETLINK_RUNTIME: OnceLock<std::result::Result<Runtime, String>> = OnceLock::new();
 
-fn rtnetlink_runtime() -> &'static Runtime {
-    RTNETLINK_RUNTIME.get_or_init(|| {
+fn rtnetlink_runtime() -> Result<&'static Runtime> {
+    match RTNETLINK_RUNTIME.get_or_init(|| {
         tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
-            .expect("rtnetlink: tokio runtime init")
-    })
+            .map_err(|e| e.to_string())
+    }) {
+        Ok(rt) => Ok(rt),
+        Err(e) => Err(Error::config(
+            "rtnetlink_runtime",
+            format!("tokio runtime init failed: {}", e),
+        )),
+    }
 }
 
 fn map_rt_stage(e: rtnetlink::Error, stage: &'static str) -> Error {
@@ -34,7 +40,8 @@ fn map_rt_stage(e: rtnetlink::Error, stage: &'static str) -> Error {
 /// 与 `ip -4 -o addr show dev <iface>` 首条 IPv4 语义对齐：按 netlink 返回顺序取首个可用 IPv4。
 /// Aligns with the first IPv4 line from `ip -4 -o addr show dev <iface>`.
 pub fn read_sta_ip(iface: &str) -> Result<Option<String>> {
-    rtnetlink_runtime().block_on(read_sta_ip_async(iface))
+    let rt = rtnetlink_runtime()?;
+    rt.block_on(read_sta_ip_async(iface))
 }
 
 async fn read_sta_ip_async(iface: &str) -> Result<Option<String>> {
@@ -74,12 +81,14 @@ async fn read_sta_ip_async(iface: &str) -> Result<Option<String>> {
 /// 等价于 `ip addr flush dev` + `ip addr add CIDR dev` + `ip link set dev up`（IPv4 AP 段）。
 /// Equivalent to `ip addr flush dev` + `ip addr add CIDR dev` + `ip link set dev up` for IPv4 AP.
 pub fn setup_ap_address(iface: &str, cidr: &str) -> Result<()> {
-    rtnetlink_runtime().block_on(setup_ap_address_async(iface, cidr))
+    let rt = rtnetlink_runtime()?;
+    rt.block_on(setup_ap_address_async(iface, cidr))
 }
 
 /// 等价 `ip -4 addr flush dev <iface>`；用于清理物理 STA 口上残留的旧 SoftAP 地址。
 pub fn clear_ipv4_addresses(iface: &str) -> Result<()> {
-    rtnetlink_runtime().block_on(clear_ipv4_addresses_async(iface))
+    let rt = rtnetlink_runtime()?;
+    rt.block_on(clear_ipv4_addresses_async(iface))
 }
 
 async fn clear_ipv4_addresses_async(iface: &str) -> Result<()> {
@@ -242,7 +251,8 @@ fn parse_ipv4_cidr(s: &str) -> Result<(Ipv4Addr, u8)> {
 /// 与 `ip link show` 等价权限探测：能打开 rtnetlink 并 dump 一条链路即视为具备网络配置能力。
 /// Permission probe equivalent to `ip link show`: open rtnetlink and dump one link.
 pub fn ensure_netlink_access() -> Result<()> {
-    rtnetlink_runtime().block_on(ensure_netlink_access_async())
+    let rt = rtnetlink_runtime()?;
+    rt.block_on(ensure_netlink_access_async())
 }
 
 async fn ensure_netlink_access_async() -> Result<()> {

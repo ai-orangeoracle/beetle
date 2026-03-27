@@ -367,7 +367,7 @@ pub fn save_sensor_watches(store: &dyn MemoryStore, watches: &[SensorWatch]) {
 pub(crate) fn check_sensor_watches(
     store: &dyn MemoryStore,
     inbound_tx: &crate::bus::InboundTx,
-    platform: &dyn crate::platform::Platform,
+    platform: &dyn crate::Platform,
     devices: &[DeviceEntry],
     i2c_sensors: &[I2cSensorEntry],
     loc: crate::i18n::Locale,
@@ -463,7 +463,7 @@ pub(crate) fn check_sensor_watches(
 /// 读取传感器值：按 `device_id` 查 `i2c_sensors` 或 `hardware_devices`，经 [`Platform`] 委托。
 fn read_sensor_value(
     device_id: &str,
-    platform: &dyn crate::platform::Platform,
+    platform: &dyn crate::Platform,
     devices: &[DeviceEntry],
     i2c_sensors: &[I2cSensorEntry],
 ) -> Result<f64> {

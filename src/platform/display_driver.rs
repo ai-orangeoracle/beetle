@@ -7,7 +7,7 @@
 
 use crate::display::{
     compute_layout, DisplayChannelStatus, DisplayCommand, DisplayConfig, DisplayLayout,
-    DisplayPressureLevel, DisplaySystemState,
+    DisplayPressureLevel, DisplaySystemState, DISPLAY_LAYOUT_REF_PX,
 };
 use crate::error::Result;
 use std::time::Instant;
@@ -1175,7 +1175,7 @@ fn draw_corner_brackets<D: DrawTarget<Color = Rgb565>>(
     let w = width as i32;
     let h = height as i32;
     let dim_min = width.min(height) as i32;
-    let arm = (dim_min * 8 / 240).clamp(6, 14);
+    let arm = (dim_min * 8 / DISPLAY_LAYOUT_REF_PX as i32).clamp(6, 14);
     let m = 5;
     let top_y = 5;
     let bot_y = h - m;
