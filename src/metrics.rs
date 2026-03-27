@@ -26,6 +26,8 @@ static WDT_FEEDS: AtomicU32 = AtomicU32::new(0);
 static DISPATCH_SEND_OK: AtomicU32 = AtomicU32::new(0);
 static DISPATCH_SEND_FAIL: AtomicU32 = AtomicU32::new(0);
 static OUTBOUND_ENQUEUE_FAIL: AtomicU32 = AtomicU32::new(0);
+static CHANNEL_HTTP_OK: AtomicU32 = AtomicU32::new(0);
+static CHANNEL_HTTP_FAIL: AtomicU32 = AtomicU32::new(0);
 static LAST_ACTIVE_EPOCH_SECS: AtomicU32 = AtomicU32::new(0);
 
 /// Linux 嵌入式 WiFi：wpa 守护恢复、AP 栈重启计数；失败 stage 摘要（脱敏，固定长度）。
@@ -105,6 +107,16 @@ pub fn record_outbound_enqueue_fail() {
     OUTBOUND_ENQUEUE_FAIL.fetch_add(1, Ordering::Relaxed);
 }
 
+/// sender 线程在真实通道 HTTP 请求后上报（区别于 dispatch 入队成功）。
+#[inline]
+pub fn record_channel_http_result(ok: bool) {
+    if ok {
+        CHANNEL_HTTP_OK.fetch_add(1, Ordering::Relaxed);
+    } else {
+        CHANNEL_HTTP_FAIL.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
 /// 按 stage 记录错误，用于故障画像 TopN；已知 stage 用常量匹配，其余归入 other。
 /// wpa_supplicant 由看门狗重新拉起（PID 丢失或进程死亡）。
 /// wpa_supplicant re-ensured by watchdog (missing PID or dead process).
@@ -163,6 +175,8 @@ pub fn snapshot() -> MetricsSnapshot {
         dispatch_send_ok: DISPATCH_SEND_OK.load(Ordering::Relaxed) as u64,
         dispatch_send_fail: DISPATCH_SEND_FAIL.load(Ordering::Relaxed) as u64,
         outbound_enqueue_fail: OUTBOUND_ENQUEUE_FAIL.load(Ordering::Relaxed) as u64,
+        channel_http_ok: CHANNEL_HTTP_OK.load(Ordering::Relaxed) as u64,
+        channel_http_fail: CHANNEL_HTTP_FAIL.load(Ordering::Relaxed) as u64,
         errors_agent_router: ERRORS_AGENT_ROUTER.load(Ordering::Relaxed) as u64,
         errors_agent_chat: ERRORS_AGENT_CHAT.load(Ordering::Relaxed) as u64,
         errors_agent_context: ERRORS_AGENT_CONTEXT.load(Ordering::Relaxed) as u64,
@@ -196,6 +210,8 @@ pub struct MetricsSnapshot {
     pub dispatch_send_ok: u64,
     pub dispatch_send_fail: u64,
     pub outbound_enqueue_fail: u64,
+    pub channel_http_ok: u64,
+    pub channel_http_fail: u64,
     pub errors_agent_router: u64,
     pub errors_agent_chat: u64,
     pub errors_agent_context: u64,
@@ -219,7 +235,7 @@ impl MetricsSnapshot {
         let mut buf = String::with_capacity(384);
         let _ = write!(
             buf,
-            "metrics msg_in={} msg_out={} llm_calls={} llm_err={} llm_last_ms={} tool_calls={} tool_err={} wdt_feeds={} dispatch_ok={} dispatch_fail={} outbound_enq_fail={} err_router={} err_chat={} err_ctx={} err_tool={} err_llm_req={} err_llm_parse={} err_dispatch={} err_session={} err_other={} last_active_epoch={} wifi_reconn={} wifi_ap_restart={} wifi_last_fail_stage={}",
+            "metrics msg_in={} msg_out={} llm_calls={} llm_err={} llm_last_ms={} tool_calls={} tool_err={} wdt_feeds={} dispatch_ok={} dispatch_fail={} outbound_enq_fail={} channel_http_ok={} channel_http_fail={} err_router={} err_chat={} err_ctx={} err_tool={} err_llm_req={} err_llm_parse={} err_dispatch={} err_session={} err_other={} last_active_epoch={} wifi_reconn={} wifi_ap_restart={} wifi_last_fail_stage={}",
             self.messages_in,
             self.messages_out,
             self.llm_calls,
@@ -231,6 +247,8 @@ impl MetricsSnapshot {
             self.dispatch_send_ok,
             self.dispatch_send_fail,
             self.outbound_enqueue_fail,
+            self.channel_http_ok,
+            self.channel_http_fail,
             self.errors_agent_router,
             self.errors_agent_chat,
             self.errors_agent_context,

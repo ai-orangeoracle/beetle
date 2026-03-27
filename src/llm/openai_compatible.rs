@@ -257,29 +257,17 @@ impl LlmClient for OpenAiCompatibleClient {
             return self.chat(http, system, messages, tools);
         }
         let body = build_request_body(&self.model, self.max_tokens, system, messages, tools, true)?;
-        // 首次尝试；若为连接级错误则 reset 后重试一次（progress 状态已被消费，但总比丢消息好）。
-        match do_request_streaming(
-            http,
-            &self.chat_url,
-            self.auth_bearer.as_deref(),
-            &body,
-            Some(on_progress),
-        ) {
-            Ok(r) => Ok(r),
-            Err(e) if e.is_connect_error() => {
-                log::warn!("[{}] streaming connect error, retry once: {}", TAG, e);
-                http.reset_connection_for_retry();
-                std::thread::sleep(std::time::Duration::from_millis(500));
-                do_request_streaming(
-                    http,
-                    &self.chat_url,
-                    self.auth_bearer.as_deref(),
-                    &body,
-                    None,
-                )
-            }
-            Err(e) => Err(e),
-        }
+        // 与 chat() 保持同一重试策略；仅首轮传递 progress 回调，后续重试避免重复回放增量。
+        let mut progress = Some(on_progress);
+        crate::llm::retry::with_retry(2, 500, TAG, http, |http| {
+            do_request_streaming(
+                http,
+                &self.chat_url,
+                self.auth_bearer.as_deref(),
+                &body,
+                progress.take(),
+            )
+        })
     }
 }
 

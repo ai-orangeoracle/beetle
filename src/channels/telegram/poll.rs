@@ -7,7 +7,7 @@ use crate::bus::{InboundTx, OutboundTx, PcMsg, MAX_CONTENT_LEN};
 use crate::channels::ChannelHttpClient;
 use crate::error::{Error, Result};
 use crate::i18n::{tr, Locale as UiLocale, Message as UiMessage};
-use crate::memory::SessionStore;
+use crate::memory::{PendingRetryStore, SessionStore};
 
 use super::send::set_message_reaction;
 
@@ -108,6 +108,7 @@ pub fn poll_telegram_once<H: ChannelHttpClient>(
     token: &str,
     offset: Option<i64>,
     inbound_tx: &InboundTx,
+    pending_retry: &dyn PendingRetryStore,
     allowed_chat_ids: &[String],
     group_activation: &str,
     bot_username: Option<&str>,
@@ -253,8 +254,26 @@ pub fn poll_telegram_once<H: ChannelHttpClient>(
                 content,
                 is_group,
             };
-            if inbound_tx.send(pc).is_err() {
-                log::warn!("[{}] inbound_tx.send failed (channel closed)", TAG_POLL);
+            let mut enqueued = false;
+            for _ in 0..3 {
+                match inbound_tx.try_send(pc.clone()) {
+                    Ok(()) => {
+                        enqueued = true;
+                        break;
+                    }
+                    Err(std::sync::mpsc::TrySendError::Full(_)) => {
+                        std::thread::sleep(std::time::Duration::from_millis(200));
+                        continue;
+                    }
+                    Err(std::sync::mpsc::TrySendError::Disconnected(_)) => {
+                        log::warn!("[{}] inbound_tx closed while enqueueing telegram msg", TAG_POLL);
+                        break;
+                    }
+                }
+            }
+            if !enqueued {
+                log::warn!("[{}] inbound queue full, drop telegram msg chat_id={}", TAG_POLL, chat_id);
+                let _ = pending_retry.save_pending_retry(&pc);
             }
         }
     }
@@ -269,6 +288,7 @@ pub fn run_telegram_poll_loop<H, F>(
     allowed_chat_ids: Vec<String>,
     group_activation: String,
     inbound_tx: InboundTx,
+    pending_retry: Arc<dyn PendingRetryStore + Send + Sync>,
     outbound_tx: OutboundTx,
     session_store: Arc<dyn SessionStore + Send + Sync>,
     inbound_depth: Arc<std::sync::atomic::AtomicUsize>,
@@ -318,6 +338,7 @@ pub fn run_telegram_poll_loop<H, F>(
             &token,
             offset,
             &inbound_tx,
+            pending_retry.as_ref(),
             &allowed_chat_ids,
             &group_activation,
             bot_username.as_deref(),

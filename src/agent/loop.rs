@@ -168,6 +168,20 @@ struct AgentToolCtx<'a, H: PlatformHttpClient> {
     locale: UiLocale,
 }
 
+fn try_send_outbound(outbound_tx: &OutboundTx, msg: PcMsg, log_prefix: &str) -> bool {
+    match outbound_tx.try_send(msg) {
+        Ok(()) => {
+            metrics::record_message_out();
+            true
+        }
+        Err(e) => {
+            metrics::record_outbound_enqueue_fail();
+            log::error!("[agent] {} outbound enqueue failed: {}", log_prefix, e);
+            false
+        }
+    }
+}
+
 impl<H: PlatformHttpClient> LlmHttpClient for AgentToolCtx<'_, H> {
     fn do_post(
         &mut self,
@@ -176,6 +190,20 @@ impl<H: PlatformHttpClient> LlmHttpClient for AgentToolCtx<'_, H> {
         body: &[u8],
     ) -> Result<(u16, crate::platform::ResponseBody)> {
         crate::platform::PlatformHttpClient::post(self.http, url, headers, body)
+    }
+
+    fn do_post_streaming(
+        &mut self,
+        url: &str,
+        headers: &[(&str, &str)],
+        body: &[u8],
+        on_chunk: &mut dyn FnMut(&[u8]) -> Result<()>,
+    ) -> Result<u16> {
+        crate::platform::PlatformHttpClient::post_streaming(self.http, url, headers, body, on_chunk)
+    }
+
+    fn reset_connection_for_retry(&mut self) {
+        crate::platform::PlatformHttpClient::reset_connection_for_retry(self.http);
     }
 }
 
@@ -194,6 +222,29 @@ impl<H: PlatformHttpClient> ToolContext for AgentToolCtx<'_, H> {
         body: &[u8],
     ) -> Result<(u16, crate::platform::ResponseBody)> {
         crate::platform::PlatformHttpClient::post(self.http, url, headers, body)
+    }
+    fn patch_with_headers(
+        &mut self,
+        url: &str,
+        headers: &[(&str, &str)],
+        body: &[u8],
+    ) -> Result<(u16, crate::platform::ResponseBody)> {
+        crate::platform::PlatformHttpClient::patch(self.http, url, headers, body)
+    }
+    fn put_with_headers(
+        &mut self,
+        url: &str,
+        headers: &[(&str, &str)],
+        body: &[u8],
+    ) -> Result<(u16, crate::platform::ResponseBody)> {
+        crate::platform::PlatformHttpClient::put(self.http, url, headers, body)
+    }
+    fn delete_with_headers(
+        &mut self,
+        url: &str,
+        headers: &[(&str, &str)],
+    ) -> Result<(u16, crate::platform::ResponseBody)> {
+        crate::platform::PlatformHttpClient::delete(self.http, url, headers)
     }
     fn current_chat_id(&self) -> Option<&str> {
         Some(&self.chat_id)
@@ -389,8 +440,7 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
                 content: tr(UiMessage::NodeMaintenance, loc),
                 is_group: false,
             };
-            metrics::record_message_out();
-            let _ = outbound_tx.try_send(out);
+            let _ = try_send_outbound(&outbound_tx, out, "maintenance");
             continue;
         }
 
@@ -418,8 +468,7 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
                         content: tr(UiMessage::LowMemoryUserDefer, loc),
                         is_group: false,
                     };
-                    metrics::record_message_out();
-                    let _ = outbound_tx.try_send(defer_out);
+                    let _ = try_send_outbound(&outbound_tx, defer_out, "defer-limit");
                     continue;
                 }
 
@@ -429,8 +478,7 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
                     content: tr(UiMessage::LowMemoryUserDefer, loc),
                     is_group: false,
                 };
-                metrics::record_message_out();
-                let _ = outbound_tx.try_send(defer_out);
+                let _ = try_send_outbound(&outbound_tx, defer_out, "defer");
                 let chat_id = msg.chat_id.clone();
                 match inbound_tx.try_send(msg) {
                     Ok(()) => {
@@ -492,7 +540,19 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
         match crate::orchestrator::can_call_llm_pub() {
             LlmDecision::Proceed => {}
             LlmDecision::RetryLater { delay_ms } => {
-                let _ = inbound_tx.try_send(msg);
+                match inbound_tx.try_send(msg.clone()) {
+                    Ok(()) => {}
+                    Err(std::sync::mpsc::TrySendError::Full(m)) => {
+                        let _ = config.pending_retry.save_pending_retry(&m);
+                        log::warn!(
+                            "[agent] llm retry-later: inbound full, pending_retry saved chat_id={}",
+                            m.chat_id
+                        );
+                    }
+                    Err(std::sync::mpsc::TrySendError::Disconnected(_)) => {
+                        log::error!("[agent] inbound_tx disconnected during retry-later");
+                    }
+                }
                 std::thread::sleep(Duration::from_millis(delay_ms));
                 crate::platform::task_wdt::feed_current_task();
                 continue;
@@ -505,8 +565,7 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
                     content: tr(UiMessage::LowMemoryUserDefer, loc),
                     is_group: false,
                 };
-                metrics::record_message_out();
-                let _ = outbound_tx.try_send(out);
+                let _ = try_send_outbound(&outbound_tx, out, "llm-degrade");
                 continue;
             }
         }
@@ -601,8 +660,7 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
                     content: tr(UiMessage::NodeMaintenance, loc),
                     is_group: false,
                 };
-                metrics::record_message_out();
-                let _ = outbound_tx.try_send(reply);
+                let _ = try_send_outbound(&outbound_tx, reply, "chat-failure");
                 continue;
             }
         };
@@ -681,46 +739,42 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
             log::warn!("[agent_session] append user failed: {}", e);
             metrics::record_error_by_stage("session_append");
         }
-        if let Err(e) = config
-            .session_store
-            .append(&msg.chat_id, "assistant", &reply_content)
-        {
-            log::warn!("[agent_session] append assistant failed: {}", e);
-            metrics::record_error_by_stage("session_append");
-        }
-        if mark_important {
-            let _ = config
-                .important_message_store
-                .set_important_offset_from_end(&msg.chat_id, 1);
-        }
         llm_failure_count.remove(&msg_key);
         defer_tracker.remove(&msg_key);
 
         // 流式编辑已发送到通道时，跳过 outbound_tx 避免重复发送。
-        if !streamed {
+        let delivered = if !streamed {
             let out = PcMsg {
                 channel: msg.channel.clone(),
                 chat_id: msg.chat_id.clone(),
-                content: reply_content,
+                content: reply_content.clone(),
                 is_group: false,
             };
             crate::platform::task_wdt::feed_current_task();
-            match outbound_tx.try_send(out) {
-                Ok(()) => {
-                    metrics::record_message_out();
-                }
-                Err(e) => {
-                    metrics::record_outbound_enqueue_fail();
-                    log::error!("[agent] outbound enqueue failed (reply lost): {}", e);
-                }
-            }
+            try_send_outbound(&outbound_tx, out, "reply")
         } else {
             metrics::record_message_out();
             crate::platform::task_wdt::feed_current_task();
+            true
+        };
+
+        if delivered {
+            if let Err(e) = config
+                .session_store
+                .append(&msg.chat_id, "assistant", &reply_content)
+            {
+                log::warn!("[agent_session] append assistant failed: {}", e);
+                metrics::record_error_by_stage("session_append");
+            }
+            if mark_important {
+                let _ = config
+                    .important_message_store
+                    .set_important_offset_from_end(&msg.chat_id, 1);
+            }
         }
 
-        // Programmatic session summary — reply already queued; extra LLM call runs after outbound.
-        {
+        // Programmatic session summary — only after the reply is visible to user or streamed successfully.
+        if delivered {
             let after_count = config
                 .session_store
                 .load_recent(&msg.chat_id, 128)
@@ -1110,9 +1164,15 @@ fn run_worker_path<H: PlatformHttpClient>(
             let confirmation = strip_agent_stop_confirmation(&content);
             let streamed = if let (Some(ref mid), Some(ed)) = (&stream_msg_id, editor) {
                 if !confirmation.is_empty() {
-                    let _ = ed.edit(&msg.chat_id, mid, &confirmation);
+                    if let Err(e) = ed.edit(&msg.chat_id, mid, &confirmation) {
+                        log::warn!("[agent_stream] final interrupt edit failed, fallback outbound: {}", e);
+                        false
+                    } else {
+                        true
+                    }
+                } else {
+                    true
                 }
-                true
             } else {
                 false
             };
@@ -1128,9 +1188,15 @@ fn run_worker_path<H: PlatformHttpClient>(
     // 流式编辑：最终确认发送完整内容（工具执行中已通过 per-tool 进度 edit 续期可见性）。
     let streamed = if let (Some(ref mid), Some(ed)) = (&stream_msg_id, editor) {
         if !final_content.is_empty() {
-            let _ = ed.edit(&msg.chat_id, mid, &final_content);
+            if let Err(e) = ed.edit(&msg.chat_id, mid, &final_content) {
+                log::warn!("[agent_stream] final edit failed, fallback outbound: {}", e);
+                false
+            } else {
+                true
+            }
+        } else {
+            true
         }
-        true
     } else {
         false
     };

@@ -31,16 +31,28 @@ const TAG: &str = "beetle";
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// 从 orchestrator snapshot 的 internal 堆空闲字节数估算已用百分比。
-/// ESP32-S3 internal DRAM 约 390KB；取 400KB 作为近似总量。非 ESP 返回 0。
+/// 以运行时观测到的峰值空闲作为动态基线，减少固定常量带来的观测失真。非 ESP 返回 0。
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 fn heap_used_percent(snapshot: &beetle::orchestrator::ResourceSnapshot) -> u8 {
+    use std::sync::atomic::{AtomicU32, Ordering};
     const INTERNAL_TOTAL_APPROX: u32 = 400 * 1024;
+    const INTERNAL_TOTAL_MIN: u32 = 256 * 1024;
+    const INTERNAL_TOTAL_MAX: u32 = 1024 * 1024;
+    static INTERNAL_TOTAL_ESTIMATE: AtomicU32 = AtomicU32::new(INTERNAL_TOTAL_APPROX);
+
     let free = snapshot.heap_free_internal;
-    if free >= INTERNAL_TOTAL_APPROX {
-        return 0;
+    let mut total = INTERNAL_TOTAL_ESTIMATE.load(Ordering::Relaxed);
+    if free > total {
+        let candidate = free.clamp(INTERNAL_TOTAL_MIN, INTERNAL_TOTAL_MAX);
+        INTERNAL_TOTAL_ESTIMATE.store(candidate, Ordering::Relaxed);
+        total = candidate;
     }
-    let used = INTERNAL_TOTAL_APPROX.saturating_sub(free);
-    ((used as u64 * 100) / INTERNAL_TOTAL_APPROX as u64).min(100) as u8
+    if total == 0 || free >= total {
+        0
+    } else {
+        let used = total.saturating_sub(free);
+        ((used as u64 * 100) / total as u64).min(100) as u8
+    }
 }
 
 /// 启动自检：存储可读（memory 或 soul 至少其一成功）。失败返回 false，调用方应 log 并 return。
@@ -817,6 +829,7 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
         let id = c.app_id.clone();
         let sec = c.app_secret.clone();
         let allowed = parse_allowed_chat_ids(&config.feishu_allowed_chat_ids);
+        let pending = Arc::clone(&pending_retry_store);
         let pf = Arc::clone(&platform);
         let cfg = Arc::clone(&config);
         beetle::util::spawn_guarded("feishu_ws", move || {
@@ -825,6 +838,7 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
                 sec,
                 allowed,
                 tx,
+                pending.as_ref(),
                 move || pf.create_http_client(cfg.as_ref()),
                 connect_wss,
             )
@@ -845,6 +859,7 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
                 let qq_id = c.app_id.clone();
                 let qq_sec = c.app_secret.clone();
                 let qq_cache_ws = std::sync::Arc::clone(&qq_msg_id_cache);
+                let qq_pending = Arc::clone(&pending_retry_store);
                 let pf = Arc::clone(&platform);
                 let cfg = Arc::clone(&config);
                 beetle::util::spawn_guarded("qq_ws", move || {
@@ -853,6 +868,7 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
                         qq_sec,
                         qq_tx,
                         qq_cache_ws,
+                        qq_pending.as_ref(),
                         move || pf.create_http_client(cfg.as_ref()),
                         connect_wss,
                     )
@@ -879,6 +895,7 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
             let tg_inbound_tx = inbound_tx.clone();
             let tg_outbound_tx = outbound_tx.clone();
             let tg_session_store = Arc::clone(&session_store);
+            let tg_pending = Arc::clone(&pending_retry_store);
             let tg_inbound_depth = Arc::clone(&inbound_depth);
             let tg_outbound_depth = Arc::clone(&outbound_depth);
             let tg_config_store = Arc::clone(&config_store);
@@ -891,6 +908,7 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
                     tg_allowed,
                     tg_group_activation,
                     tg_inbound_tx,
+                    tg_pending,
                     tg_outbound_tx,
                     tg_session_store,
                     tg_inbound_depth,

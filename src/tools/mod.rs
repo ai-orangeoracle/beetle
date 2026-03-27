@@ -86,6 +86,15 @@ pub trait ToolContext {
         headers: &[(&str, &str)],
         body: &[u8],
     ) -> Result<(u16, crate::platform::ResponseBody)>;
+    /// HTTP PATCH 请求；默认回退到 post_with_headers。
+    fn patch_with_headers(
+        &mut self,
+        url: &str,
+        headers: &[(&str, &str)],
+        body: &[u8],
+    ) -> Result<(u16, crate::platform::ResponseBody)> {
+        self.post_with_headers(url, headers, body)
+    }
     /// HTTP PUT 请求；默认回退到 post_with_headers。
     fn put_with_headers(
         &mut self,

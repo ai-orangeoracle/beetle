@@ -359,7 +359,10 @@ pub fn flush_qq_channel_sends<H: ChannelHttpClient>(
     while let Ok((chat_id, content)) = rx.try_recv() {
         let msg_id = pop_msg_id(&cache, &chat_id);
         if let Err(e) = send_one_qq(http, &token, &chat_id, &content, msg_id.as_deref()) {
+            crate::metrics::record_channel_http_result(false);
             log::warn!("[qq_flush] send failed for chat_id={}: {}", chat_id, e);
+        } else {
+            crate::metrics::record_channel_http_result(true);
         }
     }
 }
@@ -474,9 +477,11 @@ pub fn run_qq_sender_loop<H, F>(
             match send_one_qq(h, &token, &chat_id, &content, msg_id.as_deref()) {
                 Ok(()) => {
                     crate::orchestrator::record_channel_result_pub("qq_channel", true);
+                    crate::metrics::record_channel_http_result(true);
                 }
                 Err(ref e) => {
                     crate::orchestrator::record_channel_result_pub("qq_channel", false);
+                    crate::metrics::record_channel_http_result(false);
                     log::warn!(
                         "[{}] send failed (attempt {}): {}",
                         TAG,
@@ -493,9 +498,11 @@ pub fn run_qq_sender_loop<H, F>(
                 match send_one_qq(h, &token, &cid, &cnt, mid.as_deref()) {
                     Ok(()) => {
                         crate::orchestrator::record_channel_result_pub("qq_channel", true);
+                        crate::metrics::record_channel_http_result(true);
                     }
                     Err(ref e) => {
                         crate::orchestrator::record_channel_result_pub("qq_channel", false);
+                        crate::metrics::record_channel_http_result(false);
                         log::warn!("[{}] drain send failed for {}: {}", TAG, cid, e);
                     }
                 }

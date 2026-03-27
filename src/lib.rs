@@ -128,6 +128,14 @@ impl<T: platform::PlatformHttpClient> tools::ToolContext for T {
     ) -> Result<(u16, platform::ResponseBody)> {
         platform::PlatformHttpClient::post(self, url, headers, body)
     }
+    fn patch_with_headers(
+        &mut self,
+        url: &str,
+        headers: &[(&str, &str)],
+        body: &[u8],
+    ) -> Result<(u16, platform::ResponseBody)> {
+        platform::PlatformHttpClient::patch(self, url, headers, body)
+    }
     fn put_with_headers(
         &mut self,
         url: &str,
