@@ -434,90 +434,95 @@ const DHT22_START_LOW_US: u32 = 1_000;
 /// 启动后释放总线再等待（μs）。
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 const DHT_START_RELEASE_US: u32 = 30;
-/// 位带单相忙等循环上限。
+/// 释放总线后等待从机首次拉低的最长时间（µs）。
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
-const DHT_BIT_TIMEOUT_CYCLES: u32 = 1_000;
-/// 等待从机响应的循环上限。
+const DHT_WAIT_FIRST_FALL_US: i64 = 5_000;
+/// 应答阶段单边沿最长等待（µs）（手册约 80µs）。
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
-const DHT_RESPONSE_TIMEOUT_CYCLES: u32 = 5_000;
-/// 高电平循环计数阈值：≥ 判为数据位 1（可按硬件微调）。
+const DHT_ACK_EDGE_TIMEOUT_US: i64 = 600;
+/// 数据位：低电平结束（上升沿）最长等待（µs）（部分模块低相可略超 50µs）。
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
-const DHT_HIGH_THRESHOLD: u32 = 40;
+const DHT_BIT_LOW_END_TIMEOUT_US: i64 = 600;
+/// 数据位：高电平结束（下降沿）最长等待（µs）（位 1 典型 ~70µs，劣质/长线可更长；过短会误报 timeout）。
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+const DHT_BIT_HIGH_END_TIMEOUT_US: i64 = 2_000;
+/// 高电平宽度 ≥ 该值（µs）判为数据位 1（0 约 26–28µs，1 约 70µs）。
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+const DHT_BIT1_MIN_HIGH_US: i64 = 42;
 /// 失败后重试次数（不含首次）。
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
-const DHT_MAX_RETRIES: u8 = 2;
+const DHT_MAX_RETRIES: u8 = 3;
 /// 重试间隔（ms）。
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
-const DHT_RETRY_DELAY_MS: u64 = 100;
+const DHT_RETRY_DELAY_MS: u64 = 150;
 
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 static DHT_SAMPLE_CRIT: esp_idf_hal::interrupt::IsrCriticalSection =
     esp_idf_hal::interrupt::IsrCriticalSection::new();
 
+/// 等待 `gpio_get_level(pin) == target`，超时返回 `Err`。
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+unsafe fn dht_wait_until_level(
+    pin: i32,
+    target: i32,
+    timeout_us: i64,
+    err: &'static str,
+) -> Result<()> {
+    use esp_idf_svc::sys::{esp_timer_get_time, gpio_get_level};
+
+    let deadline = esp_timer_get_time().saturating_add(timeout_us);
+    while gpio_get_level(pin) != target {
+        if esp_timer_get_time() > deadline {
+            return Err(Error::config("drive_dht", err));
+        }
+    }
+    Ok(())
+}
+
 /// DHT 单总线采样：握手后读 40 位，返回 5 字节原始帧。
+/// 数据位用 `esp_timer_get_time` 测高电平宽度（µs），避免忙等循环计数在 S3 上边界漂移导致 checksum 差 1～2。
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 unsafe fn dht_sample_raw_frame(pin: i32) -> Result<[u8; 5]> {
-    use esp_idf_svc::sys::gpio_get_level;
+    use esp_idf_svc::sys::esp_timer_get_time;
 
     let _g = DHT_SAMPLE_CRIT.enter();
 
-    let mut c: u32;
-    // 线应为高；等待从机拉低（响应头）
-    c = 0;
-    while gpio_get_level(pin) != 0 {
-        c += 1;
-        if c > DHT_RESPONSE_TIMEOUT_CYCLES {
-            return Err(Error::config(
-                "drive_dht",
-                "timeout waiting for sensor response (high)",
-            ));
-        }
-    }
-    // 等响应低结束 → 高
-    c = 0;
-    while gpio_get_level(pin) == 0 {
-        c += 1;
-        if c > DHT_RESPONSE_TIMEOUT_CYCLES {
-            return Err(Error::config(
-                "drive_dht",
-                "timeout during sensor response (low phase)",
-            ));
-        }
-    }
-    // 等响应高结束 → 数据首位低前
-    c = 0;
-    while gpio_get_level(pin) != 0 {
-        c += 1;
-        if c > DHT_RESPONSE_TIMEOUT_CYCLES {
-            return Err(Error::config(
-                "drive_dht",
-                "timeout during sensor response (high phase)",
-            ));
-        }
-    }
+    dht_wait_until_level(
+        pin,
+        0,
+        DHT_WAIT_FIRST_FALL_US,
+        "timeout waiting for sensor response (high→low)",
+    )?;
+    dht_wait_until_level(
+        pin,
+        1,
+        DHT_ACK_EDGE_TIMEOUT_US,
+        "timeout during sensor ack (low phase)",
+    )?;
+    dht_wait_until_level(
+        pin,
+        0,
+        DHT_ACK_EDGE_TIMEOUT_US,
+        "timeout during sensor ack (high phase)",
+    )?;
 
     let mut data = [0u8; 5];
     for i in 0..40u32 {
-        // 每位以低电平开始，等上升沿
-        c = 0;
-        while gpio_get_level(pin) == 0 {
-            c += 1;
-            if c > DHT_BIT_TIMEOUT_CYCLES {
-                return Err(Error::config(
-                    "drive_dht",
-                    format!("timeout waiting for bit {} low phase end", i),
-                ));
-            }
-        }
-        // 测量高电平宽度
-        c = 0;
-        while gpio_get_level(pin) != 0 {
-            c += 1;
-            if c > DHT_BIT_TIMEOUT_CYCLES {
-                break;
-            }
-        }
-        if c >= DHT_HIGH_THRESHOLD {
+        dht_wait_until_level(
+            pin,
+            1,
+            DHT_BIT_LOW_END_TIMEOUT_US,
+            "timeout waiting for data bit low→high",
+        )?;
+        let t0 = esp_timer_get_time();
+        dht_wait_until_level(
+            pin,
+            0,
+            DHT_BIT_HIGH_END_TIMEOUT_US,
+            "timeout during data bit high phase",
+        )?;
+        let high_us = esp_timer_get_time() - t0;
+        if high_us >= DHT_BIT1_MIN_HIGH_US {
             data[(i / 8) as usize] |= 1 << (7 - (i % 8));
         }
     }
@@ -557,7 +562,7 @@ fn dht_pull_from_options(
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 pub fn drive_dht(pins: &PinConfig, _params: &Value, options: &Value) -> Result<String> {
     use esp_idf_svc::sys::{
-        esp_rom_delay_us, gpio_config, gpio_config_t, gpio_get_level,
+        esp_rom_delay_us, gpio_config, gpio_config_t,
         gpio_int_type_t_GPIO_INTR_DISABLE, gpio_mode_t_GPIO_MODE_INPUT,
         gpio_mode_t_GPIO_MODE_OUTPUT, gpio_reset_pin, gpio_set_level, ESP_OK,
     };
@@ -637,9 +642,6 @@ pub fn drive_dht(pins: &PinConfig, _params: &Value, options: &Value) -> Result<S
                     });
                 }
 
-                // 释放后短暂稳定再采样（与手册 20–40μs 一致，已在上方 delay）
-                let _ = gpio_get_level(pin);
-
                 dht_sample_raw_frame(pin)
             }
         })();
@@ -657,6 +659,10 @@ pub fn drive_dht(pins: &PinConfig, _params: &Value, options: &Value) -> Result<S
             .wrapping_add(data[2])
             .wrapping_add(data[3]);
         if (sum & 0xFF) != data[4] {
+            log::warn!(
+                "[drive_dht] checksum mismatch: [{:#04x},{:#04x},{:#04x},{:#04x},{:#04x}] sum={:#04x} attempt={}",
+                data[0], data[1], data[2], data[3], data[4], sum & 0xFF, attempt
+            );
             last_err = Some(Error::config("drive_dht", "checksum mismatch"));
             continue;
         }
