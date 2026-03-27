@@ -4,7 +4,9 @@ use crate::audio::baidu_token::BaiduTokenCache;
 use crate::audio::energy::{EndpointConfig, EndpointEvent, EndpointState};
 use crate::audio::stt_baidu;
 use crate::config::AudioSegment;
-use crate::constants::{AUDIO_CAPTURE_FRAME_SAMPLES, AUDIO_CAPTURE_MAX_MS, AUDIO_STT_MAX_PCM_BYTES};
+use crate::constants::{
+    AUDIO_CAPTURE_FRAME_SAMPLES, AUDIO_CAPTURE_MAX_MS, AUDIO_STT_MAX_PCM_BYTES,
+};
 use crate::error::{Error, Result};
 use crate::tools::http_bridge::ToolContextHttpClient;
 use crate::tools::{parse_tool_args, Tool, ToolContext};
@@ -68,8 +70,8 @@ impl Tool for VoiceInputTool {
 
         let mut http = ToolContextHttpClient::new(ctx);
         let mic_sr = self.audio_cfg.microphone.sample_rate.max(8_000);
-        let frame_ms = ((AUDIO_CAPTURE_FRAME_SAMPLES as u64) * 1000 / (mic_sr as u64))
-            .clamp(1, 40) as u32;
+        let frame_ms =
+            ((AUDIO_CAPTURE_FRAME_SAMPLES as u64) * 1000 / (mic_sr as u64)).clamp(1, 40) as u32;
         let endpoint_cfg = EndpointConfig {
             threshold: if self.audio_cfg.vad.enabled {
                 self.audio_cfg.vad.threshold

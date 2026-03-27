@@ -228,27 +228,33 @@ pub fn run_remind_loop(
     poll_interval_secs: u64,
     resolve_locale: std::sync::Arc<dyn Fn() -> crate::i18n::Locale + Send + Sync>,
 ) {
-    crate::util::spawn_guarded("remind", move || loop {
-        std::thread::sleep(std::time::Duration::from_secs(poll_interval_secs));
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
-        while let Ok(Some((channel, chat_id, context))) = remind_store.pop_due(now) {
-            let loc = resolve_locale();
-            let prefix = crate::i18n::tr(crate::i18n::Message::RemindPrefix, loc);
-            let content = format!("{}{}", prefix, context);
-            if let Ok(msg) = PcMsg::new_inbound_with_ingress(
-                channel,
-                chat_id,
-                content,
-                false,
-                crate::bus::IngressKind::System,
-            ) {
-                let _ = inbound_tx.send(msg);
+    crate::util::spawn_guarded_with_profile(
+        "remind",
+        8192,
+        Some(crate::util::SpawnCore::Core1),
+        crate::util::HttpThreadRole::Background,
+        move || loop {
+            std::thread::sleep(std::time::Duration::from_secs(poll_interval_secs));
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            while let Ok(Some((channel, chat_id, context))) = remind_store.pop_due(now) {
+                let loc = resolve_locale();
+                let prefix = crate::i18n::tr(crate::i18n::Message::RemindPrefix, loc);
+                let content = format!("{}{}", prefix, context);
+                if let Ok(msg) = PcMsg::new_inbound_with_ingress(
+                    channel,
+                    chat_id,
+                    content,
+                    false,
+                    crate::bus::IngressKind::System,
+                ) {
+                    let _ = inbound_tx.send(msg);
+                }
             }
-        }
-    });
+        },
+    );
     log::info!(
         "[beetle] remind_at loop started (interval {}s)",
         poll_interval_secs

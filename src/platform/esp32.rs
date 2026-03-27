@@ -276,9 +276,9 @@ impl Platform for Esp32Platform {
 
     fn read_mic_pcm_i16(&self, out: &mut [i16]) -> crate::error::Result<usize> {
         let mut guard = self.audio_state.lock().unwrap_or_else(|e| e.into_inner());
-        let state = guard
-            .as_mut()
-            .ok_or_else(|| crate::error::Error::config("audio_mic", "audio pipeline not initialized"))?;
+        let state = guard.as_mut().ok_or_else(|| {
+            crate::error::Error::config("audio_mic", "audio pipeline not initialized")
+        })?;
         state.read_mic_pcm_i16(out)
     }
 

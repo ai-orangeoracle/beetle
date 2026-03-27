@@ -8,6 +8,7 @@ use crate::constants::{
     TLS_ADMISSION_NO_PSRAM_MIN_BYTES,
 };
 use crate::error::{Error, Result};
+use std::cell::Cell;
 use std::sync::atomic::Ordering;
 use std::sync::Mutex;
 use std::time::Duration;
@@ -19,6 +20,32 @@ use super::state::OrchestratorState;
 
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 const TRY_INTERVAL_MS: u64 = 50;
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+const TRY_INTERVAL_MS_INTERACTIVE: u64 = 20;
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+const TRY_INTERVAL_MS_BACKGROUND: u64 = 90;
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+const BACKGROUND_PRE_ADMISSION_YIELD_MS: u64 = 120;
+
+/// 线程角色：用于 TLS 准入前降噪与优先级偏置。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HttpThreadRole {
+    Interactive,
+    Io,
+    Background,
+}
+
+thread_local! {
+    static HTTP_THREAD_ROLE: Cell<HttpThreadRole> = const { Cell::new(HttpThreadRole::Background) };
+}
+
+pub fn set_current_http_thread_role(role: HttpThreadRole) {
+    HTTP_THREAD_ROLE.with(|r| r.set(role));
+}
+
+pub fn current_http_thread_role() -> HttpThreadRole {
+    HTTP_THREAD_ROLE.with(Cell::get)
+}
 
 /// HTTP 请求优先级。
 /// HTTP request priority.
@@ -73,6 +100,8 @@ pub fn request_http_permit(
     priority: Priority,
     timeout: Duration,
 ) -> Result<HttpPermitGuard> {
+    #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+    let role = current_http_thread_role();
     let pressure = PressureLevel::from_byte(state.pressure_level.load(Ordering::Relaxed));
 
     // 快速路径：Critical 压力下仅放行 Critical/High 优先级
@@ -99,6 +128,18 @@ pub fn request_http_permit(
 
     #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
     let tls_guard = {
+        if role == HttpThreadRole::Background
+            && priority <= Priority::Normal
+            && state.active_agent_tasks.load(Ordering::Relaxed) > 0
+        {
+            crate::platform::task_wdt::feed_current_task();
+            std::thread::sleep(Duration::from_millis(BACKGROUND_PRE_ADMISSION_YIELD_MS));
+        }
+        let try_interval_ms = match role {
+            HttpThreadRole::Interactive => TRY_INTERVAL_MS_INTERACTIVE,
+            HttpThreadRole::Io => TRY_INTERVAL_MS,
+            HttpThreadRole::Background => TRY_INTERVAL_MS_BACKGROUND,
+        };
         // 获取 TLS 单并发令牌（Mutex::try_lock 循环，超时返回错误）
         let start = Instant::now();
         let guard = loop {
@@ -120,7 +161,7 @@ pub fn request_http_permit(
                         });
                     }
                     crate::platform::task_wdt::feed_current_task();
-                    std::thread::sleep(Duration::from_millis(TRY_INTERVAL_MS));
+                    std::thread::sleep(Duration::from_millis(try_interval_ms));
                 }
             }
         };

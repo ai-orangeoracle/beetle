@@ -40,6 +40,8 @@ const LOW_MEM_DEFER_SLEEP_MS_MIN: u64 = 650;
 const LLM_RETRY_LATER_DELAY_MS_MIN: u64 = 240;
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 const OUTBOUND_DEFER_DELAY_MS_CAUTIOUS_MIN: u64 = 120;
+const OUTBOUND_BACKGROUND_YIELD_MS_MIN: u64 = 80;
+const OUTBOUND_BACKGROUND_YIELD_MS_MAX: u64 = 260;
 
 #[inline]
 fn queue_total(state: &OrchestratorState) -> u32 {
@@ -216,4 +218,24 @@ pub fn should_accept_outbound(state: &OrchestratorState, _channel: &str) -> Admi
         }
         PressureLevel::Normal => AdmissionDecision::Accept,
     }
+}
+
+/// 出站发送线程在进入实际 HTTP 发送前的额外让行时间（毫秒）。
+/// 仅用于 sender/dispatch 背景路径，避免与交互关键路径争抢 TLS 互斥。
+pub fn background_outbound_yield_ms(state: &OrchestratorState) -> u64 {
+    let pressure = PressureLevel::from_byte(state.pressure_level.load(Ordering::Relaxed));
+    let active_agent = state.active_agent_tasks.load(Ordering::Relaxed) as u64;
+    if active_agent == 0 {
+        return 0;
+    }
+    let base = match pressure {
+        PressureLevel::Normal => OUTBOUND_BACKGROUND_YIELD_MS_MIN,
+        PressureLevel::Cautious => {
+            (OUTBOUND_BACKGROUND_YIELD_MS_MIN + OUTBOUND_BACKGROUND_YIELD_MS_MAX) / 2
+        }
+        PressureLevel::Critical => OUTBOUND_BACKGROUND_YIELD_MS_MAX,
+    };
+    // At most 3 in-flight agent tasks are counted for additional yield.
+    let extra = active_agent.min(3) * 30;
+    (base + extra).min(OUTBOUND_BACKGROUND_YIELD_MS_MAX)
 }

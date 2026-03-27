@@ -39,10 +39,7 @@ pub fn init() -> crate::Result<()> {
 
 /// 获取当前 CSRF token。
 pub fn get_token() -> Option<String> {
-    CSRF_TOKEN
-        .lock()
-        .unwrap_or_else(|p| p.into_inner())
-        .clone()
+    CSRF_TOKEN.lock().unwrap_or_else(|p| p.into_inner()).clone()
 }
 
 /// 验证请求的 CSRF token 是否匹配。

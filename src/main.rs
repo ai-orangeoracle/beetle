@@ -30,6 +30,48 @@ use std::time::{Duration, Instant};
 const TAG: &str = "beetle";
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+#[derive(Clone, Copy)]
+struct ThreadPlan {
+    core: Option<beetle::util::SpawnCore>,
+    role: beetle::util::HttpThreadRole,
+}
+
+fn thread_plan(name: &str) -> ThreadPlan {
+    match name {
+        "wifi_worker" | "dispatch" | "tg_poll" | "feishu_ws" | "qq_ws" | "tg_sender"
+        | "fs_sender" | "dt_sender" | "wc_sender" | "qq_sender" | "http_server"
+        | "restart_defer" => ThreadPlan {
+            core: Some(beetle::util::SpawnCore::Core0),
+            role: beetle::util::HttpThreadRole::Io,
+        },
+        "agent_main_loop" | "display" | "cron" | "heartbeat" | "heartbeat_tasks" | "remind"
+        | "cli_repl" => ThreadPlan {
+            core: Some(beetle::util::SpawnCore::Core1),
+            role: beetle::util::HttpThreadRole::Interactive,
+        },
+        _ => ThreadPlan {
+            core: None,
+            role: beetle::util::HttpThreadRole::Background,
+        },
+    }
+}
+
+fn spawn_planned<F>(name: &str, stack_size: usize, f: F)
+where
+    F: FnOnce() + Send + 'static,
+{
+    let plan = thread_plan(name);
+    #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+    if plan.core.is_none() {
+        log::error!(
+            "[{}] thread plan missing core mapping for '{}', falling back to scheduler default",
+            TAG,
+            name
+        );
+    }
+    beetle::util::spawn_guarded_with_profile(name, stack_size, plan.core, plan.role, f);
+}
+
 /// 从 orchestrator snapshot 的 internal 堆空闲字节数估算已用百分比。
 /// 以运行时观测到的峰值空闲作为动态基线，减少固定常量带来的观测失真。非 ESP 返回 0。
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
@@ -306,11 +348,9 @@ impl FeishuStreamEditor {
             state.token = Some((t.clone(), Instant::now()));
             Ok(t)
         } else {
-            state
-                .token
-                .as_ref()
-                .map(|(t, _)| t.clone())
-                .ok_or_else(|| beetle::Error::config("feishu_stream", "token missing after refresh"))
+            state.token.as_ref().map(|(t, _)| t.clone()).ok_or_else(|| {
+                beetle::Error::config("feishu_stream", "token missing after refresh")
+            })
         }
     }
 }
@@ -500,7 +540,7 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
         let session_http = Arc::clone(&session_store);
         let http_inbound_tx = user_inbound_tx.clone();
         let http_qq_cache = Arc::clone(&qq_msg_id_cache);
-        beetle::util::spawn_guarded("http_server", move || {
+        spawn_planned("http_server", 8192, move || {
             if let Err(e) = beetle::platform::http_server::run(
                 platform_http,
                 inc,
@@ -558,10 +598,13 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
     if platform.display_available() {
         let display_platform = Arc::clone(&platform);
         let display_config = Arc::clone(&config);
-        std::thread::Builder::new()
-            .name("display".into())
-            .stack_size(6144)
-            .spawn(move || {
+        let plan = thread_plan("display");
+        let _ = beetle::util::spawn_guarded_with_profile_handle(
+            "display",
+            6144,
+            plan.core,
+            plan.role,
+            move || {
                 let enabled = display_config.enabled_channel.as_str();
                 // Dirty-region cache: skip SPI when nothing changed.
                 let mut last_state: Option<DisplaySystemState> = None;
@@ -833,8 +876,8 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
                     // F2: 计算下一轮刷新间隔
                     refresh_secs = compute_refresh_secs(state, backlight_off, &last_activity_at);
                 }
-            })
-            .ok();
+            },
+        );
     }
 
     beetle::memory::run_remind_loop(
@@ -873,7 +916,7 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
         let pending = Arc::clone(&pending_retry_store);
         let pf = Arc::clone(&platform);
         let cfg = Arc::clone(&config);
-        beetle::util::spawn_guarded("feishu_ws", move || {
+        spawn_planned("feishu_ws", 8192, move || {
             run_feishu_ws_loop(
                 id,
                 sec,
@@ -903,7 +946,7 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
                 let qq_pending = Arc::clone(&pending_retry_store);
                 let pf = Arc::clone(&platform);
                 let cfg = Arc::clone(&config);
-                beetle::util::spawn_guarded("qq_ws", move || {
+                spawn_planned("qq_ws", 8192, move || {
                     beetle::run_qq_ws_loop(
                         qq_id,
                         qq_sec,
@@ -925,7 +968,7 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
         beetle::platform::task_wdt::register_current_task_to_task_wdt();
         let outbound_rx_for_dispatch = outbound_rx;
         let sinks_clone = Arc::clone(&sinks);
-        beetle::util::spawn_guarded("dispatch", move || {
+        spawn_planned("dispatch", 8192, move || {
             run_dispatch(outbound_rx_for_dispatch, sinks_clone)
         });
 
@@ -943,7 +986,7 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
             let tg_resolve_locale = Arc::clone(&resolve_locale_ui);
             let pf = Arc::clone(&platform);
             let cfg = Arc::clone(&config);
-            beetle::util::spawn_guarded("tg_poll", move || {
+            spawn_planned("tg_poll", 8192, move || {
                 beetle::run_telegram_poll_loop(
                     tg_token,
                     tg_allowed,
@@ -1066,7 +1109,7 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
                 Some(Arc::clone(&user_inbound_depth)),
                 Some(Arc::clone(&outbound_depth)),
             );
-            beetle::util::spawn_guarded("cli_repl", move || {
+            spawn_planned("cli_repl", 8192, move || {
                 let reader = std::io::BufReader::new(std::io::stdin());
                 beetle::cli::run_repl(cli_ctx, reader);
             });
@@ -1088,6 +1131,14 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
             let _ = platform.display_command(DisplayCommand::UpdateBootProgress { stage: 4 });
         }
 
+        beetle::orchestrator::set_current_http_thread_role(
+            beetle::orchestrator::HttpThreadRole::Interactive,
+        );
+        log::info!(
+            "[{}] agent_main_loop running on main thread (planned_core={:?})",
+            TAG,
+            thread_plan("agent_main_loop").core
+        );
         if let Err(e) = run_agent_loop(
             &mut http_client,
             &*worker_llm_box,

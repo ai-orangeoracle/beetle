@@ -107,7 +107,10 @@ fn wav_data_chunk(wav: &[u8]) -> Result<(usize, usize)> {
     }
     let start = data_start.ok_or_else(|| Error::config("tts_baidu_wav", "missing data chunk"))?;
     if !data_len.is_multiple_of(2) {
-        return Err(Error::config("tts_baidu_wav", "PCM data length must be even"));
+        return Err(Error::config(
+            "tts_baidu_wav",
+            "PCM data length must be even",
+        ));
     }
     Ok((start, data_len))
 }

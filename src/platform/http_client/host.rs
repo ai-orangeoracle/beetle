@@ -148,9 +148,15 @@ impl EspHttpClient {
     where
         F: FnOnce(&ureq::Agent) -> Result<T>,
     {
+        let role = crate::orchestrator::permit::current_http_thread_role();
+        let admission_timeout_secs = match role {
+            crate::orchestrator::HttpThreadRole::Interactive => TLS_ADMISSION_TIMEOUT_SECS,
+            crate::orchestrator::HttpThreadRole::Io => TLS_ADMISSION_TIMEOUT_SECS,
+            crate::orchestrator::HttpThreadRole::Background => TLS_ADMISSION_TIMEOUT_SECS / 2,
+        };
         let _permit = crate::orchestrator::request_http_permit(
             self.priority,
-            Duration::from_secs(TLS_ADMISSION_TIMEOUT_SECS),
+            Duration::from_secs(admission_timeout_secs.max(1)),
         )?;
         action(&self.agent)
     }
@@ -253,9 +259,15 @@ impl EspHttpClient {
         body: &[u8],
         on_chunk: &mut dyn FnMut(&[u8]) -> Result<()>,
     ) -> Result<u16> {
+        let role = crate::orchestrator::permit::current_http_thread_role();
+        let admission_timeout_secs = match role {
+            crate::orchestrator::HttpThreadRole::Interactive => TLS_ADMISSION_TIMEOUT_SECS,
+            crate::orchestrator::HttpThreadRole::Io => TLS_ADMISSION_TIMEOUT_SECS,
+            crate::orchestrator::HttpThreadRole::Background => TLS_ADMISSION_TIMEOUT_SECS / 2,
+        };
         let _permit = crate::orchestrator::request_http_permit(
             self.priority,
-            Duration::from_secs(TLS_ADMISSION_TIMEOUT_SECS),
+            Duration::from_secs(admission_timeout_secs.max(1)),
         )?;
         let req = apply_headers(self.agent.post(url), headers);
         let resp = req

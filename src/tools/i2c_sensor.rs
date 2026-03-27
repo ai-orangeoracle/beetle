@@ -4,8 +4,8 @@
 use crate::config::I2cSensorEntry;
 use crate::constants::I2C_SENSOR_RATE_LIMIT_MS;
 use crate::error::{Error, Result};
-use crate::Platform;
 use crate::tools::{parse_tool_args, Tool, ToolContext};
+use crate::Platform;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};

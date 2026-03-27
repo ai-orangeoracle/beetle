@@ -160,10 +160,7 @@ pub fn run_wss_gateway_loop<D, H, C, CreateHttp, Conn>(
         if let Some(payload) = identify_payload {
             log::debug!("[{}] send identify len={}", tag, payload.len());
             if let Err(e) = conn.send_binary_owned(payload) {
-                log::warn!(
-                    "[{}] send identify failed: {}",
-                    tag, e
-                );
+                log::warn!("[{}] send identify failed: {}", tag, e);
                 drop(conn);
                 sleep_with_wdt(backoff_secs);
                 backoff_secs = (backoff_secs * 2).min(BACKOFF_MAX_SECS);
@@ -171,10 +168,8 @@ pub fn run_wss_gateway_loop<D, H, C, CreateHttp, Conn>(
             }
         }
 
-        let interval_ms = heartbeat_interval_ms.clamp(
-            HEARTBEAT_INTERVAL_MIN_MS,
-            HEARTBEAT_INTERVAL_MAX_MS,
-        );
+        let interval_ms =
+            heartbeat_interval_ms.clamp(HEARTBEAT_INTERVAL_MIN_MS, HEARTBEAT_INTERVAL_MAX_MS);
         let heartbeat_interval = Duration::from_millis(interval_ms);
         let recv_chunk = heartbeat_interval.min(Duration::from_secs(WDT_RECV_CHUNK_SECS));
         let mut last_seq: Option<u64> = None;

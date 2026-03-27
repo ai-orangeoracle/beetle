@@ -242,8 +242,8 @@ pub fn dispatch(
             if let Some(r) = auth::require_activated(store) {
                 return Ok(api_to_out(r));
             }
-            let body =
-                handlers::config::get_audio_body(ctx).map_err(|e| err_other("http_router_dispatch", e))?;
+            let body = handlers::config::get_audio_body(ctx)
+                .map_err(|e| err_other("http_router_dispatch", e))?;
             Ok(OutgoingResponse::json(
                 200,
                 "OK",
@@ -262,8 +262,8 @@ pub fn dispatch(
                 source: Box::new(std::io::Error::other("invalid utf8")),
                 stage: "http_router_dispatch",
             })?;
-            let r =
-                handlers::config::post_audio(ctx, body_str).map_err(|e| err_other("http_router_dispatch", e))?;
+            let r = handlers::config::post_audio(ctx, body_str)
+                .map_err(|e| err_other("http_router_dispatch", e))?;
             let mut restart = RestartAction::None;
             if r.status == 200 && common::restart_requested_from_uri(uri) {
                 restart = RestartAction::After300Ms;

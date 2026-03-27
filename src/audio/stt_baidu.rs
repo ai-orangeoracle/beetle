@@ -109,10 +109,8 @@ fn parse_asr_response(status: u16, body: ResponseBody) -> Result<String> {
 fn encode_pcm16_samples_base64(samples: &[i16]) -> Result<String> {
     let mut out = Vec::with_capacity((samples.len() * 8) / 3 + 8);
     {
-        let mut encoder = base64::write::EncoderWriter::new(
-            &mut out,
-            &base64::engine::general_purpose::STANDARD,
-        );
+        let mut encoder =
+            base64::write::EncoderWriter::new(&mut out, &base64::engine::general_purpose::STANDARD);
         let mut buf = [0u8; 1024];
         let mut cursor = 0usize;
         for sample in samples {

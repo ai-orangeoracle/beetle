@@ -1295,11 +1295,7 @@ pub struct HardwareSegment {
 }
 
 /// 校验主用/备用下标在 `llm_sources` 范围内（与 Web UI 一致）。
-fn validate_llm_source_indices(
-    len: usize,
-    router: Option<u32>,
-    worker: Option<u32>,
-) -> Result<()> {
+fn validate_llm_source_indices(len: usize, router: Option<u32>, worker: Option<u32>) -> Result<()> {
     if let Some(i) = router {
         if (i as usize) >= len {
             return Err(Error::config(
@@ -1478,7 +1474,10 @@ fn validate_audio_segment(seg: &AudioSegment) -> Result<()> {
     if seg.wake_word.keyword.len() > AUDIO_KEYWORD_MAX_LEN {
         return Err(Error::config(
             "audio",
-            format!("wake_word.keyword length must be <= {}", AUDIO_KEYWORD_MAX_LEN),
+            format!(
+                "wake_word.keyword length must be <= {}",
+                AUDIO_KEYWORD_MAX_LEN
+            ),
         ));
     }
     if seg.stt.provider.len() > CONFIG_FIELD_MAX_LEN
@@ -1497,7 +1496,10 @@ fn validate_audio_segment(seg: &AudioSegment) -> Result<()> {
     if seg.stt.api_key.len() > AUDIO_STT_API_KEY_MAX_LEN {
         return Err(Error::config(
             "audio",
-            format!("stt.api_key length must be <= {}", AUDIO_STT_API_KEY_MAX_LEN),
+            format!(
+                "stt.api_key length must be <= {}",
+                AUDIO_STT_API_KEY_MAX_LEN
+            ),
         ));
     }
     if seg.stt.api_secret.len() > AUDIO_STT_API_SECRET_MAX_LEN {
@@ -1557,7 +1559,10 @@ fn validate_audio_segment(seg: &AudioSegment) -> Result<()> {
     }
     if seg.vad.enabled {
         if !(0.0..=1.0).contains(&seg.vad.threshold) {
-            return Err(Error::config("audio", "vad.threshold must be in [0.0, 1.0]"));
+            return Err(Error::config(
+                "audio",
+                "vad.threshold must be in [0.0, 1.0]",
+            ));
         }
         if seg.vad.silence_duration_ms == 0 || seg.vad.silence_duration_ms > 60_000 {
             return Err(Error::config(
@@ -1606,7 +1611,10 @@ fn validate_audio_segment(seg: &AudioSegment) -> Result<()> {
     {
         return Err(Error::config(
             "audio",
-            format!("led_indicator.states field length must be <= {}", CONFIG_FIELD_MAX_LEN),
+            format!(
+                "led_indicator.states field length must be <= {}",
+                CONFIG_FIELD_MAX_LEN
+            ),
         ));
     }
 
@@ -2090,7 +2098,8 @@ pub fn save_audio_segment(writer: &dyn ConfigFileStore, body: &str) -> Result<()
         seg.version = AUDIO_CONFIG_VERSION;
     }
     validate_audio_segment(&seg)?;
-    let json = serde_json::to_string(&seg).map_err(|e| Error::config("serialize", e.to_string()))?;
+    let json =
+        serde_json::to_string(&seg).map_err(|e| Error::config("serialize", e.to_string()))?;
     writer.write_config_file("config/audio.json", json.as_bytes())?;
     Ok(())
 }

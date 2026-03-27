@@ -1211,7 +1211,15 @@ fn render_dashboard<D: DrawTarget<Color = Rgb565>>(target: &mut D, p: &Dashboard
     let head_h = (mid_div_y - head_y).max(24) as u32;
     let middle_h = layout_middle_panel_height(layout) as u32;
     let footer_h = (p.height as i32 - footer_y).max(1) as u32;
-    draw_panel_fill(target, 0, head_y, p.width as u32, head_h, PANEL_BG, PANEL_BORDER);
+    draw_panel_fill(
+        target,
+        0,
+        head_y,
+        p.width as u32,
+        head_h,
+        PANEL_BG,
+        PANEL_BORDER,
+    );
     draw_panel_fill(
         target,
         0,
@@ -1658,13 +1666,15 @@ fn render_channels_inner<D: DrawTarget<Color = Rgb565>>(
     let text_style = MonoTextStyle::new(&FONT_6X13, TEXT_PRIMARY);
     let weak_style = MonoTextStyle::new(&FONT_6X13, TEXT_WEAK);
     let middle_h = layout_middle_panel_height(layout);
-    let cols: usize = if width >= DISPLAY_WIDE_LAYOUT_MIN_PX { 3 } else { 2 };
+    let cols: usize = if width >= DISPLAY_WIDE_LAYOUT_MIN_PX {
+        3
+    } else {
+        2
+    };
     let rows_needed = channels.len().div_ceil(cols);
     // 行高不得超过 middle_h / rows，避免 `clamp(14,24)` 在矮中间区把行画出面板底边。
     let row_step = (middle_h / rows_needed as i32).clamp(8, 24);
-    let row_h = (row_step - 4)
-        .clamp(6, 18)
-        .min(row_step.saturating_sub(2));
+    let row_h = (row_step - 4).clamp(6, 18).min(row_step.saturating_sub(2));
     let row_pad = ((row_step - row_h) / 2).max(1);
     let dot_d = (row_h.saturating_sub(2) / 2).clamp(4, 10) as u32;
     let text_base_dy = (row_h - 2).clamp(7, 13);
@@ -1705,7 +1715,8 @@ fn render_channels_inner<D: DrawTarget<Color = Rgb565>>(
 
         let name_style = if ch.enabled { text_style } else { weak_style };
         let label = channel_display_label(ch.name, &mut label_scratch);
-        let _ = Text::new(label, Point::new(px + 14, row_y + text_base_dy), name_style).draw(target);
+        let _ =
+            Text::new(label, Point::new(px + 14, row_y + text_base_dy), name_style).draw(target);
 
         let mut token_buf = [0u8; 8];
         let (token, token_color) = if !ch.enabled {
@@ -1729,13 +1740,21 @@ fn render_channels_inner<D: DrawTarget<Color = Rgb565>>(
                     pos += 1;
                 }
             }
-            (core::str::from_utf8(&token_buf[..pos]).unwrap_or("DOWN"), STATUS_DANGER)
+            (
+                core::str::from_utf8(&token_buf[..pos]).unwrap_or("DOWN"),
+                STATUS_DANGER,
+            )
         } else {
             ("DOWN", STATUS_DANGER)
         };
         let token_style = MonoTextStyle::new(&FONT_6X13, token_color);
         let token_x = px + col_width - margin_x - (token.len() as i32 * 6);
-        let _ = Text::new(token, Point::new(token_x, row_y + text_base_dy), token_style).draw(target);
+        let _ = Text::new(
+            token,
+            Point::new(token_x, row_y + text_base_dy),
+            token_style,
+        )
+        .draw(target);
 
         col += 1;
         if col >= cols as i32 {
@@ -1799,7 +1818,15 @@ fn render_channels_partial<D: DrawTarget<Color = Rgb565>>(
     let _ = Rectangle::new(Point::new(0, middle_y), Size::new(width as u32, ch_h))
         .into_styled(PrimitiveStyle::with_fill(bg))
         .draw(target);
-    draw_panel_fill(target, 0, middle_y, width as u32, ch_h, PANEL_BG, PANEL_BORDER);
+    draw_panel_fill(
+        target,
+        0,
+        middle_y,
+        width as u32,
+        ch_h,
+        PANEL_BG,
+        PANEL_BORDER,
+    );
 
     // F5: 使用共享渲染逻辑（含失败计数）
     render_channels_inner(target, channels, width, layout);

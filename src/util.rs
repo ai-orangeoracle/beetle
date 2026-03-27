@@ -556,6 +556,25 @@ const DEFAULT_GUARD_STACK_SIZE: usize = 8192;
 #[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
 const DEFAULT_GUARD_STACK_SIZE: usize = 128 * 1024;
 
+/// 线程目标核心。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SpawnCore {
+    Core0,
+    Core1,
+}
+
+impl SpawnCore {
+    fn as_task_core(self) -> crate::platform::task_affinity::TaskCore {
+        match self {
+            SpawnCore::Core0 => crate::platform::task_affinity::TaskCore::Core0,
+            SpawnCore::Core1 => crate::platform::task_affinity::TaskCore::Core1,
+        }
+    }
+}
+
+/// 线程在 TLS 准入中的角色。
+pub type HttpThreadRole = crate::orchestrator::HttpThreadRole;
+
 /// Spawn a named thread with panic protection. If the closure panics, the panic is caught
 /// and logged. This prevents silent thread death in long-running background loops.
 /// 带 panic 保护的线程启动：闭包 panic 时捕获并记日志，避免后台线程静默消亡。
@@ -563,7 +582,13 @@ pub fn spawn_guarded<F>(name: &str, f: F)
 where
     F: FnOnce() + Send + 'static,
 {
-    spawn_guarded_with_stack(name, DEFAULT_GUARD_STACK_SIZE, f);
+    spawn_guarded_with_profile(
+        name,
+        DEFAULT_GUARD_STACK_SIZE,
+        None,
+        HttpThreadRole::Background,
+        f,
+    );
 }
 
 /// Spawn a named thread with custom stack size and panic protection.
@@ -572,24 +597,72 @@ pub fn spawn_guarded_with_stack<F>(name: &str, stack_size: usize, f: F)
 where
     F: FnOnce() + Send + 'static,
 {
+    spawn_guarded_with_profile(name, stack_size, None, HttpThreadRole::Background, f);
+}
+
+/// 带可选绑核 + TLS 准入角色 + panic 保护的线程启动。
+pub fn spawn_guarded_with_profile<F>(
+    name: &str,
+    stack_size: usize,
+    core: Option<SpawnCore>,
+    role: HttpThreadRole,
+    f: F,
+) where
+    F: FnOnce() + Send + 'static,
+{
+    let _ = spawn_guarded_with_profile_handle(name, stack_size, core, role, f);
+}
+
+/// 同 spawn_guarded_with_profile，但返回 JoinHandle 供主线程监管。
+pub fn spawn_guarded_with_profile_handle<F>(
+    name: &str,
+    stack_size: usize,
+    core: Option<SpawnCore>,
+    role: HttpThreadRole,
+    f: F,
+) -> std::io::Result<std::thread::JoinHandle<()>>
+where
+    F: FnOnce() + Send + 'static,
+{
     let tag = name.to_string();
-    std::thread::Builder::new()
-        .name(tag.clone())
-        .stack_size(stack_size)
-        .spawn(move || {
-            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
-            if let Err(e) = result {
-                let msg = if let Some(s) = e.downcast_ref::<&str>() {
-                    (*s).to_string()
-                } else if let Some(s) = e.downcast_ref::<String>() {
-                    s.clone()
-                } else {
-                    "unknown panic".to_string()
-                };
-                log::error!("[{}] thread panicked: {}", tag, msg);
-            }
-        })
-        .ok();
+    let tag_for_spawn = tag.clone();
+    let core_target = core;
+    let wrapped = move || {
+        crate::orchestrator::set_current_http_thread_role(role);
+        log::info!(
+            "[thread] started name={} core_target={:?} role={:?}",
+            tag,
+            core_target,
+            role
+        );
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
+        if let Err(e) = result {
+            let msg = if let Some(s) = e.downcast_ref::<&str>() {
+                (*s).to_string()
+            } else if let Some(s) = e.downcast_ref::<String>() {
+                s.clone()
+            } else {
+                "unknown panic".to_string()
+            };
+            log::error!("[{}] thread panicked: {}", tag, msg);
+        }
+    };
+    let spawn_res = crate::platform::task_affinity::spawn_named_with_affinity(
+        tag_for_spawn,
+        stack_size,
+        core.map(SpawnCore::as_task_core),
+        wrapped,
+    );
+    if let Err(e) = &spawn_res {
+        log::error!(
+            "[thread] spawn failed name={} core_target={:?} role={:?} err={}",
+            name,
+            core,
+            role,
+            e
+        );
+    }
+    spawn_res
 }
 
 #[cfg(test)]

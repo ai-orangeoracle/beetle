@@ -35,21 +35,27 @@ static LAST_TASK_INJECT: OnceLock<Mutex<(String, Option<Instant>)>> = OnceLock::
 /// 周期（秒）打一条日志：版本、运行时长、可选 heap；可被外部脚本/串口抓取判断存活。
 pub fn run_heartbeat_loop(version: &'static str, interval_secs: u64) {
     let v = version;
-    crate::util::spawn_guarded("heartbeat", move || {
-        let interval = std::time::Duration::from_secs(interval_secs);
-        loop {
-            std::thread::sleep(interval);
-            crate::orchestrator::update_heap_state();
-            let uptime_secs = crate::platform::time::uptime_secs();
-            log::info!(
-                "[{}] HEARTBEAT version={} uptime_secs={} {}",
-                TAG,
-                v,
-                uptime_secs,
-                crate::orchestrator::format_resource_baseline_line()
-            );
-        }
-    });
+    crate::util::spawn_guarded_with_profile(
+        "heartbeat",
+        8192,
+        Some(crate::util::SpawnCore::Core1),
+        crate::util::HttpThreadRole::Background,
+        move || {
+            let interval = std::time::Duration::from_secs(interval_secs);
+            loop {
+                std::thread::sleep(interval);
+                crate::orchestrator::update_heap_state();
+                let uptime_secs = crate::platform::time::uptime_secs();
+                log::info!(
+                    "[{}] HEARTBEAT version={} uptime_secs={} {}",
+                    TAG,
+                    v,
+                    uptime_secs,
+                    crate::orchestrator::format_resource_baseline_line()
+                );
+            }
+        },
+    );
     log::info!(
         "[{}] heartbeat loop started (interval {}s)",
         TAG,
@@ -74,85 +80,94 @@ pub fn run_heartbeat_loop_with_tasks(
     resolve_locale: Arc<dyn Fn() -> Locale + Send + Sync>,
 ) {
     let interval = Duration::from_secs(interval_secs);
-    crate::util::spawn_guarded("heartbeat_tasks", move || {
-        let mut round: u32 = 0;
-        loop {
-            std::thread::sleep(interval);
-            round = round.wrapping_add(1);
+    crate::util::spawn_guarded_with_profile(
+        "heartbeat_tasks",
+        8192,
+        Some(crate::util::SpawnCore::Core1),
+        crate::util::HttpThreadRole::Background,
+        move || {
+            let mut round: u32 = 0;
+            loop {
+                std::thread::sleep(interval);
+                round = round.wrapping_add(1);
 
-            // Session GC: run every SESSION_GC_INTERVAL_ROUNDS rounds.
-            if round.is_multiple_of(crate::constants::SESSION_GC_INTERVAL_ROUNDS) {
-                match session_store.gc_stale(crate::constants::SESSION_GC_MAX_AGE_SECS) {
-                    Ok(n) if n > 0 => log::info!("[{}] session GC removed {} stale files", TAG, n),
-                    Err(e) => log::warn!("[{}] session GC error: {}", TAG, e),
-                    _ => {}
+                // Session GC: run every SESSION_GC_INTERVAL_ROUNDS rounds.
+                if round.is_multiple_of(crate::constants::SESSION_GC_INTERVAL_ROUNDS) {
+                    match session_store.gc_stale(crate::constants::SESSION_GC_MAX_AGE_SECS) {
+                        Ok(n) if n > 0 => {
+                            log::info!("[{}] session GC removed {} stale files", TAG, n)
+                        }
+                        Err(e) => log::warn!("[{}] session GC error: {}", TAG, e),
+                        _ => {}
+                    }
                 }
-            }
 
-            // Session/storage metrics: collect every SESSION_METRICS_INTERVAL_ROUNDS rounds.
-            if round.is_multiple_of(crate::constants::SESSION_METRICS_INTERVAL_ROUNDS) {
-                let sess_count = session_store
-                    .list_chat_ids()
-                    .map(|v| v.len() as u32)
-                    .unwrap_or(0);
-                let (s_used, s_total) = storage_usage_kb(platform.as_ref());
-                crate::orchestrator::update_session_storage(sess_count, s_used, s_total);
-            }
-
-            // Update queue depth snapshot for pressure computation.
-            let in_user = user_inbound_depth.load(std::sync::atomic::Ordering::Relaxed) as u32;
-            let in_system = system_inbound_depth.load(std::sync::atomic::Ordering::Relaxed) as u32;
-            let in_d = in_user.saturating_add(in_system);
-            let out_d = outbound_depth.load(std::sync::atomic::Ordering::Relaxed) as u32;
-            crate::orchestrator::update_queue_depth(in_d, out_d);
-            crate::orchestrator::update_heap_state();
-            let uptime_secs = crate::platform::time::uptime_secs();
-            log::info!(
-                "[{}] HEARTBEAT version={} uptime_secs={} {}",
-                TAG,
-                version,
-                uptime_secs,
-                crate::orchestrator::format_resource_baseline_line()
-            );
-            let baseline = crate::metrics::snapshot().to_baseline_log_line();
-            log::info!("[{}] {}", TAG, baseline);
-
-            let content = read_heartbeat();
-            let Some(task_content) = first_pending_task(&content) else {
-                continue;
-            };
-            let should_inject = {
-                let guard = LAST_TASK_INJECT.get_or_init(|| Mutex::new((String::new(), None)));
-                let mut g = guard.lock().unwrap_or_else(|e| e.into_inner());
-                let (last_content, last_time) = (&g.0, g.1);
-                let same = last_content == &task_content;
-                let within = last_time
-                    .map(|t| t.elapsed() < Duration::from_secs(TASK_THROTTLE_SECS))
-                    .unwrap_or(false);
-                if same && within {
-                    false
-                } else {
-                    *g = (task_content.clone(), Some(Instant::now()));
-                    true
+                // Session/storage metrics: collect every SESSION_METRICS_INTERVAL_ROUNDS rounds.
+                if round.is_multiple_of(crate::constants::SESSION_METRICS_INTERVAL_ROUNDS) {
+                    let sess_count = session_store
+                        .list_chat_ids()
+                        .map(|v| v.len() as u32)
+                        .unwrap_or(0);
+                    let (s_used, s_total) = storage_usage_kb(platform.as_ref());
+                    crate::orchestrator::update_session_storage(sess_count, s_used, s_total);
                 }
-            };
-            if !should_inject {
-                continue;
-            }
-            let loc = resolve_locale();
-            let body = tr(UiMessage::HeartbeatPendingTasksReminder, loc);
-            let msg = match crate::bus::PcMsg::new_system("heartbeat", "heartbeat", body) {
-                Ok(m) => m,
-                Err(e) => {
-                    log::warn!("[{}] PcMsg::new failed: {}", TAG, e);
+
+                // Update queue depth snapshot for pressure computation.
+                let in_user = user_inbound_depth.load(std::sync::atomic::Ordering::Relaxed) as u32;
+                let in_system =
+                    system_inbound_depth.load(std::sync::atomic::Ordering::Relaxed) as u32;
+                let in_d = in_user.saturating_add(in_system);
+                let out_d = outbound_depth.load(std::sync::atomic::Ordering::Relaxed) as u32;
+                crate::orchestrator::update_queue_depth(in_d, out_d);
+                crate::orchestrator::update_heap_state();
+                let uptime_secs = crate::platform::time::uptime_secs();
+                log::info!(
+                    "[{}] HEARTBEAT version={} uptime_secs={} {}",
+                    TAG,
+                    version,
+                    uptime_secs,
+                    crate::orchestrator::format_resource_baseline_line()
+                );
+                let baseline = crate::metrics::snapshot().to_baseline_log_line();
+                log::info!("[{}] {}", TAG, baseline);
+
+                let content = read_heartbeat();
+                let Some(task_content) = first_pending_task(&content) else {
+                    continue;
+                };
+                let should_inject = {
+                    let guard = LAST_TASK_INJECT.get_or_init(|| Mutex::new((String::new(), None)));
+                    let mut g = guard.lock().unwrap_or_else(|e| e.into_inner());
+                    let (last_content, last_time) = (&g.0, g.1);
+                    let same = last_content == &task_content;
+                    let within = last_time
+                        .map(|t| t.elapsed() < Duration::from_secs(TASK_THROTTLE_SECS))
+                        .unwrap_or(false);
+                    if same && within {
+                        false
+                    } else {
+                        *g = (task_content.clone(), Some(Instant::now()));
+                        true
+                    }
+                };
+                if !should_inject {
                     continue;
                 }
-            };
-            if inbound_tx.send(msg).is_err() {
-                log::warn!("[{}] inbound_tx.send failed (channel closed?)", TAG);
+                let loc = resolve_locale();
+                let body = tr(UiMessage::HeartbeatPendingTasksReminder, loc);
+                let msg = match crate::bus::PcMsg::new_system("heartbeat", "heartbeat", body) {
+                    Ok(m) => m,
+                    Err(e) => {
+                        log::warn!("[{}] PcMsg::new failed: {}", TAG, e);
+                        continue;
+                    }
+                };
+                if inbound_tx.send(msg).is_err() {
+                    log::warn!("[{}] inbound_tx.send failed (channel closed?)", TAG);
+                }
             }
-        }
-    });
+        },
+    );
     log::info!(
         "[{}] heartbeat loop with tasks started (interval {}s)",
         TAG,

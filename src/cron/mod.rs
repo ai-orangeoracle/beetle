@@ -42,55 +42,61 @@ pub fn run_cron_loop(
     sensor_watch: Option<SensorWatchContext>,
     resolve_locale: Arc<dyn Fn() -> Locale + Send + Sync>,
 ) {
-    crate::util::spawn_guarded("cron", move || {
-        let interval = Duration::from_secs(interval_secs);
-        let mut backoff = 0u64;
-        let mut persisted_cron_cache: Vec<CronTask> = Vec::new();
-        loop {
-            std::thread::sleep(interval + Duration::from_secs(backoff));
+    crate::util::spawn_guarded_with_profile(
+        "cron",
+        8192,
+        Some(crate::util::SpawnCore::Core1),
+        crate::util::HttpThreadRole::Background,
+        move || {
+            let interval = Duration::from_secs(interval_secs);
+            let mut backoff = 0u64;
+            let mut persisted_cron_cache: Vec<CronTask> = Vec::new();
+            loop {
+                std::thread::sleep(interval + Duration::from_secs(backoff));
 
-            // 1. Push standard cron tick
-            let msg = match PcMsg::new_system("cron", "cron", "tick") {
-                Ok(m) => m,
-                Err(e) => {
-                    log::warn!("[{}] PcMsg::new failed: {}", TAG, e);
-                    backoff = backoff.saturating_add(BACKOFF_SECS);
-                    continue;
+                // 1. Push standard cron tick
+                let msg = match PcMsg::new_system("cron", "cron", "tick") {
+                    Ok(m) => m,
+                    Err(e) => {
+                        log::warn!("[{}] PcMsg::new failed: {}", TAG, e);
+                        backoff = backoff.saturating_add(BACKOFF_SECS);
+                        continue;
+                    }
+                };
+                match inbound_tx.send(msg) {
+                    Ok(()) => {
+                        backoff = 0;
+                        log::debug!("[{}] cron message pushed", TAG);
+                    }
+                    Err(e) => {
+                        log::warn!("[{}] inbound_tx.send failed: {}", TAG, e);
+                        backoff = backoff.saturating_add(BACKOFF_SECS);
+                    }
                 }
-            };
-            match inbound_tx.send(msg) {
-                Ok(()) => {
-                    backoff = 0;
-                    log::debug!("[{}] cron message pushed", TAG);
-                }
-                Err(e) => {
-                    log::warn!("[{}] inbound_tx.send failed: {}", TAG, e);
-                    backoff = backoff.saturating_add(BACKOFF_SECS);
-                }
-            }
 
-            // 2. Check persisted cron tasks
-            if let Some(ref store) = memory_store {
-                fire_persisted_tasks(
-                    store.as_ref(),
-                    &inbound_tx,
-                    &mut persisted_cron_cache,
-                    &resolve_locale,
-                );
-                if let Some(ctx) = sensor_watch.as_ref() {
-                    let loc = resolve_locale();
-                    crate::tools::sensor_watch::check_sensor_watches(
+                // 2. Check persisted cron tasks
+                if let Some(ref store) = memory_store {
+                    fire_persisted_tasks(
                         store.as_ref(),
                         &inbound_tx,
-                        ctx.platform.as_ref(),
-                        ctx.devices.as_slice(),
-                        ctx.i2c_sensors.as_slice(),
-                        loc,
+                        &mut persisted_cron_cache,
+                        &resolve_locale,
                     );
+                    if let Some(ctx) = sensor_watch.as_ref() {
+                        let loc = resolve_locale();
+                        crate::tools::sensor_watch::check_sensor_watches(
+                            store.as_ref(),
+                            &inbound_tx,
+                            ctx.platform.as_ref(),
+                            ctx.devices.as_slice(),
+                            ctx.i2c_sensors.as_slice(),
+                            loc,
+                        );
+                    }
                 }
             }
-        }
-    });
+        },
+    );
     log::info!("[{}] cron loop started (interval {}s)", TAG, interval_secs);
 }
 

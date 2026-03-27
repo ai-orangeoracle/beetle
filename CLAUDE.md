@@ -47,6 +47,8 @@
 
 - **禁止重复线程**：同一职责（如显示刷新）只允许一个后台线程。若需要不同频率执行不同逻辑，在单一线程内用计数器区分，不得为此多开线程。ESP32 每个线程占 ~4KB 栈，资源宝贵。
 - **禁止虚假度量**：显示、日志、API 返回的度量值（heap、CPU、温度等）必须来自真实数据源：对外口径以 `orchestrator::snapshot()` / `format_resource_baseline_line()` 等为权威；堆与内存维度由 `Platform::memory_snapshot()`（经 `run_app` 注册的 `register_memory_snapshot_provider` 闭包注入编排路径）与真实实现支撑。**禁止**业务域以直读 `platform::heap` 作为观测口径。禁止用固定映射或占位值冒充真实度量；暂时不可用的度量应传 0 或在 UI 标注 N/A。
+- **绑核唯一入口**：多核/绑核改造只能通过 `platform/task_affinity.rs` 与 `util::spawn_guarded_with_profile*` 执行；业务域禁止直接使用 `esp_pthread_*`/`xTaskCreatePinnedToCore`。
+- **线程角色一致性**：涉及 HTTP/TLS 的线程必须设置统一角色（`Interactive` / `Io` / `Background`），由 orchestrator 准入层统一消费；禁止各模块自行实现第二套 TLS 抢占策略。
 
 ### 嵌入式字节序
 

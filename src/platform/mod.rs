@@ -31,6 +31,7 @@ pub mod softap_ip;
 pub(crate) mod spiffs;
 pub mod state_fs;
 pub mod state_root;
+pub(crate) mod task_affinity;
 pub mod task_wdt;
 pub mod time;
 pub mod wifi;

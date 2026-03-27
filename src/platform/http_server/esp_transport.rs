@@ -151,10 +151,16 @@ fn write_outgoing<C: Connection>(
     resp.write_all(&out.body).map_err(common::to_io)?;
     if out.restart == RestartAction::After300Ms {
         let platform = Arc::clone(&ctx.platform);
-        std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(300));
-            platform.request_restart();
-        });
+        crate::util::spawn_guarded_with_profile(
+            "restart_defer",
+            4096,
+            Some(crate::util::SpawnCore::Core0),
+            crate::util::HttpThreadRole::Background,
+            move || {
+                std::thread::sleep(Duration::from_millis(300));
+                platform.request_restart();
+            },
+        );
     }
     Ok(())
 }

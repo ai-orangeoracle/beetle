@@ -18,7 +18,7 @@ use std::time::Duration;
 
 pub use admission::{AdmissionDecision, LlmDecision, ToolDecision};
 pub use channel_health::is_channel_healthy;
-pub use permit::{AgentTaskGuard, HttpPermitGuard, Priority};
+pub use permit::{AgentTaskGuard, HttpPermitGuard, HttpThreadRole, Priority};
 pub use pressure::{PressureLevel, ResourceBudget};
 pub use state::ResourceSnapshot;
 
@@ -155,6 +155,11 @@ pub fn request_http_permit(priority: Priority, timeout: Duration) -> Result<Http
     permit::request_http_permit(&STATE, &TLS_PERMIT, priority, timeout)
 }
 
+/// 设置当前线程的 HTTP 准入角色，用于 TLS 准入前降噪。
+pub fn set_current_http_thread_role(role: HttpThreadRole) {
+    permit::set_current_http_thread_role(role);
+}
+
 /// 开始一个 agent 任务：返回 RAII guard，Drop 时自动递减计数。
 /// Begin an agent task: returns an RAII guard that decrements the counter on drop.
 /// 应在准入通过后、开始处理消息前立即调用，确保整个任务生命周期内 `active_agent_tasks > 0`。
@@ -218,6 +223,11 @@ pub fn can_execute_tool_pub(tool_name: &str, requires_network: bool) -> ToolDeci
 /// Outbound admission decision.
 pub fn should_accept_outbound_pub(channel: &str) -> AdmissionDecision {
     admission::should_accept_outbound(&STATE, channel)
+}
+
+/// sender/dispatch 背景路径在发送前的额外让行时间（毫秒）。
+pub fn background_outbound_yield_ms_pub() -> u64 {
+    admission::background_outbound_yield_ms(&STATE)
 }
 
 /// 启动时打印 TLS 准入基线。

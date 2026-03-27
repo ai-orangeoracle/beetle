@@ -80,11 +80,10 @@ impl Tool for VoiceOutputTool {
             &self.audio_cfg.tts,
             text,
         )?;
-        let played_samples = tts_baidu::play_wav_pcm16le_chunks(
-            &wav,
-            AUDIO_TTS_WRITE_CHUNK_SAMPLES,
-            |chunk| self.platform.write_speaker_pcm_i16(chunk),
-        )?;
+        let played_samples =
+            tts_baidu::play_wav_pcm16le_chunks(&wav, AUDIO_TTS_WRITE_CHUNK_SAMPLES, |chunk| {
+                self.platform.write_speaker_pcm_i16(chunk)
+            })?;
         log_audio_resource_snapshot("voice_output_done");
         Ok(json!({
             "ok": true,

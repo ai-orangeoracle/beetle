@@ -48,9 +48,10 @@ impl BaiduTokenCache {
 
         let now = Instant::now();
         {
-            let guard = self.state.lock().map_err(|e| {
-                Error::config("baidu_token_lock", format!("mutex lock: {}", e))
-            })?;
+            let guard = self
+                .state
+                .lock()
+                .map_err(|e| Error::config("baidu_token_lock", format!("mutex lock: {}", e)))?;
             if let Some(ref c) = *guard {
                 if c.api_key == key && now < c.expires_at {
                     return Ok(c.token.clone());
@@ -64,9 +65,10 @@ impl BaiduTokenCache {
             .saturating_sub(EXPIRY_SAFETY_SECS)
             .max(60);
 
-        let mut guard = self.state.lock().map_err(|e| {
-            Error::config("baidu_token_lock", format!("mutex lock: {}", e))
-        })?;
+        let mut guard = self
+            .state
+            .lock()
+            .map_err(|e| Error::config("baidu_token_lock", format!("mutex lock: {}", e)))?;
         *guard = Some(CachedState {
             api_key: key.to_string(),
             token: token.clone(),

@@ -122,9 +122,15 @@ pub fn connect(config: &AppConfig) -> Result<Option<WifiScanHandle>> {
     let (tx, rx) = mpsc::channel();
     let (scan_req_tx, scan_req_rx) = mpsc::channel();
     let (scan_resp_tx, scan_resp_rx) = mpsc::channel::<ScanResponse>();
-    std::thread::spawn(move || {
-        do_connect(ssid.as_str(), pass.as_str(), tx, scan_req_rx, scan_resp_tx);
-    });
+    crate::util::spawn_guarded_with_profile(
+        "wifi_worker",
+        8192,
+        Some(crate::util::SpawnCore::Core0),
+        crate::util::HttpThreadRole::Io,
+        move || {
+            do_connect(ssid.as_str(), pass.as_str(), tx, scan_req_rx, scan_resp_tx);
+        },
+    );
 
     let result = match rx.recv_timeout(Duration::from_secs(WIFI_ESP_CONNECT_MAIN_WAIT_SECS)) {
         Ok(Ok(())) => {

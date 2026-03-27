@@ -398,19 +398,22 @@ pub fn drive_buzzer(pins: &PinConfig, params: &Value) -> Result<String> {
 
     // Non-blocking: spawn a thread to turn off after duration
     let dur = std::time::Duration::from_millis(duration_ms);
-    std::thread::Builder::new()
-        .name("buzzer_off".into())
-        .stack_size(2048)
-        .spawn(move || {
+    crate::util::spawn_guarded_with_profile_handle(
+        "buzzer_off",
+        2048,
+        Some(crate::util::SpawnCore::Core1),
+        crate::util::HttpThreadRole::Background,
+        move || {
             std::thread::sleep(dur);
             unsafe {
                 esp_idf_svc::sys::gpio_set_level(pin, 0);
             }
-        })
-        .map_err(|e| Error::Other {
-            source: Box::new(e),
-            stage: "buzzer",
-        })?;
+        },
+    )
+    .map_err(|e| Error::Other {
+        source: Box::new(e),
+        stage: "buzzer",
+    })?;
 
     if clamped {
         Ok(format!(

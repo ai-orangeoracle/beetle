@@ -113,9 +113,15 @@ impl EspHttpClient {
     where
         F: FnOnce(&mut EspHttpConnection) -> Result<T>,
     {
+        let role = crate::orchestrator::permit::current_http_thread_role();
+        let admission_timeout_secs = match role {
+            crate::orchestrator::HttpThreadRole::Interactive => TLS_ADMISSION_TIMEOUT_SECS,
+            crate::orchestrator::HttpThreadRole::Io => TLS_ADMISSION_TIMEOUT_SECS,
+            crate::orchestrator::HttpThreadRole::Background => TLS_ADMISSION_TIMEOUT_SECS / 2,
+        };
         let _permit = crate::orchestrator::request_http_permit(
             self.priority,
-            std::time::Duration::from_secs(TLS_ADMISSION_TIMEOUT_SECS),
+            std::time::Duration::from_secs(admission_timeout_secs.max(1)),
         )?;
 
         self.prepare_connection()?;
