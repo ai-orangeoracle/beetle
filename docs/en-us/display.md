@@ -123,23 +123,29 @@ Display configuration is stored in `config/display.json` on the SPIFFS partition
 
 ## Dashboard layout
 
-The dashboard renders on a dark navy background (~`#080816`): a 3px top stripe in the state accent color; thin divider lines above the channel block and footer; a slightly lighter strip behind the state title (stops above the IP subtitle row); L-shaped corner brackets (two short strokes per corner).
+The dashboard uses a dark base fill (`DISPLAY_BG`), then three full-width **panel cards** (header, channel block, footer) with a slightly lighter fill (`PANEL_BG`) and a thin border. A **3px** top bar uses the state accent color. **Divider lines** sit a few pixels above the channel and footer bands (`middle_top` / `footer_top` from `display::compute_layout`). The title row has a narrow **title strip** behind the text; a **status pill** (same label as the main state title) sits above the title line.
+
+**Subtitle (non-Booting):** IP address. If panel width **≥ 200px** and uptime is non-zero, **IP** and **`Up:`** runtime (e.g. `Up:1d2h`) are on **two lines** so the uptime is not clipped. On narrower panels, a **single line** combines truncated IP and ` Up:…` (stack buffer limit).
+
+**Channel block:** Five channels appear as small row tiles. Labels are **abbreviated**: **TG** (telegram), **FS** (feishu), **DT** (dingtalk), **WC** (wecom), **QQ** (qq_channel). Layout is **2 columns** when width is **below 200px**, **3 columns** when **≥ 200px**. Each row shows a status dot (green / red / gray), the short label, and a token on the right: **OK**, **OFF**, **xN** (consecutive failures), or **DOWN**.
 
 ```
 ┌──────────────────────────────────┐ y=0
-│▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓│ State-color top bar
-│ ┌──────┐                         │
-│ │beetle│  STATE_NAME              │ Title (bold, state color)
-│ │64x64 │  192.168.1.100           │ IP subtitle
-│ └──────┘                         │
-├──────────────────────────────────┤ y≈104
-│  ● telegram    ● feishu          │ Channel status
-│  ○ dingtalk    ● wecom           │ ● filled=enabled
-│  ● qq_channel                    │ ○ hollow=disabled
-├──────────────────────────────────┤ y≈168
-│  NORMAL   ████████░░░░ 62%       │ Pressure + heap bar
-└──────────────────────────────────┘ y=240
+│▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓│ State-color top bar (3px)
+│ ┌──────┐ ┌──────┐  STATE_NAME   │ Status pill + title (bold, state color)
+│ │beetle│        │  192.168.x.x  │ IP (line 1); or one line on narrow
+│ │ ~64  │        │  Up:1d2h      │ Uptime line 2 when width ≥200 & uptime>0
+│ └──────┘                        │
+├──────────────────────────────────┤ y≈middle_top (e.g. 104 @ 240×240)
+│  ● TG  OK    ● FS  OK   ● DT OFF │ 2 or 3 columns by width
+│  ● WC  OK    ● QQ  x2            │
+├──────────────────────────────────┤ y≈footer_top
+│  NORMAL  ████████░░░░ 62%        │ Pressure badge + heap bar + %
+│  In:12 Out:8 L:1.2s 14:30         │ Message stats + last activity time
+└──────────────────────────────────┘ y=height
 ```
+
+Vertical positions (`header_top`, `subtitle_top`, `middle_top`, `footer_top`, `margin_x`) come from `compute_layout` (240×240 reference grid, aspect buckets).
 
 ### Beetle icon states
 
@@ -150,7 +156,7 @@ The beetle is drawn entirely with `embedded-graphics` primitives (circles, lines
 | **Booting** | Amber gold | Loading dots on body; dashed WiFi arcs above head; subtitle shows firmware version |
 | **NoWifi** | Blue-gray | Solid WiFi arcs above head, crossed out with red X |
 | **Idle** | Neon green | White checkmark on body |
-| **Busy** | Cyan-blue | Membrane wings spread from under elytra |
+| **Busy** | Cyan-blue | Membrane wings spread from under elytra; alternating white dots on body (breathing animation) |
 | **Fault** | Bright red | Flipped upside-down; X eyes; exclamation mark on body |
 
 ### Channel status indicators
@@ -160,11 +166,13 @@ The beetle is drawn entirely with `embedded-graphics` primitives (circles, lines
 | Filled green dot + normal text | Enabled channel, healthy |
 | Filled red dot + normal text | Enabled channel, unhealthy |
 | Hollow gray circle + dimmed text | Disabled channel |
+| Right-side token **OK** / **OFF** / **xN** / **DOWN** | Healthy, disabled, failure count, or unhealthy with no count |
 
 ### Footer
 
-- Pressure label: **NORMAL** (green) / **CAUTIOUS** (yellow) / **CRITICAL** (red)
-- Heap usage progress bar with percentage
+- Pressure label: **NORMAL** (green) / **CAUTIOUS** (yellow) / **CRITICAL** (red); on **error flash** the badge fills with the accent color for one frame.
+- Heap usage progress bar with percentage to the right of the bar.
+- **Stats line:** `In:` / `Out:` message counts, optional **`L:`** LLM latency when available, and last-activity clock **`HH:MM`** (local time on ESP when SNTP is configured).
 
 ---
 
@@ -174,8 +182,9 @@ To reduce SPI traffic, partial updates are used for frequently changing regions:
 
 | Command | What updates | Rows flushed |
 |---------|-------------|-------------|
-| `UpdateIp` | IP address subtitle only | ~16 rows |
-| `UpdatePressure` | Footer pressure bar only | ~72 rows |
+| `UpdateIp` | IP subtitle (and on wide panels, second-line `Up:` when uptime &gt; 0) | ~16 rows, or ~30 rows when width ≥ 200px and uptime is shown |
+| `UpdateChannels` | Channel block only | From `middle_top` to footer |
+| `UpdatePressure` | Footer pressure bar, heap bar, and stats line | ~72 rows (footer band) |
 | `RefreshDashboard` | Full screen | All rows |
 
 Partial row flush reduces SPI data by ~85% compared to full-screen refresh.

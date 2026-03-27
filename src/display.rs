@@ -141,8 +141,10 @@ pub enum DisplayCommand {
         /// F7: 错误闪烁标志（本轮有新错误时为 true）。
         error_flash: bool,
     },
+    /// 仅副标题 IP 行局部刷新；`uptime_secs` 与宽屏双行 `Up:` 对齐。
     UpdateIp {
         ip: String,
+        uptime_secs: u64,
     },
     UpdatePressure {
         level: DisplayPressureLevel,

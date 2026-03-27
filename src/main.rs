@@ -205,7 +205,8 @@ fn esp_boot_display_after_wifi(
         let ip = platform
             .wifi_sta_ip()
             .unwrap_or_else(|| SOFTAP_DEFAULT_IPV4.to_string());
-        let _ = platform.display_command(DisplayCommand::UpdateIp { ip });
+        let uptime_secs = beetle::platform::time::uptime_secs();
+        let _ = platform.display_command(DisplayCommand::UpdateIp { ip, uptime_secs });
     }
 }
 
@@ -774,8 +775,10 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
 
                     // State unchanged → partial updates per dirty region
                     if ip_changed {
-                        let _ = display_platform
-                            .display_command(DisplayCommand::UpdateIp { ip: ip.clone() });
+                        let _ = display_platform.display_command(DisplayCommand::UpdateIp {
+                            ip: ip.clone(),
+                            uptime_secs,
+                        });
                         last_ip.clear();
                         last_ip.push_str(&ip);
                     }
