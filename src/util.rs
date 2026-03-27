@@ -531,6 +531,17 @@ pub fn is_private_url(url: &str) -> bool {
     false
 }
 
+/// Default stack for `spawn_guarded` on ESP: TLS runs in IDF tasks; keep stacks small.
+/// ESP 上 TLS 在 IDF 任务栈执行，后台线程保持较小栈。
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+const DEFAULT_GUARD_STACK_SIZE: usize = 8192;
+
+/// Default stack for `spawn_guarded` on host/Linux: `rustls` + tungstenite TLS handshake
+/// needs far more than 8KB; 128KB is a safe default without matching OS default (multi-MB).
+/// Linux/host：`rustls` + tungstenite 握手在进程内执行，8KB 会栈溢出；128KB 足够且仍远小于系统默认线程栈。
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+const DEFAULT_GUARD_STACK_SIZE: usize = 128 * 1024;
+
 /// Spawn a named thread with panic protection. If the closure panics, the panic is caught
 /// and logged. This prevents silent thread death in long-running background loops.
 /// 带 panic 保护的线程启动：闭包 panic 时捕获并记日志，避免后台线程静默消亡。
@@ -538,7 +549,7 @@ pub fn spawn_guarded<F>(name: &str, f: F)
 where
     F: FnOnce() + Send + 'static,
 {
-    spawn_guarded_with_stack(name, 8192, f);
+    spawn_guarded_with_stack(name, DEFAULT_GUARD_STACK_SIZE, f);
 }
 
 /// Spawn a named thread with custom stack size and panic protection.

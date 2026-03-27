@@ -102,13 +102,10 @@ fn bootstrap_config_and_wifi(platform: &Arc<dyn Platform>) -> (Arc<AppConfig>, b
                 "[{}] WiFi stack ready (SoftAP + scan; STA may still be negotiating)",
                 TAG
             );
+            platform.init_sntp();
             #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
-            {
-                platform.init_sntp();
-                if platform.display_available() {
-                    let _ =
-                        platform.display_command(DisplayCommand::UpdateBootProgress { stage: 2 });
-                }
+            if platform.display_available() {
+                let _ = platform.display_command(DisplayCommand::UpdateBootProgress { stage: 2 });
             }
             true
         }

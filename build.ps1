@@ -2,7 +2,7 @@
 # ESP firmware: this script injects default --target for release; do not rely on repo .cargo default target.
 # Usage: .\build.ps1  or  .\build.ps1 --target xtensa-esp32s3-espidf
 #        .\build.ps1 clean           清理项目根与短路径 D:\pc_b 的 target（路径过长时只需跑一次）
-#        .\build.ps1 --flash          构建后烧录（数字菜单，默认 1=仅更新；与 deploy-linux.sh 风格一致）
+#        .\build.ps1 --flash          构建后烧录（数字菜单，默认 1=仅更新；与 build.sh Linux 部署菜单风格一致）
 #        .\build.ps1 --flash-update   构建后烧录且不擦除（跳过菜单）
 #        $env:ESPFLASH_PORT="COM3"; .\build.ps1 --flash  跳过端口选择，直接烧录到 COM3
 $ErrorActionPreference = "Stop"
@@ -193,7 +193,7 @@ if (-not $flashChip -and $doFlash) {
 
 Write-BuildStatus -Step "Detected hardware / build config"
 
-# 烧录模式：与 deploy-linux.sh 相同 — 数字菜单 + 默认 1（仅更新）。--flash-update 跳过菜单。设置 $eraseBeforeFlash
+# 烧录模式：数字菜单 + 默认 1（仅更新），与 build.sh 上 Linux 部署交互风格一致。--flash-update 跳过菜单。设置 $eraseBeforeFlash
 function Select-FlashMode {
   param([string]$ChosenPort, [string]$TargetTriple, [bool]$FlashUpdate)
   if ($FlashUpdate) {

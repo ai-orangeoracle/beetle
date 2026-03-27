@@ -148,8 +148,13 @@ pub fn run_wss_gateway_loop<D, H, C, CreateHttp, Conn>(
 
         if let Some(ref payload) = state.identify_payload {
             log::debug!("[{}] send identify len={}", tag, payload.len());
-            if conn.send_binary(payload).is_err() {
-                log::warn!("[{}] send identify failed", tag);
+            if let Err(e) = conn.send_binary(payload) {
+                log::warn!(
+                    "[{}] send identify failed (len={}): {}",
+                    tag,
+                    payload.len(),
+                    e
+                );
                 drop(conn);
                 sleep_with_wdt(backoff_secs);
                 backoff_secs = (backoff_secs * 2).min(BACKOFF_MAX_SECS);

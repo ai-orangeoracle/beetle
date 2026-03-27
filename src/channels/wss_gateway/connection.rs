@@ -4,10 +4,14 @@
 use crate::error::Result;
 use std::time::Duration;
 
-/// 与 ESP `esp_websocket_client` 默认 buffer 对齐；单帧应用层载荷上限为 [`MAX_WSS_SEND_PAYLOAD_BYTES`]。
+/// 与 ESP `esp_websocket_client` 默认 buffer 对齐（仅嵌入式构建使用）。
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 pub(crate) const DEFAULT_WSS_BUFFER_SIZE: usize = 4096;
-/// 应用层 `send_binary` 最大字节数（留出控制/对齐余量）。
+/// 应用层 `send_binary` 最大字节数（ESP 与客户端 buffer 对齐；主机/Linux 需容纳 QQ Identify 等较长 JSON）。
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 pub(crate) const MAX_WSS_SEND_PAYLOAD_BYTES: usize = DEFAULT_WSS_BUFFER_SIZE - 32;
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+pub(crate) const MAX_WSS_SEND_PAYLOAD_BYTES: usize = 64 * 1024;
 
 /// 单次收到的 WSS 事件。
 #[derive(Debug, Clone)]

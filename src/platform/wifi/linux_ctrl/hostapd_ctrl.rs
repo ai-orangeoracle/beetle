@@ -16,5 +16,5 @@ pub fn request(iface: &str, cmd: &str, timeout: Duration, stage: &'static str) -
 /// 优雅退出（等价 `hostapd_cli terminate`），失败时调用方可继续 `kill`。
 /// Graceful shutdown (same as `hostapd_cli terminate`); caller may fall back to `kill` on error.
 pub fn try_terminate(iface: &str, timeout: Duration) {
-    let _ = request(iface, "terminate", timeout, "wifi_ap_stop");
+    let _ = request(iface, "TERMINATE", timeout, "wifi_ap_stop");
 }

@@ -443,12 +443,12 @@ const DHT_ACK_EDGE_TIMEOUT_US: i64 = 600;
 /// 数据位：低电平结束（上升沿）最长等待（µs）（部分模块低相可略超 50µs）。
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 const DHT_BIT_LOW_END_TIMEOUT_US: i64 = 600;
-/// 数据位：高电平结束（下降沿）最长等待（µs）（位 1 典型 ~70µs，劣质/长线可更长；过短会误报 timeout）。
+/// 上升沿后再延时该时间（µs）后读电平判 0/1（0 位高相 ~26–28µs，1 位 ~70µs；与常见 Arduino 库 40µs 一致）。
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
-const DHT_BIT_HIGH_END_TIMEOUT_US: i64 = 2_000;
-/// 高电平宽度 ≥ 该值（µs）判为数据位 1（0 约 26–28µs，1 约 70µs）。
+const DHT_BIT_SAMPLE_DELAY_US: u32 = 40;
+/// 采样后等待高电平结束（下降沿）的最长时间（µs），用于与下一位起始低电平对齐；连续 1 时必需。
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
-const DHT_BIT1_MIN_HIGH_US: i64 = 42;
+const DHT_BIT_WAIT_FALL_US: i64 = 2_000;
 /// 失败后重试次数（不含首次）。
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 const DHT_MAX_RETRIES: u8 = 3;
@@ -480,10 +480,10 @@ unsafe fn dht_wait_until_level(
 }
 
 /// DHT 单总线采样：握手后读 40 位，返回 5 字节原始帧。
-/// 数据位用 `esp_timer_get_time` 测高电平宽度（µs），避免忙等循环计数在 S3 上边界漂移导致 checksum 差 1～2。
+/// 数据位：上升沿后 `esp_rom_delay_us` 再读电平（与常见 DHT 库一致），随后等下降沿再读下一位，避免「只测高脉宽」在 S3 上偶发等不到下降沿。
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 unsafe fn dht_sample_raw_frame(pin: i32) -> Result<[u8; 5]> {
-    use esp_idf_svc::sys::esp_timer_get_time;
+    use esp_idf_svc::sys::{esp_rom_delay_us, gpio_get_level};
 
     let _g = DHT_SAMPLE_CRIT.enter();
 
@@ -514,17 +514,16 @@ unsafe fn dht_sample_raw_frame(pin: i32) -> Result<[u8; 5]> {
             DHT_BIT_LOW_END_TIMEOUT_US,
             "timeout waiting for data bit low→high",
         )?;
-        let t0 = esp_timer_get_time();
+        esp_rom_delay_us(DHT_BIT_SAMPLE_DELAY_US);
+        if gpio_get_level(pin) != 0 {
+            data[(i / 8) as usize] |= 1 << (7 - (i % 8));
+        }
         dht_wait_until_level(
             pin,
             0,
-            DHT_BIT_HIGH_END_TIMEOUT_US,
+            DHT_BIT_WAIT_FALL_US,
             "timeout during data bit high phase",
         )?;
-        let high_us = esp_timer_get_time() - t0;
-        if high_us >= DHT_BIT1_MIN_HIGH_US {
-            data[(i / 8) as usize] |= 1 << (7 - (i % 8));
-        }
     }
 
     Ok(data)

@@ -155,6 +155,8 @@ pub const WIFI_SCAN_TIMEOUT_SECS: u64 = 15;
 pub const WIFI_RETRY_BACKOFF_SECS: [u64; 3] = [5, 10, 20];
 /// Linux 嵌入式：`hostapd` / `dnsmasq` /（可选）`wpa_supplicant` 存活检查周期（秒）。
 pub const WIFI_LINUX_DAEMON_WATCH_INTERVAL_SECS: u64 = 15;
+/// 并发 STA+AP 时 hostapd 使用的虚拟 AP 接口名（`iw dev <phy> interface add` 创建）。
+pub const WIFI_LINUX_AP_VIRT_IFACE: &str = "ap0";
 
 // ---------- network_scan 工具 ----------
 /// WiFi 扫描最小间隔（毫秒）。

@@ -1,10 +1,10 @@
 # Linux 部署随带的 WiFi 工具（可选） / Bundled WiFi tools (optional)
 
-甲壳虫在 Linux 上会执行 **`iw`、`hostapd`、`dnsmasq`** 完成热点与配网。若设备上**没有**这些命令（精简固件、无包管理器等情况很常见），可把**与设备匹配**的可执行文件放在本目录下对应架构子文件夹里，由 **`deploy-linux.sh`** 一并上传到设备的 **`/opt/beetle/bin/`**。运行中的甲壳虫会**优先使用该路径**，再回退到系统 `PATH`。
+甲壳虫在 Linux 上会执行 **`iw`、`hostapd`、`dnsmasq`、`udhcpc`** 完成热点、STA 关联与 DHCP 取址。若设备上**没有**这些命令（精简固件、无包管理器等情况很常见），可把**与设备匹配**的可执行文件放在本目录下对应架构子文件夹里，由 **`./build.sh --deploy-linux`**（或构建结束时的部署提问）一并上传到设备的 **`/opt/beetle/bin/`**。运行中的甲壳虫会**优先使用该路径**，再回退到系统 `PATH`。
 
-On Linux, beetle invokes **`iw`**, **`hostapd`**, and **`dnsmasq`**. If they are missing on the device (common on **trimmed images without a package manager**), place matching binaries under **`packaging/linux/embed-deps/<arch>/`**; **`./deploy-linux.sh`** copies them to **`/opt/beetle/bin/`**, which beetle checks **before** `PATH`.
+On Linux, beetle invokes **`iw`**, **`hostapd`**, **`dnsmasq`**, and **`udhcpc`** for SoftAP, STA association, and DHCP lease acquisition. If they are missing on the device (common on **trimmed images without a package manager**), place matching binaries under **`packaging/linux/embed-deps/<arch>/`**; **`./build.sh --deploy-linux`** (or answer **Yes** at the post-build deploy prompt) copies them to **`/opt/beetle/bin/`**, which beetle checks **before** `PATH`.
 
-用户向说明见 **[docs/zh-cn/linux-release-rollback.md](../../docs/zh-cn/linux-release-rollback.md)**（中文）与 **[docs/en-us/linux-release-rollback.md](../../docs/en-us/linux-release-rollback.md)**（英文）；上传脚本仍为仓库根目录 **`deploy-linux.sh`**。
+用户向说明见 **[docs/zh-cn/linux-release-rollback.md](../../docs/zh-cn/linux-release-rollback.md)**（中文）与 **[docs/en-us/linux-release-rollback.md](../../docs/en-us/linux-release-rollback.md)**（英文）；上传入口为仓库根目录 **`./build.sh --deploy-linux`**。
 
 ---
 
@@ -16,13 +16,13 @@ On Linux, beetle invokes **`iw`**, **`hostapd`**, and **`dnsmasq`**. If they are
 | `aarch64/`      | `aarch64-unknown-linux-musl`        |
 | `x86_64/`       | `x86_64-unknown-linux-musl`         |
 
-文件名建议即为 `iw`、`hostapd`、`dnsmasq`。大文件不必提交 git，可用发行包或 CI 产物。
+文件名建议即为 `iw`、`hostapd`、`dnsmasq`、`udhcpc`。大文件不必提交 git，可用发行包或 CI 产物。
 
 ---
 
 ## ABI 说明（重要）
 
-甲壳虫自身多为 **musl** 静态链接；**这三个工具必须与设备 rootfs 一致**（常见为 **glibc + 设备 CPU**）。若拷贝后执行报「找不到文件」或动态链接错误，说明架构或 libc 不匹配，需从**同一套固件/SDK** 或能在该板子上运行的环境取得二进制。
+甲壳虫自身多为 **musl** 静态链接；**这些工具必须与设备 rootfs 一致**（常见为 **glibc + 设备 CPU**）。若拷贝后执行报「找不到文件」或动态链接错误，说明架构或 libc 不匹配，需从**同一套固件/SDK** 或能在该板子上运行的环境取得二进制。
 
 ---
 

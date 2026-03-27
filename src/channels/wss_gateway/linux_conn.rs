@@ -1,17 +1,18 @@
 //! Linux / host：基于 `tungstenite` + rustls 的 WSS 客户端，实现 `WssConnection`。
 //! 与 `esp_conn` 事件语义对齐：Binary/Text → `WssEvent::Binary`，Close/错误 → Disconnected。
 //!
-//! 读线程独占 `Arc<Mutex<WebSocket>>`；`TcpStream::set_read_timeout` 与 `loop.rs` 中 `WDT_RECV_CHUNK_SECS`
-//! 同量级。`Drop` 时 shutdown TCP 以结束阻塞的 `read()`，再 `join` 读线程。
+//! **不得**用单独读线程在 `read()` 持有 `Mutex` 的同时由主线程 `send`：QQ 等协议在 Hello 后需先发
+//! Identify，服务端才会继续下帧；否则读线程永久占锁 → 与 `send_binary` 死锁。网关循环单线程交替
+//! `recv_timeout` / `send_binary`，故此处直接在调用线程上读、写同一 `WebSocket`。
+//!
+//! `TcpStream::set_read_timeout` 单次等待上限与 `loop.rs` 中 `WDT_RECV_CHUNK_SECS` 同量级；
+//! `recv_timeout` 用截止时间聚合多次短读，避免 Ping 处理或分片读越过调用方超时。
 
 #![cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
 
 use std::io::ErrorKind;
 use std::net::{Shutdown, TcpStream};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{mpsc, Arc, Mutex};
-use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::channels::wss_gateway::connection::{
     WssConnection, WssEvent, MAX_WSS_SEND_PAYLOAD_BYTES,
@@ -22,7 +23,7 @@ use tungstenite::{client::connect, protocol::Message, WebSocket};
 
 /// 与 `esp_conn` 一致。
 const WSS_TLS_ADMISSION_TIMEOUT_SECS: u64 = 10;
-/// 与 `wss_gateway/loop.rs` 中 `WDT_RECV_CHUNK_SECS` 一致。
+/// 与 `wss_gateway/loop.rs` 中 `WDT_RECV_CHUNK_SECS` 一致（单次 `read` 阻塞上限）。
 const SOCKET_READ_TIMEOUT_SECS: u64 = 25;
 
 fn map_io(stage: &'static str, e: std::io::Error) -> Error {
@@ -64,68 +65,6 @@ fn shutdown_tcp(stream: &mut MaybeTlsStream<TcpStream>) {
     }
 }
 
-fn spawn_reader_thread(
-    ws: Arc<Mutex<WebSocket<MaybeTlsStream<TcpStream>>>>,
-    shutdown: Arc<AtomicBool>,
-    tx: mpsc::SyncSender<WssEvent>,
-) -> JoinHandle<()> {
-    std::thread::spawn(move || {
-        while !shutdown.load(Ordering::SeqCst) {
-            let msg = {
-                let mut g = match ws.lock() {
-                    Ok(g) => g,
-                    Err(e) => {
-                        log::warn!("[wss_linux] ws mutex poisoned: {}", e);
-                        let _ = tx.try_send(WssEvent::Disconnected);
-                        return;
-                    }
-                };
-                g.read()
-            };
-            match msg {
-                Ok(Message::Binary(b)) => {
-                    if tx.try_send(WssEvent::Binary(b)).is_err() {
-                        log::warn!("[wss_linux] event channel full, dropping binary frame");
-                    }
-                }
-                Ok(Message::Text(t)) => {
-                    if tx.try_send(WssEvent::Binary(t.into_bytes())).is_err() {
-                        log::warn!("[wss_linux] event channel full, dropping text frame");
-                    }
-                }
-                Ok(Message::Ping(payload)) => {
-                    // RFC 6455：必须回复 Pong（与 ESP 侧 IDF 客户端 ping/pong 行为对齐）。
-                    let mut g = match ws.lock() {
-                        Ok(g) => g,
-                        Err(e) => {
-                            log::warn!("[wss_linux] ws mutex poisoned (ping): {}", e);
-                            let _ = tx.try_send(WssEvent::Disconnected);
-                            return;
-                        }
-                    };
-                    if let Err(e) = g.send(Message::Pong(payload)) {
-                        log::debug!("[wss_linux] pong reply failed: {}", e);
-                    }
-                }
-                Ok(Message::Pong(_)) => {}
-                Ok(Message::Close(_)) => {
-                    let _ = tx.try_send(WssEvent::Closed);
-                    break;
-                }
-                Ok(Message::Frame(_)) => {}
-                Err(e) => {
-                    if is_timed_out_or_would_block(&e) {
-                        continue;
-                    }
-                    log::debug!("[wss_linux] read ended: {}", e);
-                    let _ = tx.try_send(WssEvent::Disconnected);
-                    break;
-                }
-            }
-        }
-    })
-}
-
 fn is_timed_out_or_would_block(e: &tungstenite::Error) -> bool {
     match e {
         tungstenite::Error::Io(io) => {
@@ -135,41 +74,14 @@ fn is_timed_out_or_would_block(e: &tungstenite::Error) -> bool {
     }
 }
 
-/// Linux 上基于 tungstenite 的 WSS 连接。
+/// Linux 上基于 tungstenite 的 WSS 连接（单线程读/写，与 `run_wss_gateway_loop` 用法一致）。
 pub struct LinuxWssConnection {
-    rx: mpsc::Receiver<WssEvent>,
-    ws: Arc<Mutex<WebSocket<MaybeTlsStream<TcpStream>>>>,
-    shutdown: Arc<AtomicBool>,
-    reader: Option<JoinHandle<()>>,
-}
-
-impl LinuxWssConnection {
-    fn recv_to_event(
-        r: std::result::Result<WssEvent, mpsc::RecvTimeoutError>,
-    ) -> Result<Option<WssEvent>> {
-        match r {
-            Ok(ev) => Ok(Some(ev)),
-            Err(mpsc::RecvTimeoutError::Timeout) => Ok(None),
-            Err(mpsc::RecvTimeoutError::Disconnected) => Err(Error::Other {
-                source: Box::new(std::io::Error::new(
-                    ErrorKind::ConnectionReset,
-                    "wss event channel disconnected",
-                )),
-                stage: "wss_linux_recv",
-            }),
-        }
-    }
+    ws: WebSocket<MaybeTlsStream<TcpStream>>,
 }
 
 impl Drop for LinuxWssConnection {
     fn drop(&mut self) {
-        self.shutdown.store(true, Ordering::SeqCst);
-        if let Ok(mut g) = self.ws.lock() {
-            shutdown_tcp(g.get_mut());
-        }
-        if let Some(h) = self.reader.take() {
-            let _ = h.join();
-        }
+        shutdown_tcp(self.ws.get_mut());
     }
 }
 
@@ -188,17 +100,58 @@ impl WssConnection for LinuxWssConnection {
                 stage: "wss_linux_send",
             });
         }
-        let mut g = self.ws.lock().map_err(|e| Error::Other {
-            source: Box::new(std::io::Error::other(e.to_string())),
-            stage: "wss_linux_send",
-        })?;
-        g.send(Message::Binary(data.to_vec()))
+        self.ws
+            .send(Message::Binary(data.to_vec()))
             .map_err(|e| map_tungstenite("wss_linux_send", e))?;
         Ok(())
     }
 
     fn recv_timeout(&mut self, timeout: Duration) -> Result<Option<WssEvent>> {
-        Self::recv_to_event(self.rx.recv_timeout(timeout))
+        let deadline = Instant::now() + timeout;
+        let chunk_cap = Duration::from_secs(SOCKET_READ_TIMEOUT_SECS);
+
+        loop {
+            let now = Instant::now();
+            if now >= deadline {
+                return Ok(None);
+            }
+            let remaining = deadline.saturating_duration_since(now);
+            let read_wait = remaining.min(chunk_cap);
+            if read_wait.is_zero() {
+                return Ok(None);
+            }
+            set_tcp_read_timeout(self.ws.get_mut(), Some(read_wait))
+                .map_err(|e| map_io("wss_linux_recv", e))?;
+
+            match self.ws.read() {
+                Ok(Message::Binary(b)) => return Ok(Some(WssEvent::Binary(b))),
+                Ok(Message::Text(t)) => return Ok(Some(WssEvent::Binary(t.into_bytes()))),
+                Ok(Message::Ping(payload)) => {
+                    if let Err(e) = self.ws.send(Message::Pong(payload)) {
+                        log::debug!("[wss_linux] pong reply failed: {}", e);
+                    }
+                    if let Err(e) = self.ws.flush() {
+                        log::debug!("[wss_linux] flush after pong failed: {}", e);
+                    }
+                }
+                Ok(Message::Pong(_)) => {}
+                Ok(Message::Close(_)) => return Ok(Some(WssEvent::Closed)),
+                Ok(Message::Frame(_)) => {}
+                Err(e) if is_timed_out_or_would_block(&e) => continue,
+                Err(e @ tungstenite::Error::ConnectionClosed) => {
+                    log::debug!("[wss_linux] read ended: {}", e);
+                    return Ok(Some(WssEvent::Closed));
+                }
+                Err(e @ tungstenite::Error::AlreadyClosed) => {
+                    log::debug!("[wss_linux] read ended: {}", e);
+                    return Ok(Some(WssEvent::Disconnected));
+                }
+                Err(e) => {
+                    log::debug!("[wss_linux] read ended: {}", e);
+                    return Ok(Some(WssEvent::Disconnected));
+                }
+            }
+        }
     }
 }
 
@@ -217,15 +170,5 @@ pub fn connect_linux_wss(url: &str) -> Result<LinuxWssConnection> {
     )
     .map_err(|e| map_io("wss_linux_connect", e))?;
 
-    let ws = Arc::new(Mutex::new(ws));
-    let shutdown = Arc::new(AtomicBool::new(false));
-    let (tx, rx) = mpsc::sync_channel::<WssEvent>(32);
-    let reader = spawn_reader_thread(Arc::clone(&ws), Arc::clone(&shutdown), tx);
-
-    Ok(LinuxWssConnection {
-        rx,
-        ws,
-        shutdown,
-        reader: Some(reader),
-    })
+    Ok(LinuxWssConnection { ws })
 }

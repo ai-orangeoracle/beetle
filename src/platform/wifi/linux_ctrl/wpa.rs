@@ -5,7 +5,9 @@ use crate::constants::{WIFI_CONNECT_TIMEOUT_SECS, WIFI_RETRY_BACKOFF_SECS};
 use crate::error::{Error, Result};
 use crate::platform::state_mount_path;
 use crate::platform::wifi::linux_ctrl::net;
-use crate::platform::wifi::linux_ctrl::process::{run_checked, write_secure_atomic};
+use crate::platform::wifi::linux_ctrl::process::{
+    is_pid_alive, read_pid_file, run_checked, write_secure_atomic,
+};
 use crate::platform::wifi::linux_ctrl::wpa_ctrl;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -25,13 +27,53 @@ pub fn supplicant_pid_path(iface: &str) -> PathBuf {
     conf_dir().join(format!("wpa_supplicant-{}.pid", iface))
 }
 
+fn ctrl_socket_path(iface: &str) -> PathBuf {
+    PathBuf::from(super::WPA_CTRL_INTERFACE_DIR).join(iface)
+}
+
+fn cleanup_stale_daemon(iface: &str) {
+    let pid_path = supplicant_pid_path(iface);
+    if let Some(pid) = read_pid_file(pid_path.as_path()) {
+        if is_pid_alive(pid) {
+            let pid_s = pid.to_string();
+            let _ = run_checked(
+                "kill",
+                &["-TERM", pid_s.as_str()],
+                Duration::from_secs(3),
+                "wifi_wpa_start",
+            );
+            let deadline = Instant::now() + Duration::from_secs(2);
+            while Instant::now() < deadline {
+                if !is_pid_alive(pid) {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            if is_pid_alive(pid) {
+                let _ = run_checked(
+                    "kill",
+                    &["-KILL", pid_s.as_str()],
+                    Duration::from_secs(1),
+                    "wifi_wpa_start",
+                );
+            }
+        }
+        let _ = std::fs::remove_file(&pid_path);
+    }
+
+    let _ = std::fs::remove_file(ctrl_socket_path(iface));
+}
+
 pub fn ensure_daemon(iface: &str) -> Result<()> {
-    if wpa_ctrl::request(iface, "ping", Duration::from_secs(3), "wifi_wpa_cmd")
+    if wpa_ctrl::request(iface, "PING", Duration::from_secs(3), "wifi_wpa_cmd")
         .map(|r| r.contains("PONG"))
         .unwrap_or(false)
     {
         return Ok(());
     }
+
+    // If ctrl ping failed, the PID/socket may be stale from a prior crash or failed boot.
+    cleanup_stale_daemon(iface);
 
     let conf = format!(
         "ctrl_interface={}\nupdate_config=1\n",
@@ -59,13 +101,37 @@ pub fn ensure_daemon(iface: &str) -> Result<()> {
     Ok(())
 }
 
+fn request_dhcp_lease(iface: &str, timeout: Duration) -> Result<()> {
+    if let Some(ip) = net::read_sta_ip(iface)? {
+        log::info!("[wifi_wpa] '{}' already has IPv4 {}", iface, ip);
+        return Ok(());
+    }
+    if timeout.is_zero() {
+        return Err(Error::config("wifi_dhcp", "no time left for DHCP"));
+    }
+
+    // `udhcpc` is the standard DHCP client on embedded Linux / BusyBox systems.
+    // `-f`: foreground so we can wait; `-q`: quit after lease; `-n`: fail if no lease.
+    run_checked(
+        "udhcpc",
+        &["-i", iface, "-f", "-q", "-n"],
+        timeout,
+        "wifi_dhcp",
+    )?;
+
+    if net::read_sta_ip(iface)?.is_some() {
+        return Ok(());
+    }
+    Err(Error::config("wifi_dhcp", "udhcpc exited but no IPv4 assigned"))
+}
+
 pub fn connect_sta(iface: &str, ssid: &str, pass: &str) -> Result<Option<String>> {
     validate_ssid(ssid)?;
     validate_pass(pass)?;
     ensure_daemon(iface)?;
 
-    wpa_ctrl::request(iface, "remove_network all", CMD_TIMEOUT, "wifi_wpa_cmd")?;
-    let add = wpa_ctrl::request(iface, "add_network", CMD_TIMEOUT, "wifi_wpa_cmd")?;
+    wpa_ctrl::request(iface, "REMOVE_NETWORK all", CMD_TIMEOUT, "wifi_wpa_cmd")?;
+    let add = wpa_ctrl::request(iface, "ADD_NETWORK", CMD_TIMEOUT, "wifi_wpa_cmd")?;
     let net_id = add.trim();
     if net_id.is_empty() {
         return Err(Error::config(
@@ -75,40 +141,50 @@ pub fn connect_sta(iface: &str, ssid: &str, pass: &str) -> Result<Option<String>
     }
     wpa_ctrl::request(
         iface,
-        &format!("set_network {} ssid {}", net_id, quote_wpa(ssid)),
+        &format!("SET_NETWORK {} ssid {}", net_id, quote_wpa(ssid)),
         CMD_TIMEOUT,
         "wifi_wpa_cmd",
     )?;
     if pass.is_empty() {
         wpa_ctrl::request(
             iface,
-            &format!("set_network {net_id} key_mgmt NONE"),
+            &format!("SET_NETWORK {net_id} key_mgmt NONE"),
             CMD_TIMEOUT,
             "wifi_wpa_cmd",
         )?;
     } else {
         wpa_ctrl::request(
             iface,
-            &format!("set_network {net_id} psk {}", quote_wpa(pass)),
+            &format!("SET_NETWORK {net_id} psk {}", quote_wpa(pass)),
             CMD_TIMEOUT,
             "wifi_wpa_cmd",
         )?;
     }
     wpa_ctrl::request(
         iface,
-        &format!("enable_network {net_id}"),
+        &format!("ENABLE_NETWORK {net_id}"),
         CMD_TIMEOUT,
         "wifi_wpa_cmd",
     )?;
-    wpa_ctrl::request(iface, "reconnect", CMD_TIMEOUT, "wifi_wpa_cmd")?;
+    wpa_ctrl::request(iface, "RECONNECT", CMD_TIMEOUT, "wifi_wpa_cmd")?;
 
     let deadline = std::time::Instant::now() + Duration::from_secs(WIFI_CONNECT_TIMEOUT_SECS);
     loop {
-        let status = wpa_ctrl::request(iface, "status", Duration::from_secs(3), "wifi_wpa_cmd")?;
+        let status = wpa_ctrl::request(iface, "STATUS", Duration::from_secs(3), "wifi_wpa_cmd")?;
         if status.contains("wpa_state=COMPLETED") {
+            if let Some(ip) = net::read_sta_ip(iface)? {
+                return Ok(Some(ip));
+            }
+            let remain = deadline.saturating_duration_since(std::time::Instant::now());
+            request_dhcp_lease(iface, remain)?;
             return net::read_sta_ip(iface);
         }
         if std::time::Instant::now() >= deadline {
+            log::warn!(
+                "[wifi_wpa] STA timeout on '{}', last status: {}",
+                iface,
+                status.replace('\n', " | ")
+            );
             return Err(Error::config(
                 "wifi_connect",
                 format!("STA timeout after {}s", WIFI_CONNECT_TIMEOUT_SECS),
@@ -128,7 +204,7 @@ pub fn scan_bounded(iface: &str, deadline: Instant) -> Result<Vec<crate::platfor
         return Err(Error::config("wifi_scan", "scan timeout"));
     }
     let t_scan = remain(deadline).min(CMD_TIMEOUT);
-    wpa_ctrl::request(iface, "scan", t_scan, "wifi_scan")?;
+    wpa_ctrl::request(iface, "SCAN", t_scan, "wifi_scan")?;
     let sleep_dur = remain(deadline).min(Duration::from_millis(800));
     if !sleep_dur.is_zero() {
         std::thread::sleep(sleep_dur);
@@ -137,7 +213,7 @@ pub fn scan_bounded(iface: &str, deadline: Instant) -> Result<Vec<crate::platfor
         return Err(Error::config("wifi_scan", "scan timeout"));
     }
     let t_res = remain(deadline).min(Duration::from_secs(5));
-    let out = wpa_ctrl::request(iface, "scan_results", t_res, "wifi_scan")?;
+    let out = wpa_ctrl::request(iface, "SCAN_RESULTS", t_res, "wifi_scan")?;
     parse_scan_results(&out)
 }
 

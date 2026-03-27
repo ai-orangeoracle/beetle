@@ -4,7 +4,7 @@ set -e
 SCRIPT_ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_ROOT"
 
-# Colors (same palette as deploy-linux.sh)
+# Colors (build + Linux SSH deploy)
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -14,21 +14,33 @@ NC='\033[0m'
 show_help() {
   cat <<'EOF'
 Usage:
-  ./build.sh [--flash | --flash-update] [--no-monitor] [cargo build args...]
+  ./build.sh [--flash | --flash-update] [--no-monitor] [--no-deploy] [--deploy-linux] [cargo build args...]
 
-Flash:
-  --flash          Build then flash; interactive menu (default: update only, keep NVS).
-  --flash-update   Build then flash without erase (no menu; same as option 1).
+Linux SSH deploy only (no compile; needs an existing target/*/release/beetle):
+  ./build.sh --deploy-linux
+
+Default (interactive TTY): after a successful build, asks whether to deploy:
+  - Linux targets → SSH upload (same flow as --deploy-linux)
+  - ESP targets   → USB flash (port + erase menu unless --flash-update)
+
+Non-interactive / CI: use --no-deploy, BEETLE_SKIP_DEPLOY_PROMPT=1, or redirect stdin.
+
+Skip the question and flash ESP immediately (automation):
+  --flash          Build then flash ESP; interactive erase menu (default: update only, keep NVS).
+  --flash-update   Build then flash ESP without erase (no erase menu).
 
 Quick examples:
   ./build.sh
   TARGET=linux ./build.sh
   TARGET=linux-armv7 ./build.sh
+  TARGET=esp ./build.sh
   TARGET=esp ./build.sh --flash
-  TARGET=esp ./build.sh --flash-update
+  ./build.sh --deploy-linux
 
 Notes:
-  - On macOS building Linux musl, prefer Docker (zero local linker setup).
+  - On macOS building Linux musl, auto mode uses Docker only if the daemon is running; otherwise musl-cross (Homebrew).
+  - Force local: BUILD_METHOD=local ./build.sh
+  - Force Docker: BUILD_METHOD=docker ./build.sh
   - For Linux builds, this script uses Rust stable toolchain.
 EOF
 }
@@ -66,11 +78,12 @@ MSG_BINARY="Binary"
 # 固定 target 到本仓库，避免环境/IDE 将 CARGO_TARGET_DIR 指到临时目录导致 esp-idf-sys bindings 与 esp-idf-svc cfg 不一致。
 export CARGO_TARGET_DIR="${SCRIPT_ROOT}/target"
 export PATH="${HOME}/.cargo/bin:${PATH}"
-command -v cargo &>/dev/null || { echo "Error: cargo not found. Install Rust: https://rustup.rs" >&2; exit 1; }
 
 # --- Parse args (same as build.ps1) ---
 DO_FLASH=""
+DO_DEPLOY_LINUX=""
 NO_MONITOR=""
+NO_DEPLOY_PROMPT=""
 FLASH_NO_ERASE=""
 BUILD_METHOD="${BUILD_METHOD:-auto}" # auto | docker | local
 BUILD_ARGS=()
@@ -80,9 +93,591 @@ for arg in "$@"; do
     --flash)         DO_FLASH=1 ;;
     --flash-update)  DO_FLASH=1; FLASH_NO_ERASE=1 ;;
     --no-monitor)    NO_MONITOR=1 ;;
+    --no-deploy)     NO_DEPLOY_PROMPT=1 ;;
+    --deploy-linux)  DO_DEPLOY_LINUX=1 ;;
     *)               BUILD_ARGS+=("$arg") ;;
   esac
 done
+
+# --- Linux SSH deploy (merged from former deploy-linux.sh) ---
+linux_deploy_fetch_embed_deps_from_url() {
+    if [ -z "${BEETLE_EMBED_DEPS_URL:-}" ]; then
+        return 0
+    fi
+    case "$BEETLE_EMBED_DEPS_URL" in
+        https://* | http://*) ;;
+        *)
+            echo -e "${RED}BEETLE_EMBED_DEPS_URL must be http(s)${NC}"
+            exit 1
+            ;;
+    esac
+
+    local dest="$SCRIPT_ROOT/packaging/linux/embed-deps/$EMBED_DEPS_ARCH"
+    mkdir -p "$dest"
+
+    echo "========== Fetch embed-deps (BEETLE_EMBED_DEPS_URL) =========="
+    echo ""
+    echo "  URL: $BEETLE_EMBED_DEPS_URL"
+    echo "  → $dest"
+    echo ""
+
+    local tmp
+    tmp=$(mktemp "${TMPDIR:-/tmp}/beetle-deps.XXXXXX")
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsSL "$BEETLE_EMBED_DEPS_URL" -o "$tmp"
+    elif command -v wget >/dev/null 2>&1; then
+        wget -q -O "$tmp" "$BEETLE_EMBED_DEPS_URL"
+    else
+        echo -e "${RED}Install curl or wget to use BEETLE_EMBED_DEPS_URL${NC}"
+        rm -f "$tmp"
+        exit 1
+    fi
+
+    if [ -n "${BEETLE_EMBED_DEPS_SHA256:-}" ]; then
+        local got
+        got=$(shasum -a 256 "$tmp" | awk '{print $1}')
+        if [ "$got" != "$BEETLE_EMBED_DEPS_SHA256" ]; then
+            echo -e "${RED}SHA256 mismatch (expected $BEETLE_EMBED_DEPS_SHA256 got $got)${NC}"
+            rm -f "$tmp"
+            exit 1
+        fi
+        echo -e "${GREEN}✓ SHA256 OK${NC}"
+    fi
+
+    local exdir
+    exdir=$(mktemp -d "${TMPDIR:-/tmp}/beetle-deps-ex.XXXXXX")
+    if ! tar -xf "$tmp" -C "$exdir" 2>/dev/null; then
+        echo -e "${RED}Failed to extract archive (need .tar / .tar.gz / .tar.xz)${NC}"
+        rm -rf "$exdir" "$tmp"
+        exit 1
+    fi
+    rm -f "$tmp"
+
+    local n=0
+    local f
+    while IFS= read -r f; do
+        case "$(basename "$f")" in
+            iw | hostapd | dnsmasq)
+                cp -f "$f" "$dest/"
+                chmod +x "$dest/$(basename "$f")"
+                n=$((n + 1))
+                ;;
+        esac
+    done < <(find "$exdir" -type f \( -name iw -o -name hostapd -o -name dnsmasq \) 2>/dev/null)
+
+    rm -rf "$exdir"
+
+    if [ "$n" -lt 1 ]; then
+        echo -e "${YELLOW}Warning: archive contained no iw/hostapd/dnsmasq; nothing copied.${NC}"
+    else
+        echo -e "${GREEN}✓ Placed $n helper(s) under packaging/linux/embed-deps/$EMBED_DEPS_ARCH/${NC}"
+    fi
+    echo ""
+}
+
+# Detect available binaries
+linux_deploy_detect_binaries() {
+    local binaries=()
+
+    if [ -f "target/x86_64-unknown-linux-musl/release/beetle" ]; then
+        binaries+=("x86_64")
+    fi
+
+    if [ -f "target/x86_64-unknown-linux-gnu/release/beetle" ]; then
+        binaries+=("x86_64-gnu")
+    fi
+
+    if [ -f "target/armv7-unknown-linux-musleabihf/release/beetle" ]; then
+        binaries+=("armv7")
+    fi
+
+    if [ -f "target/aarch64-unknown-linux-musl/release/beetle" ]; then
+        binaries+=("aarch64")
+    fi
+
+    echo "${binaries[@]}"
+}
+
+# Select architecture
+linux_deploy_select_arch() {
+    local available=($(linux_deploy_detect_binaries))
+
+    if [ ${#available[@]} -eq 0 ]; then
+        echo -e "${RED}Error: No compiled binaries found${NC}"
+        echo "Please run ./build.sh first"
+        exit 1
+    fi
+
+    echo "Available builds:"
+    local i=1
+    for arch in "${available[@]}"; do
+        echo "  $i) $arch"
+        ((i++))
+    done
+    echo ""
+
+    if [ ${#available[@]} -eq 1 ]; then
+        SELECTED_ARCH="${available[0]}"
+        echo -e "${GREEN}Auto-selected: $SELECTED_ARCH${NC}"
+    else
+        read -p "Select architecture [1-${#available[@]}]: " choice
+        choice=${choice:-1}
+        SELECTED_ARCH="${available[$((choice-1))]}"
+    fi
+
+    case "$SELECTED_ARCH" in
+        x86_64)
+            BINARY_PATH="target/x86_64-unknown-linux-musl/release/beetle"
+            EMBED_DEPS_ARCH="x86_64"
+            ;;
+        x86_64-gnu)
+            BINARY_PATH="target/x86_64-unknown-linux-gnu/release/beetle"
+            EMBED_DEPS_ARCH="x86_64"
+            ;;
+        armv7)
+            BINARY_PATH="target/armv7-unknown-linux-musleabihf/release/beetle"
+            EMBED_DEPS_ARCH="armv7"
+            ;;
+        aarch64)
+            BINARY_PATH="target/aarch64-unknown-linux-musl/release/beetle"
+            EMBED_DEPS_ARCH="aarch64"
+            ;;
+        *)
+            echo -e "${RED}Error: unknown arch key: $SELECTED_ARCH${NC}"
+            exit 1
+            ;;
+    esac
+
+    echo ""
+}
+
+# Persist last successful target (IP / user / port). Password is never stored.
+# Path: ~/.config/beetle/deploy-linux.defaults (mode 600).
+DEPLOY_DEFAULTS_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/beetle"
+DEPLOY_DEFAULTS_FILE="$DEPLOY_DEFAULTS_DIR/deploy-linux.defaults"
+
+linux_deploy_load_deploy_defaults() {
+    DEFAULT_DEVICE_IP=""
+    DEFAULT_DEVICE_USER="root"
+    DEFAULT_SSH_PORT="22"
+    if [ ! -f "$DEPLOY_DEFAULTS_FILE" ]; then
+        return 0
+    fi
+    while IFS= read -r line || [ -n "$line" ]; do
+        case "$line" in
+            ''|\#*) continue ;;
+        esac
+        case "$line" in
+            DEVICE_IP=*) DEFAULT_DEVICE_IP="${line#DEVICE_IP=}" ;;
+            DEVICE_USER=*) DEFAULT_DEVICE_USER="${line#DEVICE_USER=}" ;;
+            SSH_PORT=*) DEFAULT_SSH_PORT="${line#SSH_PORT=}" ;;
+        esac
+    done <"$DEPLOY_DEFAULTS_FILE"
+}
+
+linux_deploy_save_deploy_defaults() {
+    mkdir -p "$DEPLOY_DEFAULTS_DIR"
+    (
+        umask 077
+        {
+            echo "# beetle build.sh linux deploy — last successful target (do not commit)"
+            printf 'DEVICE_IP=%s\n' "$DEVICE_IP"
+            printf 'DEVICE_USER=%s\n' "$DEVICE_USER"
+            printf 'SSH_PORT=%s\n' "$SSH_PORT"
+        } >"${DEPLOY_DEFAULTS_FILE}.tmp"
+        mv "${DEPLOY_DEFAULTS_FILE}.tmp" "$DEPLOY_DEFAULTS_FILE"
+    )
+}
+
+# Input device information
+linux_deploy_input_device_info() {
+    echo "========== Device Information =========="
+    echo ""
+    linux_deploy_load_deploy_defaults
+
+    if [ -n "$DEFAULT_DEVICE_IP" ]; then
+        echo -e "${GREEN}Saved target: ${DEFAULT_DEVICE_USER}@${DEFAULT_DEVICE_IP}:${DEFAULT_SSH_PORT}${NC}"
+        echo "(Press Enter to keep; password is not saved — use SSH keys for passwordless login)"
+        echo ""
+    fi
+
+    if [ -n "$DEFAULT_DEVICE_IP" ]; then
+        read -p "Device IP address [$DEFAULT_DEVICE_IP]: " DEVICE_IP
+    else
+        read -p "Device IP address: " DEVICE_IP
+    fi
+    DEVICE_IP=${DEVICE_IP:-$DEFAULT_DEVICE_IP}
+    if [ -z "$DEVICE_IP" ]; then
+        echo -e "${RED}Error: IP address cannot be empty${NC}"
+        exit 1
+    fi
+
+    read -p "Username [${DEFAULT_DEVICE_USER}]: " DEVICE_USER
+    DEVICE_USER=${DEVICE_USER:-$DEFAULT_DEVICE_USER}
+
+    read -p "SSH port [${DEFAULT_SSH_PORT}]: " SSH_PORT
+    SSH_PORT=${SSH_PORT:-$DEFAULT_SSH_PORT}
+
+    if ! [[ "$SSH_PORT" =~ ^[0-9]+$ ]] || [ "$SSH_PORT" -lt 1 ] || [ "$SSH_PORT" -gt 65535 ]; then
+        echo -e "${RED}Error: SSH port must be a number between 1 and 65535${NC}"
+        exit 1
+    fi
+
+    echo ""
+    echo -e "${BLUE}Target device: ${DEVICE_USER}@${DEVICE_IP}:${SSH_PORT}${NC}"
+    echo ""
+}
+
+# Reuse one SSH connection for the whole script so password (or keyboard-interactive)
+# is not prompted on every ssh/scp invocation. Requires OpenSSH client.
+# macOS: $TMPDIR is often under /var/folders/...; ControlPath = dir + %C + ssh suffix
+# can exceed AF_UNIX sun_path (~104 bytes). Prefer /tmp (short path); %C keeps names compact.
+linux_deploy_setup_ssh_mux() {
+    if [ -d /tmp ] && [ -w /tmp ]; then
+        SSH_MUX_DIR=$(mktemp -d /tmp/bd.XXXXXX)
+    else
+        SSH_MUX_DIR=$(mktemp -d "${TMPDIR:-/tmp}/bd.XXXXXX")
+    fi
+    chmod 700 "$SSH_MUX_DIR"
+    SSH_MUX_OPTS=(
+        -o "ControlMaster=auto"
+        -o "ControlPath=$SSH_MUX_DIR/%C"
+        -o "ControlPersist=300"
+    )
+}
+
+linux_deploy_cleanup_ssh_mux() {
+    if [ -n "${SSH_MUX_DIR:-}" ] && [ -n "${DEVICE_USER:-}" ] && [ -n "${DEVICE_IP:-}" ]; then
+        ssh "${SSH_MUX_OPTS[@]}" -p "$SSH_PORT" -o BatchMode=yes -O exit \
+            "${DEVICE_USER}@${DEVICE_IP}" 2>/dev/null || true
+    fi
+    if [ -n "${SSH_MUX_DIR:-}" ] && [ -d "$SSH_MUX_DIR" ]; then
+        rm -rf "$SSH_MUX_DIR"
+    fi
+}
+
+# Test connection
+linux_deploy_test_connection() {
+    echo "========== Testing Connection =========="
+    echo ""
+
+    if ssh "${SSH_MUX_OPTS[@]}" -p "$SSH_PORT" -o ConnectTimeout=5 -o BatchMode=yes \
+        "${DEVICE_USER}@${DEVICE_IP}" "echo 'OK'" &>/dev/null; then
+        echo -e "${GREEN}✓ SSH connection successful${NC}"
+    else
+        echo -e "${YELLOW}⚠ SSH connection failed, password may be required${NC}"
+        echo "Testing connection..."
+        if ! ssh "${SSH_MUX_OPTS[@]}" -p "$SSH_PORT" "${DEVICE_USER}@${DEVICE_IP}" "echo 'OK'"; then
+            echo -e "${RED}Error: Cannot connect to device${NC}"
+            exit 1
+        fi
+    fi
+
+    linux_deploy_save_deploy_defaults
+
+    echo ""
+}
+
+# Detect device architecture
+linux_deploy_detect_device_arch() {
+    echo "========== Detecting Device =========="
+    echo ""
+
+    # One remote shell (mapfile needs bash 4+; keep portable for macOS /bin/bash)
+    _uname_out=$(
+        ssh "${SSH_MUX_OPTS[@]}" -p "$SSH_PORT" "${DEVICE_USER}@${DEVICE_IP}" \
+            "uname -m; uname -s" 2>/dev/null || printf '%s\n' unknown unknown
+    )
+    DEVICE_ARCH=$(printf '%s\n' "$_uname_out" | sed -n '1p')
+    DEVICE_OS=$(printf '%s\n' "$_uname_out" | sed -n '2p')
+    DEVICE_ARCH=${DEVICE_ARCH:-unknown}
+    DEVICE_OS=${DEVICE_OS:-unknown}
+
+    echo "Device architecture: $DEVICE_ARCH"
+    echo "Operating system: $DEVICE_OS"
+
+    # Architecture match check
+    case "$DEVICE_ARCH" in
+        x86_64)
+            if [ "$SELECTED_ARCH" != "x86_64" ] && [ "$SELECTED_ARCH" != "x86_64-gnu" ]; then
+                echo -e "${YELLOW}⚠ Warning: Device is x86_64, but selected $SELECTED_ARCH${NC}"
+            fi
+            ;;
+        armv7l)
+            if [ "$SELECTED_ARCH" != "armv7" ]; then
+                echo -e "${YELLOW}⚠ Warning: Device is armv7l, but selected $SELECTED_ARCH${NC}"
+            fi
+            ;;
+        aarch64)
+            if [ "$SELECTED_ARCH" != "aarch64" ]; then
+                echo -e "${YELLOW}⚠ Warning: Device is aarch64, but selected $SELECTED_ARCH${NC}"
+            fi
+            ;;
+    esac
+
+    echo ""
+}
+
+# Select deployment mode
+linux_deploy_select_deploy_mode() {
+    echo "========== Deployment Mode =========="
+    echo ""
+    echo "  1) Quick deploy (binary only)"
+    echo "  2) Full deploy (binary + systemd service)"
+    echo "  3) Update binary only"
+    echo ""
+
+    read -p "Select mode [1-3] (default 2): " mode
+    DEPLOY_MODE=${mode:-2}
+    echo ""
+}
+
+# True if packaging/linux/embed-deps/<arch>/ has at least one non-doc file.
+linux_deploy_local_embed_deps_nonempty() {
+    local embed="$SCRIPT_ROOT/packaging/linux/embed-deps/$EMBED_DEPS_ARCH"
+    local f
+    if [ ! -d "$embed" ]; then
+        return 1
+    fi
+    for f in "$embed"/*; do
+        [ -f "$f" ] || continue
+        case "$(basename "$f")" in
+            README*|*.md|*.txt) continue ;;
+        esac
+        return 0
+    done
+    return 1
+}
+
+# Remote: any of iw/hostapd/dnsmasq missing on PATH → sets REMOTE_WIFI_INCOMPLETE=1 else 0
+linux_deploy_probe_remote_wifi_tools() {
+    REMOTE_WIFI_INCOMPLETE=0
+    local out
+    out=$(
+        ssh "${SSH_MUX_OPTS[@]}" -p "$SSH_PORT" "${DEVICE_USER}@${DEVICE_IP}" \
+            'for c in iw hostapd dnsmasq; do
+                command -v "$c" >/dev/null 2>&1 || echo MISSING
+            done'
+    )
+    case "$out" in
+        *MISSING*) REMOTE_WIFI_INCOMPLETE=1 ;;
+    esac
+}
+
+# Before upload: if device lacks tools and this PC has no embed-deps, ask to continue or abort.
+linux_deploy_prompt_wifi_helpers_or_continue() {
+    echo "========== WiFi helper tools (preflight) =========="
+    echo ""
+    linux_deploy_probe_remote_wifi_tools
+    if [ "${REMOTE_WIFI_INCOMPLETE:-0}" -eq 0 ]; then
+        echo -e "${GREEN}  Device already has iw, hostapd, and dnsmasq on PATH — nothing extra to bundle.${NC}"
+        echo ""
+        return 0
+    fi
+    if linux_deploy_local_embed_deps_nonempty; then
+        echo -e "${GREEN}  This PC has files under packaging/linux/embed-deps/$EMBED_DEPS_ARCH/ — they will be uploaded to /opt/beetle/bin/.${NC}"
+        echo ""
+        return 0
+    fi
+    echo -e "${YELLOW}  The device is missing one or more of: iw, hostapd, dnsmasq (on PATH).${NC}"
+    echo -e "${YELLOW}  Beetle’s Linux WiFi needs them; this script does not download or pull from firmware.${NC}"
+    echo ""
+    echo "  To bundle helpers: put binaries named iw, hostapd, dnsmasq on **this computer** under:"
+    echo "    $SCRIPT_ROOT/packaging/linux/embed-deps/$EMBED_DEPS_ARCH/"
+    echo ""
+    read -p "  Deploy beetle binary only (no WiFi helpers this time)? [Y/n]: " wifi_ans
+    wifi_ans=${wifi_ans:-Y}
+    case "$wifi_ans" in
+        [Nn]*)
+            echo ""
+            echo "Aborted. Add the three tools to embed-deps (or install them on the device), then run ./build.sh --deploy-linux again."
+            exit 0
+            ;;
+    esac
+    echo ""
+}
+
+# Optional bundled WiFi userland (iw, hostapd, dnsmasq) for distros without opkg/apk/apt.
+# Place binaries in packaging/linux/embed-deps/<arch>/ (same arch as selected build).
+EMBED_DEPS_UPLOADED=0
+linux_deploy_upload_embed_deps() {
+    local embed="$SCRIPT_ROOT/packaging/linux/embed-deps/$EMBED_DEPS_ARCH"
+    EMBED_DEPS_UPLOADED=0
+    if [ ! -d "$embed" ]; then
+        return 0
+    fi
+    local has=""
+    local f
+    for f in "$embed"/*; do
+        [ -f "$f" ] || continue
+        case "$(basename "$f")" in
+            README*|*.md|*.txt) continue ;;
+        esac
+        has=1
+        break
+    done
+    if [ -z "$has" ]; then
+        return 0
+    fi
+    echo "Uploading bundled WiFi tools → /opt/beetle/bin ..."
+    ssh "${SSH_MUX_OPTS[@]}" -p "$SSH_PORT" "${DEVICE_USER}@${DEVICE_IP}" \
+        "mkdir -p /opt/beetle/bin"
+    for f in "$embed"/*; do
+        [ -f "$f" ] || continue
+        case "$(basename "$f")" in
+            README*|*.md|*.txt) continue ;;
+        esac
+        scp "${SSH_MUX_OPTS[@]}" -P "$SSH_PORT" "$f" \
+            "${DEVICE_USER}@${DEVICE_IP}:/opt/beetle/bin/"
+    done
+    ssh "${SSH_MUX_OPTS[@]}" -p "$SSH_PORT" "${DEVICE_USER}@${DEVICE_IP}" \
+        'for f in /opt/beetle/bin/*; do [ -f "$f" ] && chmod a+x "$f"; done'
+    EMBED_DEPS_UPLOADED=1
+    echo -e "${GREEN}✓ Bundled tools uploaded (beetle prefers /opt/beetle/bin)${NC}"
+}
+
+# Upload files
+linux_deploy_upload_files() {
+    echo "========== Uploading Files =========="
+    echo ""
+
+    echo "Creating directories..."
+    ssh "${SSH_MUX_OPTS[@]}" -p "$SSH_PORT" "${DEVICE_USER}@${DEVICE_IP}" \
+        "mkdir -p /opt/beetle /opt/beetle/bin /var/lib/beetle"
+
+    linux_deploy_upload_embed_deps
+
+    echo "Uploading binary..."
+    scp "${SSH_MUX_OPTS[@]}" -P "$SSH_PORT" "$BINARY_PATH" \
+        "${DEVICE_USER}@${DEVICE_IP}:/opt/beetle/beetle"
+
+    if [ "$DEPLOY_MODE" = "2" ]; then
+        echo "Uploading systemd service..."
+        scp "${SSH_MUX_OPTS[@]}" -P "$SSH_PORT" packaging/linux/beetle.service \
+            "${DEVICE_USER}@${DEVICE_IP}:/tmp/"
+    fi
+
+    echo -e "${GREEN}✓ Upload complete${NC}"
+    echo ""
+    linux_deploy_report_wifi_tools_on_device
+}
+
+# Shell-side check: script never "extracts from firmware"; it only uploads files you placed
+# under packaging/linux/embed-deps/<arch>/ on this computer.
+linux_deploy_report_wifi_tools_on_device() {
+    echo "========== WiFi tools on device (iw / hostapd / dnsmasq) =========="
+    echo ""
+    local miss=0
+    local line
+    while IFS= read -r line; do
+        echo "  $line"
+        case "$line" in
+            *MISS*) miss=1 ;;
+        esac
+    done < <(
+        ssh "${SSH_MUX_OPTS[@]}" -p "$SSH_PORT" "${DEVICE_USER}@${DEVICE_IP}" \
+            'for c in iw hostapd dnsmasq; do
+                if command -v "$c" >/dev/null 2>&1; then
+                    p=$(command -v "$c")
+                    echo "OK $c → $p"
+                else
+                    echo "MISS $c"
+                fi
+            done'
+    )
+    echo ""
+    if [ "${EMBED_DEPS_UPLOADED:-0}" -eq 1 ]; then
+        echo -e "${GREEN}  Also uploaded from this PC: packaging/linux/embed-deps/$EMBED_DEPS_ARCH/ → /opt/beetle/bin/${NC}"
+        echo ""
+        return 0
+    fi
+    if [ "$miss" -eq 1 ]; then
+        echo -e "${YELLOW}  This deploy script does NOT auto-copy tools from device firmware.${NC}"
+        echo -e "${YELLOW}  Put matching binaries on **this computer** under:${NC}"
+        echo -e "${YELLOW}    packaging/linux/embed-deps/$EMBED_DEPS_ARCH/${NC}"
+        echo -e "${YELLOW}  then run ./build.sh --deploy-linux again (or install those packages on the device if you can).${NC}"
+        echo -e "${YELLOW}  See docs/zh-cn/linux-release-rollback.md${NC}"
+        echo ""
+    fi
+}
+
+# Install service
+linux_deploy_install_service() {
+    echo "========== Installing Service =========="
+    echo ""
+
+    ssh "${SSH_MUX_OPTS[@]}" -p "$SSH_PORT" "${DEVICE_USER}@${DEVICE_IP}" << 'REMOTE_EOF'
+chmod +x /opt/beetle/beetle
+
+if [ -f /tmp/beetle.service ]; then
+    cp /tmp/beetle.service /etc/systemd/system/
+    systemctl daemon-reload
+    echo "✓ systemd service installed"
+fi
+REMOTE_EOF
+
+    echo ""
+}
+
+# Show next steps
+linux_deploy_show_next_steps() {
+    echo "=========================================="
+    echo "  Deployment Complete!"
+    echo "=========================================="
+    echo ""
+    echo "Next steps:"
+    echo ""
+    if [ "${EMBED_DEPS_UPLOADED:-0}" -eq 1 ]; then
+        echo "  (Bundled iw/hostapd/dnsmasq are under /opt/beetle/bin on the device.)"
+        echo "  Beetle looks there first — you do not need to edit PATH on the device for these."
+        echo ""
+    fi
+    echo "  1. Start beetle:"
+    echo "     - With systemd: systemctl start beetle"
+    echo "     - Without systemd: ssh -p $SSH_PORT ${DEVICE_USER}@${DEVICE_IP}"
+    echo "       then: nohup /opt/beetle/beetle >> /var/log/beetle.log 2>&1 &"
+    echo ""
+    echo "  2. Configure WiFi (after WiFi stack works):"
+    echo "     Hotspot SSID Beetle → http://DEVICE_IP/ (or http://192.168.4.1 on SoftAP)"
+    echo ""
+    echo "Configuration files:"
+    echo "  - State directory: /var/lib/beetle"
+    echo "  - Service config: /etc/systemd/system/beetle.service"
+    echo ""
+}
+
+# 主流程
+linux_deploy_main() {
+    echo ""
+    echo "=========================================="
+    echo "  Beetle Linux Deployment"
+    echo "=========================================="
+    echo ""
+    linux_deploy_select_arch
+    linux_deploy_fetch_embed_deps_from_url
+    linux_deploy_input_device_info
+    linux_deploy_setup_ssh_mux
+    trap linux_deploy_cleanup_ssh_mux EXIT INT TERM
+    linux_deploy_test_connection
+    linux_deploy_detect_device_arch
+    linux_deploy_select_deploy_mode
+    linux_deploy_prompt_wifi_helpers_or_continue
+    linux_deploy_upload_files
+
+    if [ "$DEPLOY_MODE" = "2" ]; then
+        linux_deploy_install_service
+    fi
+
+    linux_deploy_show_next_steps
+}
+
+
+if [[ -n "$DO_DEPLOY_LINUX" ]]; then
+  linux_deploy_main
+  exit $?
+fi
+
+command -v cargo &>/dev/null || { echo "Error: cargo not found. Install Rust: https://rustup.rs" >&2; exit 1; }
 
 run_linux_docker_build() {
   local target="$1"
@@ -102,8 +697,6 @@ run_linux_docker_build() {
     exit 1
   fi
 }
-
-# --- Interactive platform selection ---
 select_build_platform() {
   # If TARGET env is set, skip interactive prompt.
   if [[ -n "${TARGET:-}" ]]; then
@@ -175,16 +768,26 @@ if [[ $PLATFORM_CHOICE -eq 2 || $PLATFORM_CHOICE -eq 3 ]]; then
       LOCAL_LINKER_CMD="arm-linux-musleabihf-gcc"
     fi
 
-    HAS_DOCKER=0
-    command -v docker &>/dev/null && HAS_DOCKER=1
+    # Docker CLI alone is not enough (Desktop may be off); require a running daemon for auto mode.
+    HAS_DOCKER_CLI=0
+    command -v docker &>/dev/null && HAS_DOCKER_CLI=1
+    HAS_DOCKER_DAEMON=0
+    if [[ $HAS_DOCKER_CLI -eq 1 ]] && docker info &>/dev/null; then
+      HAS_DOCKER_DAEMON=1
+    fi
     HAS_LOCAL_LINKER=0
     command -v "$LOCAL_LINKER_CMD" &>/dev/null && HAS_LOCAL_LINKER=1
 
     case "$BUILD_METHOD" in
       docker)
-        [[ $HAS_DOCKER -eq 1 ]] || {
+        [[ $HAS_DOCKER_CLI -eq 1 ]] || {
           echo "$MSG_ERROR_NO_DOCKER"
           echo "$MSG_INSTALL_DOCKER: https://www.docker.com/products/docker-desktop"
+          exit 1
+        }
+        docker info &>/dev/null || {
+          echo "Error: Docker is installed but the daemon is not running." >&2
+          echo "Start Docker Desktop, or use: BUILD_METHOD=local ./build.sh" >&2
           exit 1
         }
         USE_DOCKER=1
@@ -193,13 +796,17 @@ if [[ $PLATFORM_CHOICE -eq 2 || $PLATFORM_CHOICE -eq 3 ]]; then
         USE_DOCKER=""
         ;;
       auto)
-        # Novice-friendly default: if Docker exists, use Docker first.
-        if [[ $HAS_DOCKER -eq 1 ]]; then
+        # Prefer Docker only when the daemon responds (avoids broken socket when Desktop is off).
+        if [[ $HAS_DOCKER_DAEMON -eq 1 ]]; then
           USE_DOCKER=1
-          echo "  Auto-selected Docker build (detected Docker)."
+          echo "  Auto-selected Docker build (daemon reachable)."
         else
           USE_DOCKER=""
-          echo "  Auto-selected local musl-cross build (Docker not found)."
+          if [[ $HAS_DOCKER_CLI -eq 1 ]]; then
+            echo "  Auto-selected local musl-cross build (Docker daemon not running)."
+          else
+            echo "  Auto-selected local musl-cross build (Docker not in PATH)."
+          fi
         fi
         ;;
       *)
@@ -304,12 +911,12 @@ BIN="$RELEASE_DIR/beetle"
 BOOTLOADER_BIN="$RELEASE_DIR/bootloader.bin"
 PARTITION_TABLE_BIN="$RELEASE_DIR/partition-table.bin"
 PARTITION_CSV="$SCRIPT_ROOT/$PARTITION_TABLE"
-if [[ -n "$DO_FLASH" ]] && [[ -z "$FLASH_CHIP" ]]; then
+if [[ -n "$DO_FLASH" ]] && [[ ! "$BUILD_TARGET" =~ -unknown-linux ]] && [[ -z "$FLASH_CHIP" ]]; then
   echo "Error: Cannot derive chip from target for flash: $BUILD_TARGET" >&2
   exit 1
 fi
 
-# --- Flash mode: numbered menu like deploy-linux.sh "Deployment Mode" (sets ERASE_BEFORE_FLASH; may exit) ---
+# --- Flash mode: numbered menu (same style as Linux deploy mode menu; sets ERASE_BEFORE_FLASH; may exit) ---
 # FLASH_NO_ERASE=1 (--flash-update): skip menu, never erase.
 select_flash_mode() {
   local port="$1" triple="$2"
@@ -400,7 +1007,7 @@ print_flash_open_port_hints() {
   echo "" >&2
   echo -e "${RED}Flash / serial open failed.${NC}" >&2
   echo "  Common fixes:" >&2
-  echo "    1) Hold BOOT, tap RESET, run ./build.sh --flash again within a few seconds (ROM download mode)." >&2
+  echo "    1) Hold BOOT, tap RESET, run ./build.sh again (deploy Yes or --flash) within a few seconds (ROM download mode)." >&2
   echo "    2) Quit anything using the port: Serial Monitor, screen/minicom, another IDE, \`idf.py monitor\`." >&2
   echo "    3) macOS: try direct USB (no hub); unplug/replug; or \`ESPFLASH_PORT=/dev/cu.… ./build.sh --flash\`." >&2
   echo "    4) If you use conda base, try: \`conda deactivate\` then flash (rare toolchain PATH issues)." >&2
@@ -456,6 +1063,138 @@ get_flash_port() {
   done
 }
 
+# ESP: full flash workflow (shared by --flash and interactive "deploy yes").
+run_esp_flash_workflow() {
+  if [[ ! -f "$BIN" ]]; then
+    echo "Error: Binary not found: $BIN" >&2
+    return 1
+  fi
+  if [[ -z "$FLASH_CHIP" ]]; then
+    echo "Error: Cannot derive chip from target for flash: $BUILD_TARGET" >&2
+    return 1
+  fi
+  FLASH_EXTRA=()
+  PARTITION_FOR_FLASH="$PARTITION_CSV"
+  if [[ -f "$BOOTLOADER_BIN" ]]; then
+    [[ -f "$PARTITION_TABLE_BIN" ]] && PARTITION_FOR_FLASH="$PARTITION_TABLE_BIN"
+    if [[ -f "$PARTITION_FOR_FLASH" ]]; then
+      FLASH_EXTRA=(--bootloader "$BOOTLOADER_BIN" --partition-table "$PARTITION_FOR_FLASH")
+    fi
+  fi
+
+  ensure_espflash
+  CHOSEN_PORT=$(get_flash_port)
+  echo ""
+  echo "=========================================="
+  echo "  Beetle — Flash to device"
+  echo "=========================================="
+  echo ""
+  echo "========== Flash: hardware and paths =========="
+  echo ""
+  echo "  Project root:      $SCRIPT_ROOT"
+  echo "  Build target:      $BUILD_TARGET"
+  echo "  BOARD (optional):  ${BOARD:-(not set)}"
+  echo "  Chip (for flash):  ${FLASH_CHIP:-(N/A)}"
+  echo "  Features:          ${BUILD_FEATURES:-(none)}"
+  echo -e "  ${BLUE}Serial port:${NC}       $CHOSEN_PORT"
+  echo "  Partition table:   $PARTITION_FOR_FLASH"
+  echo "  Bootloader:        $BOOTLOADER_BIN"
+  echo "  Firmware binary:   $BIN"
+  echo ""
+
+  echo "========== Checking connection =========="
+  echo ""
+  echo "  Serial port occupancy (lsof):" >&2
+  warn_serial_port_busy "$CHOSEN_PORT"
+  echo ""
+  if espflash board-info --port "$CHOSEN_PORT" --chip "$FLASH_CHIP" 2>/dev/null; then
+    echo -e "${GREEN}✓ board-info OK${NC}"
+  else
+    echo -e "${YELLOW}⚠ Could not read board-info from $CHOSEN_PORT (connection or chip mismatch).${NC}"
+    echo "  If flash then fails to open the port, use download mode: hold BOOT, tap RESET, flash within a few seconds."
+    echo "  Also close any Serial Monitor / screen / idf.py monitor using this port."
+  fi
+  echo ""
+
+  select_flash_mode "$CHOSEN_PORT" "$BUILD_TARGET"
+
+  if [[ "$ERASE_BEFORE_FLASH" -eq 1 ]]; then
+    echo "========== Erasing entire flash =========="
+    echo ""
+    echo "  Port: $CHOSEN_PORT  |  Chip: $FLASH_CHIP"
+    if ! espflash erase-flash --port "$CHOSEN_PORT" --chip "$FLASH_CHIP"; then
+      echo "" >&2
+      echo -e "${RED}Erase failed.${NC} Common causes:" >&2
+      echo "  - Port in use or disconnected: unplug and replug; set ESPFLASH_PORT=/dev/cu.xxx if multiple ports" >&2
+      echo "  - Board not in download mode: hold BOOT, tap RESET, run this command again within a few seconds" >&2
+      echo "  - Wrong chip: build target is $BUILD_TARGET (chip $FLASH_CHIP); use the matching board" >&2
+      return 1
+    fi
+    echo -e "${GREEN}✓ Erase completed. Waiting 2s before flash.${NC}"
+    sleep 2
+  else
+    echo "========== Skipping full erase (update flash) =========="
+    echo ""
+    echo -e "  ${GREEN}✓ NVS and other flash regions are left unchanged.${NC}"
+    echo "  Port: $CHOSEN_PORT  |  Chip: $FLASH_CHIP"
+  fi
+
+  echo ""
+  echo "========== Flashing firmware =========="
+  echo ""
+  echo "  Binary: $BIN"
+  echo "  Partition table: $PARTITION_FOR_FLASH"
+  local FLASH_OK=0
+  if [[ -n "$NO_MONITOR" ]]; then
+    if espflash flash --port "$CHOSEN_PORT" --chip "$FLASH_CHIP" "${FLASH_EXTRA[@]}" "$BIN"; then
+      FLASH_OK=1
+    fi
+  else
+    if espflash flash --port "$CHOSEN_PORT" --chip "$FLASH_CHIP" "${FLASH_EXTRA[@]}" --monitor "$BIN"; then
+      FLASH_OK=1
+    fi
+  fi
+  if [[ "$FLASH_OK" -eq 1 ]]; then
+    echo ""
+    echo -e "${GREEN}✓ Flash complete.${NC}"
+    echo ""
+    return 0
+  fi
+  print_flash_open_port_hints
+  return 1
+}
+
+# After build: one prompt for Linux (SSH) or ESP (USB flash), unless --flash or skipped.
+prompt_deploy_maybe() {
+  [[ -f "$BIN" ]] || return 0
+  [[ -t 0 ]] || return 0
+  [[ -n "${NO_DEPLOY_PROMPT:-}" ]] && return 0
+  [[ "${BEETLE_SKIP_DEPLOY_PROMPT:-}" == "1" ]] && return 0
+  [[ -z "${DO_FLASH:-}" ]] || return 0
+
+  local prompt_msg
+  if [[ "$BUILD_TARGET" =~ -unknown-linux ]]; then
+    prompt_msg="Deploy to Linux device now (SSH)? [y/N]: "
+  elif [[ -n "$FLASH_CHIP" ]]; then
+    prompt_msg="Flash firmware to ESP32 now (USB serial)? [y/N]: "
+  else
+    return 0
+  fi
+
+  echo ""
+  read -r -p "$prompt_msg" deploy_ans
+  case "${deploy_ans:-}" in
+    [yY]|[yY][eE][sS])
+      if [[ "$BUILD_TARGET" =~ -unknown-linux ]]; then
+        linux_deploy_main || exit 1
+      else
+        run_esp_flash_workflow || exit 1
+      fi
+      exit 0
+      ;;
+  esac
+}
+
 # --- Linux 构建：跳过 ESP 工具链 ---
 if [[ "$BUILD_TARGET" =~ -unknown-linux ]]; then
   echo ""
@@ -474,6 +1213,7 @@ if [[ "$BUILD_TARGET" =~ -unknown-linux ]]; then
       echo "========== $MSG_BUILD_COMPLETE =========="
       echo "  $MSG_BINARY: $BIN"
       ls -lh "$BIN" 2>/dev/null || echo "  (check target/$BUILD_TARGET/release/beetle)"
+      prompt_deploy_maybe
       exit 0
     fi
 
@@ -644,7 +1384,7 @@ echo "  Target: $BUILD_TARGET  |  Root: $SCRIPT_ROOT"
 if [[ "$BUILD_TARGET" =~ -unknown-linux ]]; then
   if ! cargo +stable build --release "${RELEASE_ARGS[@]}"; then
     # Auto fallback: local musl build failed on macOS, retry with Docker if available.
-    if [[ "$(uname -s)" == "Darwin" ]] && [[ "$BUILD_TARGET" =~ -unknown-linux-musl ]] && [[ -z "${USE_DOCKER:-}" ]] && command -v docker &>/dev/null; then
+    if [[ "$(uname -s)" == "Darwin" ]] && [[ "$BUILD_TARGET" =~ -unknown-linux-musl ]] && [[ -z "${USE_DOCKER:-}" ]] && command -v docker &>/dev/null && docker info &>/dev/null; then
       echo ""
       echo "Local toolchain build failed. Auto-fallback to Docker build..."
       run_linux_docker_build "$BUILD_TARGET"
@@ -652,6 +1392,7 @@ if [[ "$BUILD_TARGET" =~ -unknown-linux ]]; then
       echo "========== $MSG_BUILD_COMPLETE =========="
       echo "  $MSG_BINARY: $BIN"
       ls -lh "$BIN" 2>/dev/null || echo "  (check target/$BUILD_TARGET/release/beetle)"
+      prompt_deploy_maybe
       exit 0
     fi
 
@@ -680,104 +1421,29 @@ else
   cargo build --release "${RELEASE_ARGS[@]}"
 fi
 
-# --- Flash path (only when --flash) ---
-if [[ -z "$DO_FLASH" ]]; then
-  echo "  Build done. Use ./build.sh --flash or --flash-update to flash."
-  exit 0
-fi
+# --- After build: deploy prompt or --flash (ESP only) ---
+echo ""
+echo "========== $MSG_BUILD_COMPLETE =========="
+echo "  $MSG_BINARY: $BIN"
+ls -lh "$BIN" 2>/dev/null || true
 
-if [[ ! -f "$BIN" ]]; then
-  echo "Error: Binary not found: $BIN" >&2
-  exit 1
-fi
-# Prefer built bootloader/partition-table (same as build.ps1)
-FLASH_EXTRA=()
-PARTITION_FOR_FLASH="$PARTITION_CSV"
-if [[ -f "$BOOTLOADER_BIN" ]]; then
-  [[ -f "$PARTITION_TABLE_BIN" ]] && PARTITION_FOR_FLASH="$PARTITION_TABLE_BIN"
-  if [[ -f "$PARTITION_FOR_FLASH" ]]; then
-    FLASH_EXTRA=(--bootloader "$BOOTLOADER_BIN" --partition-table "$PARTITION_FOR_FLASH")
+if [[ -n "$DO_FLASH" ]]; then
+  if [[ "$BUILD_TARGET" =~ -unknown-linux ]]; then
+    echo -e "${YELLOW}Note: --flash / --flash-update apply to ESP builds only (current target is Linux).${NC}" >&2
+  else
+    run_esp_flash_workflow || exit 1
+    exit 0
   fi
 fi
 
-ensure_espflash
-CHOSEN_PORT=$(get_flash_port)
-echo ""
-echo "=========================================="
-echo "  Beetle — Flash to device"
-echo "=========================================="
-echo ""
-echo "========== Flash: hardware and paths =========="
-echo ""
-echo "  Project root:      $SCRIPT_ROOT"
-echo "  Build target:      $BUILD_TARGET"
-echo "  BOARD (optional):  ${BOARD:-(not set)}"
-echo "  Chip (for flash):  ${FLASH_CHIP:-(N/A)}"
-echo "  Features:          ${BUILD_FEATURES:-(none)}"
-echo -e "  ${BLUE}Serial port:${NC}       $CHOSEN_PORT"
-echo "  Partition table:   $PARTITION_FOR_FLASH"
-echo "  Bootloader:        $BOOTLOADER_BIN"
-echo "  Firmware binary:   $BIN"
-echo ""
+prompt_deploy_maybe
 
-# Pre-flash: port occupancy (espflash often fails with "Failed to open serial port" if another app holds cu.*).
-echo "========== Checking connection =========="
 echo ""
-echo "  Serial port occupancy (lsof):" >&2
-warn_serial_port_busy "$CHOSEN_PORT"
-echo ""
-if espflash board-info --port "$CHOSEN_PORT" --chip "$FLASH_CHIP" 2>/dev/null; then
-  echo -e "${GREEN}✓ board-info OK${NC}"
+if [[ "$BUILD_TARGET" =~ -unknown-linux ]]; then
+  echo "  Deploy later: ./build.sh --deploy-linux"
 else
-  echo -e "${YELLOW}⚠ Could not read board-info from $CHOSEN_PORT (connection or chip mismatch).${NC}"
-  echo "  If flash then fails to open the port, use download mode: hold BOOT, tap RESET, flash within a few seconds."
-  echo "  Also close any Serial Monitor / screen / idf.py monitor using this port."
-fi
-echo ""
-
-select_flash_mode "$CHOSEN_PORT" "$BUILD_TARGET"
-
-if [[ "$ERASE_BEFORE_FLASH" -eq 1 ]]; then
-  echo "========== Erasing entire flash =========="
-  echo ""
-  echo "  Port: $CHOSEN_PORT  |  Chip: $FLASH_CHIP"
-  if ! espflash erase-flash --port "$CHOSEN_PORT" --chip "$FLASH_CHIP"; then
-    echo "" >&2
-    echo -e "${RED}Erase failed.${NC} Common causes:" >&2
-    echo "  - Port in use or disconnected: unplug and replug; set ESPFLASH_PORT=/dev/cu.xxx if multiple ports" >&2
-    echo "  - Board not in download mode: hold BOOT, tap RESET, run this command again within a few seconds" >&2
-    echo "  - Wrong chip: build target is $BUILD_TARGET (chip $FLASH_CHIP); use the matching board" >&2
-    exit 1
-  fi
-  echo -e "${GREEN}✓ Erase completed. Waiting 2s before flash.${NC}"
-  sleep 2
-else
-  echo "========== Skipping full erase (update flash) =========="
-  echo ""
-  echo -e "  ${GREEN}✓ NVS and other flash regions are left unchanged.${NC}"
-  echo "  Port: $CHOSEN_PORT  |  Chip: $FLASH_CHIP"
-fi
-
-echo ""
-echo "========== Flashing firmware =========="
-echo ""
-echo "  Binary: $BIN"
-echo "  Partition table: $PARTITION_FOR_FLASH"
-FLASH_OK=0
-if [[ -n "$NO_MONITOR" ]]; then
-  if espflash flash --port "$CHOSEN_PORT" --chip "$FLASH_CHIP" "${FLASH_EXTRA[@]}" "$BIN"; then
-    FLASH_OK=1
-  fi
-else
-  if espflash flash --port "$CHOSEN_PORT" --chip "$FLASH_CHIP" "${FLASH_EXTRA[@]}" --monitor "$BIN"; then
-    FLASH_OK=1
+  if [[ -n "$FLASH_CHIP" ]]; then
+    echo "  Flash later: run ./build.sh again and answer Yes at the deploy prompt, or: ./build.sh --flash / --flash-update"
   fi
 fi
-if [[ "$FLASH_OK" -eq 1 ]]; then
-  echo ""
-  echo -e "${GREEN}✓ Flash complete.${NC}"
-  echo ""
-else
-  print_flash_open_port_hints
-  exit 1
-fi
+exit 0

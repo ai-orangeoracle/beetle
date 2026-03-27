@@ -20,6 +20,8 @@ pub(crate) fn init_host_state_root() -> Result<()> {
     let root = resolve_host_state_root()?;
     std::fs::create_dir_all(&root).map_err(|e| Error::io("state_root", e))?;
     std::fs::create_dir_all(root.join("nvs")).map_err(|e| Error::io("state_root", e))?;
+    // `SpiffsSkillStorage::list_names` uses read_dir; host must have the dir (unlike single-file stores).
+    std::fs::create_dir_all(root.join("skills")).map_err(|e| Error::io("state_root", e))?;
     STATE_ROOT
         .set(root)
         .map_err(|_| Error::config("state_root", "double init_host_state_root"))?;

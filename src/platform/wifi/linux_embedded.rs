@@ -2,8 +2,8 @@
 
 use crate::config::AppConfig;
 use crate::constants::{
-    SOFTAP_DEFAULT_IPV4, SOFTAP_FALLBACK_IPV4, WIFI_LINUX_DAEMON_WATCH_INTERVAL_SECS,
-    WIFI_RETRY_BACKOFF_SECS, WIFI_SCAN_TIMEOUT_SECS,
+    SOFTAP_DEFAULT_IPV4, SOFTAP_FALLBACK_IPV4, WIFI_LINUX_AP_VIRT_IFACE,
+    WIFI_LINUX_DAEMON_WATCH_INTERVAL_SECS, WIFI_RETRY_BACKOFF_SECS, WIFI_SCAN_TIMEOUT_SECS,
 };
 use crate::error::{Error, Result};
 use crate::metrics;
@@ -98,7 +98,12 @@ fn choose_ap_ip(iface: &str) -> &'static str {
 }
 
 /// AP 已用默认地址而 STA DHCP 落在 `192.168.4.0/24` 时，迁移 AP 至备用地址。
-fn migrate_ap_if_subnet_conflict(iface: &str, ap_ip: &str, sta_ip: &Option<String>) -> Result<()> {
+/// `ap_iface` 为 hostapd 实际运行的接口（可能是虚拟接口 `ap0`）。
+fn migrate_ap_if_subnet_conflict(
+    ap_iface: &str,
+    ap_ip: &str,
+    sta_ip: &Option<String>,
+) -> Result<()> {
     if ap_ip != SOFTAP_DEFAULT_IPV4 {
         return Ok(());
     }
@@ -113,8 +118,8 @@ fn migrate_ap_if_subnet_conflict(iface: &str, ap_ip: &str, sta_ip: &Option<Strin
             SOFTAP_DEFAULT_IPV4,
             SOFTAP_FALLBACK_IPV4
         );
-        hostapd::stop_ap(iface);
-        match hostapd::start_ap(iface, SOFTAP_SSID, SOFTAP_FALLBACK_IPV4) {
+        hostapd::stop_ap(ap_iface);
+        match hostapd::start_ap(ap_iface, SOFTAP_SSID, SOFTAP_FALLBACK_IPV4) {
             Ok(()) => return Ok(()),
             Err(e) => {
                 log::error!(
@@ -124,7 +129,7 @@ fn migrate_ap_if_subnet_conflict(iface: &str, ap_ip: &str, sta_ip: &Option<Strin
                     e,
                     SOFTAP_DEFAULT_IPV4
                 );
-                return hostapd::start_ap(iface, SOFTAP_SSID, SOFTAP_DEFAULT_IPV4);
+                return hostapd::start_ap(ap_iface, SOFTAP_SSID, SOFTAP_DEFAULT_IPV4);
             }
         }
     }
@@ -156,15 +161,57 @@ pub fn connect(config: &AppConfig) -> Result<Option<WifiScanHandle>> {
         ));
     }
 
+    let concurrent = caps.supports_sta_ap_concurrent;
+    let want_sta = !config.wifi_ssid.trim().is_empty();
     let ap_ip = choose_ap_ip(&iface);
+
+    // Stop any existing AP stack on the physical interface before deciding whether
+    // we will re-create AP on the physical iface or a virtual iface.
     hostapd::stop_ap(&iface);
-    hostapd::start_ap(&iface, SOFTAP_SSID, ap_ip)?;
+    if let Err(e) = net::clear_ipv4_addresses(&iface) {
+        log::warn!(
+            "[{}] failed to clear stale IPv4 addresses on '{}': {}",
+            TAG,
+            iface,
+            e
+        );
+    }
+
+    // When concurrent STA+AP is supported AND STA is requested, use a virtual AP interface
+    // so hostapd and wpa_supplicant don't fight over the same nl80211 interface.
+    let ap_iface = if concurrent && want_sta {
+        match net::create_virtual_ap_iface(&iface, WIFI_LINUX_AP_VIRT_IFACE) {
+            Ok(()) => {
+                log::info!(
+                    "[{}] virtual AP interface '{}' created on phy of '{}'",
+                    TAG,
+                    WIFI_LINUX_AP_VIRT_IFACE,
+                    iface
+                );
+                WIFI_LINUX_AP_VIRT_IFACE.to_string()
+            }
+            Err(e) => {
+                log::warn!(
+                    "[{}] failed to create virtual AP iface '{}': {}; falling back to '{}'",
+                    TAG,
+                    WIFI_LINUX_AP_VIRT_IFACE,
+                    e,
+                    iface
+                );
+                iface.clone()
+            }
+        }
+    } else {
+        iface.clone()
+    };
+
+    hostapd::start_ap(&ap_iface, SOFTAP_SSID, ap_ip)?;
     clear_sta_state();
 
     let ap_ip_owned = ap_ip.to_string();
-    start_daemon_watch_thread(iface.clone(), ap_ip_owned);
+    start_daemon_watch_thread(iface.clone(), ap_iface.clone(), ap_ip_owned);
 
-    if config.wifi_ssid.trim().is_empty() {
+    if !want_sta {
         log::info!("[{}] AP ready (SSID: {})", TAG, SOFTAP_SSID);
         return Ok(Some(WifiScanHandle {
             iface,
@@ -172,7 +219,6 @@ pub fn connect(config: &AppConfig) -> Result<Option<WifiScanHandle>> {
         }));
     }
 
-    let concurrent = caps.supports_sta_ap_concurrent;
     if !concurrent {
         log::warn!(
             "[{}] phy does not advertise managed+AP concurrent combo; SoftAP only — STA connect skipped (use provisioning UI, then reboot if driver allows STA-only)",
@@ -188,13 +234,13 @@ pub fn connect(config: &AppConfig) -> Result<Option<WifiScanHandle>> {
 
     match wpa::connect_sta(&iface, config.wifi_ssid.trim(), config.wifi_pass.as_str()) {
         Ok(ip) => {
-            if let Err(e) = migrate_ap_if_subnet_conflict(&iface, ap_ip, &ip) {
+            if let Err(e) = migrate_ap_if_subnet_conflict(&ap_iface, ap_ip, &ip) {
                 log::error!(
                     "[{}] subnet migration failed after restore attempt: {}",
                     TAG,
                     e
                 );
-                if let Err(e2) = hostapd::start_ap(&iface, SOFTAP_SSID, ap_ip) {
+                if let Err(e2) = hostapd::start_ap(&ap_iface, SOFTAP_SSID, ap_ip) {
                     log::error!(
                         "[{}] SoftAP emergency recovery failed (user may lose hotspot until reboot): {}",
                         TAG,
@@ -212,7 +258,7 @@ pub fn connect(config: &AppConfig) -> Result<Option<WifiScanHandle>> {
         Err(e) => {
             metrics::record_wifi_failure_stage(e.stage());
             log::warn!(
-                "[{}] STA failed (wrong password or unreachable); SoftAP stays up for provisioning: {}",
+                "[{}] STA failed (auth/DHCP/unreachable); SoftAP stays up for provisioning: {}",
                 TAG,
                 e
             );
@@ -226,24 +272,27 @@ pub fn connect(config: &AppConfig) -> Result<Option<WifiScanHandle>> {
     }))
 }
 
-fn start_daemon_watch_thread(iface: String, ap_ip: String) {
+/// `sta_iface`: physical interface for wpa_supplicant (e.g. `wlan0`).
+/// `ap_iface`: interface where hostapd runs (virtual `ap0` or same as `sta_iface`).
+fn start_daemon_watch_thread(sta_iface: String, ap_iface: String, ap_ip: String) {
     let res = std::thread::Builder::new()
         .name("wifi-linux-watch".into())
         .spawn(move || {
             let hostapd_pf = hostapd::daemon_pid_path("hostapd");
             let dnsmasq_pf = hostapd::daemon_pid_path("dnsmasq");
-            let wpa_pf = wpa::supplicant_pid_path(&iface);
+            let wpa_pf = wpa::supplicant_pid_path(&sta_iface);
             loop {
                 std::thread::sleep(Duration::from_secs(WIFI_LINUX_DAEMON_WATCH_INTERVAL_SECS));
                 let need_ap = !pid_file_alive(&hostapd_pf) || !pid_file_alive(&dnsmasq_pf);
                 if need_ap {
                     log::warn!(
-                        "[{}] AP stack pid missing or dead; restarting hostapd+dnsmasq",
-                        TAG
+                        "[{}] AP stack pid missing or dead; restarting hostapd+dnsmasq on '{}'",
+                        TAG,
+                        ap_iface
                     );
                     metrics::record_wifi_ap_restart();
-                    hostapd::stop_ap(&iface);
-                    if let Err(e) = hostapd::start_ap(&iface, SOFTAP_SSID, &ap_ip) {
+                    hostapd::stop_ap(&ap_iface);
+                    if let Err(e) = hostapd::start_ap(&ap_iface, SOFTAP_SSID, &ap_ip) {
                         metrics::record_wifi_failure_stage(e.stage());
                         log::error!("[{}] AP stack restart failed: {}", TAG, e);
                     }
@@ -254,7 +303,7 @@ fn start_daemon_watch_thread(iface: String, ap_ip: String) {
                         if !process::is_pid_alive(pid) {
                             log::warn!("[{}] wpa_supplicant not running; re-ensure", TAG);
                             metrics::record_wifi_reconnect();
-                            if let Err(e) = wpa::ensure_daemon(&iface) {
+                            if let Err(e) = wpa::ensure_daemon(&sta_iface) {
                                 metrics::record_wifi_failure_stage(e.stage());
                                 log::error!("[{}] wpa_supplicant restart failed: {}", TAG, e);
                             }

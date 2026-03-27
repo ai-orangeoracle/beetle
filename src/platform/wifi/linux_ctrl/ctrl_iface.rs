@@ -2,12 +2,10 @@
 //! Shared ctrl protocol for wpa_supplicant / hostapd: `COMMAND\\n`, line-oriented until `OK`/`FAIL`/`PONG`.
 
 use crate::error::{Error, Result};
-use std::io::{BufRead, BufReader, Write};
-use std::os::unix::net::UnixStream;
+use std::os::unix::net::UnixDatagram;
 use std::path::Path;
 use std::time::Duration;
 
-const MAX_REPLY_LINES: u32 = 10_000;
 const MAX_REPLY_BYTES: usize = 512 * 1024;
 
 pub fn request_unix(
@@ -19,50 +17,33 @@ pub fn request_unix(
     if cmd.contains('\n') || cmd.contains('\r') {
         return Err(Error::config(stage, "invalid ctrl command"));
     }
-    let mut stream = UnixStream::connect(path).map_err(|e| Error::io(stage, e))?;
-    stream
+
+    let client_path = temp_client_socket_path();
+    let sock = UnixDatagram::bind(&client_path).map_err(|e| Error::io(stage, e))?;
+    sock.connect(path).map_err(|e| Error::io(stage, e))?;
+    sock
         .set_read_timeout(Some(timeout))
         .map_err(|e| Error::io(stage, e))?;
-    stream
+    sock
         .set_write_timeout(Some(timeout))
         .map_err(|e| Error::io(stage, e))?;
-    stream
-        .write_all(cmd.as_bytes())
-        .and_then(|_| stream.write_all(b"\n"))
-        .map_err(|e| Error::io(stage, e))?;
-    stream.flush().map_err(|e| Error::io(stage, e))?;
+    sock.send(cmd.as_bytes()).map_err(|e| Error::io(stage, e))?;
 
-    let mut reader = BufReader::new(&mut stream);
-    let mut body = String::new();
-    let mut line_buf = String::new();
-    for _ in 0..MAX_REPLY_LINES {
-        line_buf.clear();
-        let n = reader
-            .read_line(&mut line_buf)
-            .map_err(|e| Error::io(stage, e))?;
-        if n == 0 {
-            break;
-        }
-        let line = line_buf.trim_end_matches(['\n', '\r']);
-        if line == "OK" {
-            return Ok(body.trim_end().to_string());
-        }
-        if line.starts_with("FAIL") {
-            return Err(Error::config(stage, format!("ctrl iface: {line}")));
-        }
-        if line == "PONG" || line.starts_with("PONG") {
-            return Ok(line.to_string());
-        }
-        if !body.is_empty() {
-            body.push('\n');
-        }
-        body.push_str(line);
-        if body.len() > MAX_REPLY_BYTES {
-            return Err(Error::config(stage, "ctrl reply too large"));
-        }
+    let mut buf = vec![0u8; MAX_REPLY_BYTES];
+    let n = sock.recv(&mut buf).map_err(|e| Error::io(stage, e))?;
+    let _ = std::fs::remove_file(&client_path);
+    let reply = String::from_utf8_lossy(&buf[..n]).trim_end().to_string();
+    if reply.starts_with("FAIL") {
+        return Err(Error::config(stage, format!("ctrl iface: {reply}")));
     }
-    Err(Error::config(
-        stage,
-        "ctrl reply incomplete (missing OK/FAIL/PONG)",
-    ))
+    Ok(reply)
+}
+
+fn temp_client_socket_path() -> std::path::PathBuf {
+    let pid = std::process::id();
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    std::env::temp_dir().join(format!("beetle-ctrl-{}-{}.sock", pid, nanos))
 }
