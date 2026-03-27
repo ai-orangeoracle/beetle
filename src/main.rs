@@ -686,6 +686,7 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
                         + m_snap.errors_llm_parse
                         + m_snap.errors_channel_dispatch
                         + m_snap.errors_session_append
+                        + m_snap.errors_tls_admission
                         + m_snap.errors_other;
                     let error_flash = if current_error_total > last_error_total {
                         last_error_total = current_error_total;
