@@ -8,6 +8,7 @@ import type {
 } from '../types/appConfig'
 import type { DisplayConfig } from '../types/displayConfig'
 import type { HardwareSegment } from '../types/hardwareConfig'
+import type { AudioConfig } from '../types/audioConfig'
 import { ensureHardwareDeviceIds } from '../util/hardwareDeviceId'
 import { ConfigContext } from './ConfigContext'
 import { useDeviceApi } from '../hooks/useDeviceApi'
@@ -39,6 +40,9 @@ export function ConfigProvider({ children }: { children: React.ReactNode }) {
   const [displayConfig, setDisplayConfig] = useState<DisplayConfig | null>(null)
   const [displayLoading, setDisplayLoading] = useState(false)
   const [displayError, setDisplayError] = useState<string | null>(null)
+  const [audioConfig, setAudioConfig] = useState<AudioConfig | null>(null)
+  const [audioLoading, setAudioLoading] = useState(false)
+  const [audioError, setAudioError] = useState<string | null>(null)
   const [hardwareSegment, setHardwareSegment] = useState<HardwareSegment | null>(null)
   const [hardwareLoading, setHardwareLoading] = useState(false)
   const [hardwareError, setHardwareError] = useState<string | null>(null)
@@ -48,6 +52,8 @@ export function ConfigProvider({ children }: { children: React.ReactNode }) {
     setError(null)
     setDisplayConfig(null)
     setDisplayError(null)
+    setAudioConfig(null)
+    setAudioError(null)
     setHardwareSegment(null)
     setHardwareError(null)
   }, [])
@@ -172,6 +178,46 @@ export function ConfigProvider({ children }: { children: React.ReactNode }) {
     [api.display],
   )
 
+  const loadAudioConfig = useCallback(async () => {
+    if (!ready) {
+      setAudioError(ERROR_KEY_NO_BASE)
+      return
+    }
+    setAudioLoading(true)
+    setAudioError(null)
+    const res = await api.audio.get()
+    setAudioLoading(false)
+    if (res.ok && res.data != null && typeof res.data === 'object') {
+      setAudioConfig(res.data as AudioConfig)
+    } else {
+      setAudioError(
+        res.error === API_ERROR.NO_BASE_URL
+          ? ERROR_KEY_NO_BASE
+          : isDeviceOrPairingHint(res.error ?? '')
+            ? null
+            : ERROR_KEY_LOAD_FAILED,
+      )
+      setAudioConfig(null)
+    }
+  }, [api.audio, ready])
+
+  const saveAudioConfig = useCallback(
+    async (
+      body: AudioConfig,
+    ): Promise<{ ok: boolean; error?: string; restartRequired?: boolean }> => {
+      const res = await api.audio.save(body)
+      if (res.ok) setAudioConfig(body)
+      const err =
+        res.error === API_ERROR.PAIRING_REQUIRED ? 'device.pairingCodeRequired' : res.error
+      return {
+        ok: res.ok ?? false,
+        error: err,
+        restartRequired: Boolean(res.ok && res.data?.restart_required),
+      }
+    },
+    [api.audio],
+  )
+
   const loadHardwareConfig = useCallback(async () => {
     if (!ready) {
       setHardwareError(ERROR_KEY_NO_BASE)
@@ -235,6 +281,11 @@ export function ConfigProvider({ children }: { children: React.ReactNode }) {
       displayError,
       loadDisplayConfig,
       saveDisplayConfig,
+      audioConfig,
+      audioLoading,
+      audioError,
+      loadAudioConfig,
+      saveAudioConfig,
       hardwareSegment,
       hardwareLoading,
       hardwareError,
@@ -256,6 +307,11 @@ export function ConfigProvider({ children }: { children: React.ReactNode }) {
       displayError,
       loadDisplayConfig,
       saveDisplayConfig,
+      audioConfig,
+      audioLoading,
+      audioError,
+      loadAudioConfig,
+      saveAudioConfig,
       hardwareSegment,
       hardwareLoading,
       hardwareError,

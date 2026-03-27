@@ -14,6 +14,8 @@ pub fn body(ctx: &HandlerContext) -> Result<String, std::io::Error> {
         "POST /api/config/system",
         "GET /api/config/hardware",
         "POST /api/config/hardware",
+        "GET /api/config/audio",
+        "POST /api/config/audio",
         "GET /api/wifi/scan",
         "GET /api/health",
         "GET /api/diagnose",

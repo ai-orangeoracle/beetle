@@ -889,6 +889,265 @@ pub struct SystemSegment {
     pub locale: Option<String>,
 }
 
+// ── Audio config constants & schema ──
+pub const AUDIO_CONFIG_VERSION: u32 = 1;
+const AUDIO_SAMPLE_RATE_MIN: u32 = 8_000;
+const AUDIO_SAMPLE_RATE_MAX: u32 = 48_000;
+const AUDIO_BUFFER_SIZE_MIN: usize = 256;
+const AUDIO_BUFFER_SIZE_MAX: usize = 16 * 1024;
+const AUDIO_BITS_PER_SAMPLE_ALLOWED: [u16; 3] = [16, 24, 32];
+const AUDIO_DEVICE_TYPE_MAX_LEN: usize = 32;
+const AUDIO_KEYWORD_MAX_LEN: usize = 64;
+const AUDIO_VOICE_MAX_LEN: usize = 64;
+const AUDIO_RATE_MAX_LEN: usize = 16;
+const AUDIO_PITCH_MAX_LEN: usize = 16;
+const AUDIO_STT_API_KEY_MAX_LEN: usize = 256;
+const AUDIO_SOUND_EVENTS_MAX: usize = 16;
+const AUDIO_SOUND_EVENT_MAX_LEN: usize = 32;
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AudioMicPins {
+    pub ws: i32,
+    pub sck: i32,
+    pub din: i32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AudioSpeakerPins {
+    pub ws: i32,
+    pub sck: i32,
+    pub dout: i32,
+    #[serde(default)]
+    pub sd: Option<i32>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AudioMicrophoneConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub device_type: String,
+    pub pins: AudioMicPins,
+    #[serde(default = "default_audio_sample_rate")]
+    pub sample_rate: u32,
+    #[serde(default = "default_audio_bits_per_sample")]
+    pub bits_per_sample: u16,
+    #[serde(default = "default_audio_buffer_size")]
+    pub buffer_size: usize,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AudioSpeakerConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub device_type: String,
+    pub pins: AudioSpeakerPins,
+    #[serde(default = "default_audio_sample_rate")]
+    pub sample_rate: u32,
+    #[serde(default = "default_audio_bits_per_sample")]
+    pub bits_per_sample: u16,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AudioVadConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_audio_vad_threshold")]
+    pub threshold: f32,
+    #[serde(default = "default_audio_vad_silence_ms")]
+    pub silence_duration_ms: u32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AudioWakeWordConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub keyword: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AudioSttConfig {
+    #[serde(default)]
+    pub provider: String,
+    #[serde(default)]
+    pub api_url: String,
+    #[serde(default)]
+    pub api_key: String,
+    #[serde(default)]
+    pub model: String,
+    #[serde(default)]
+    pub language: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AudioTtsConfig {
+    #[serde(default)]
+    pub provider: String,
+    #[serde(default)]
+    pub voice: String,
+    #[serde(default)]
+    pub rate: String,
+    #[serde(default)]
+    pub pitch: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AudioAmbientListeningConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub detect_emotions: bool,
+    #[serde(default)]
+    pub sound_events: Vec<String>,
+    #[serde(default = "default_audio_cooldown_minutes")]
+    pub cooldown_minutes: u32,
+    #[serde(default = "default_audio_check_interval_seconds")]
+    pub check_interval_seconds: u32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AudioLedStatesConfig {
+    #[serde(default)]
+    pub listening: String,
+    #[serde(default)]
+    pub processing: String,
+    #[serde(default)]
+    pub speaking: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AudioLedIndicatorConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    pub pin: i32,
+    pub states: AudioLedStatesConfig,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AudioSegment {
+    #[serde(default = "default_audio_config_version")]
+    pub version: u32,
+    #[serde(default)]
+    pub enabled: bool,
+    pub microphone: AudioMicrophoneConfig,
+    pub speaker: AudioSpeakerConfig,
+    pub vad: AudioVadConfig,
+    pub wake_word: AudioWakeWordConfig,
+    pub stt: AudioSttConfig,
+    pub tts: AudioTtsConfig,
+    pub ambient_listening: AudioAmbientListeningConfig,
+    pub led_indicator: AudioLedIndicatorConfig,
+}
+
+fn default_audio_config_version() -> u32 {
+    AUDIO_CONFIG_VERSION
+}
+
+fn default_audio_sample_rate() -> u32 {
+    16_000
+}
+
+fn default_audio_bits_per_sample() -> u16 {
+    16
+}
+
+fn default_audio_buffer_size() -> usize {
+    1024
+}
+
+fn default_audio_vad_threshold() -> f32 {
+    0.5
+}
+
+fn default_audio_vad_silence_ms() -> u32 {
+    1000
+}
+
+fn default_audio_cooldown_minutes() -> u32 {
+    10
+}
+
+fn default_audio_check_interval_seconds() -> u32 {
+    300
+}
+
+pub fn default_disabled_audio_segment() -> AudioSegment {
+    AudioSegment {
+        version: AUDIO_CONFIG_VERSION,
+        enabled: false,
+        microphone: AudioMicrophoneConfig {
+            enabled: false,
+            device_type: "i2s_inmp441".to_string(),
+            pins: AudioMicPins {
+                ws: 25,
+                sck: 26,
+                din: 27,
+            },
+            sample_rate: default_audio_sample_rate(),
+            bits_per_sample: default_audio_bits_per_sample(),
+            buffer_size: default_audio_buffer_size(),
+        },
+        speaker: AudioSpeakerConfig {
+            enabled: false,
+            device_type: "i2s_max98357a".to_string(),
+            pins: AudioSpeakerPins {
+                ws: 32,
+                sck: 33,
+                dout: 22,
+                sd: None,
+            },
+            sample_rate: default_audio_sample_rate(),
+            bits_per_sample: default_audio_bits_per_sample(),
+        },
+        vad: AudioVadConfig {
+            enabled: false,
+            threshold: default_audio_vad_threshold(),
+            silence_duration_ms: default_audio_vad_silence_ms(),
+        },
+        wake_word: AudioWakeWordConfig {
+            enabled: false,
+            keyword: "hi_beetle".to_string(),
+        },
+        stt: AudioSttConfig {
+            provider: "whisper".to_string(),
+            api_url: "https://api.openai.com/v1/audio/transcriptions".to_string(),
+            api_key: String::new(),
+            model: "whisper-1".to_string(),
+            language: "zh".to_string(),
+        },
+        tts: AudioTtsConfig {
+            provider: "edge".to_string(),
+            voice: "zh-CN-XiaoxiaoNeural".to_string(),
+            rate: "+0%".to_string(),
+            pitch: "+0Hz".to_string(),
+        },
+        ambient_listening: AudioAmbientListeningConfig {
+            enabled: false,
+            detect_emotions: true,
+            sound_events: vec![
+                "sigh".to_string(),
+                "cough".to_string(),
+                "laugh".to_string(),
+                "cry".to_string(),
+                "door_close".to_string(),
+            ],
+            cooldown_minutes: default_audio_cooldown_minutes(),
+            check_interval_seconds: default_audio_check_interval_seconds(),
+        },
+        led_indicator: AudioLedIndicatorConfig {
+            enabled: false,
+            pin: 2,
+            states: AudioLedStatesConfig {
+                listening: "breathing".to_string(),
+                processing: "fast_blink".to_string(),
+                speaking: "solid".to_string(),
+            },
+        },
+    }
+}
+
 // ── Hardware device config constants ──
 const MAX_HARDWARE_DEVICES: usize = 8;
 const MAX_PWM_DEVICES: usize = 4;
@@ -1070,6 +1329,173 @@ fn validate_system_segment_fields(seg: &SystemSegment) -> Result<()> {
             "proxy_url must be empty or like http://host:port",
         ));
     }
+    Ok(())
+}
+
+fn validate_audio_sample_rate(value: u32, field: &str) -> Result<()> {
+    if !(AUDIO_SAMPLE_RATE_MIN..=AUDIO_SAMPLE_RATE_MAX).contains(&value) {
+        return Err(Error::config(
+            "audio",
+            format!(
+                "{} must be {}..={}",
+                field, AUDIO_SAMPLE_RATE_MIN, AUDIO_SAMPLE_RATE_MAX
+            ),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_audio_bits_per_sample(value: u16, field: &str) -> Result<()> {
+    if !AUDIO_BITS_PER_SAMPLE_ALLOWED.contains(&value) {
+        return Err(Error::config(
+            "audio",
+            format!(
+                "{} must be one of {:?}",
+                field, AUDIO_BITS_PER_SAMPLE_ALLOWED
+            ),
+        ));
+    }
+    Ok(())
+}
+
+/// 私有：校验 AudioSegment 字段（引脚、采样率、阈值、字符串长度等）。
+fn validate_audio_segment(seg: &AudioSegment) -> Result<()> {
+    if seg.version != AUDIO_CONFIG_VERSION {
+        return Err(Error::config(
+            "audio",
+            format!(
+                "audio version must be {} (got {})",
+                AUDIO_CONFIG_VERSION, seg.version
+            ),
+        ));
+    }
+    if seg.microphone.device_type.len() > AUDIO_DEVICE_TYPE_MAX_LEN
+        || seg.speaker.device_type.len() > AUDIO_DEVICE_TYPE_MAX_LEN
+    {
+        return Err(Error::config(
+            "audio",
+            format!(
+                "microphone/speaker device_type length must be <= {}",
+                AUDIO_DEVICE_TYPE_MAX_LEN
+            ),
+        ));
+    }
+    if seg.wake_word.keyword.len() > AUDIO_KEYWORD_MAX_LEN {
+        return Err(Error::config(
+            "audio",
+            format!("wake_word.keyword length must be <= {}", AUDIO_KEYWORD_MAX_LEN),
+        ));
+    }
+    if seg.stt.provider.len() > CONFIG_FIELD_MAX_LEN
+        || seg.stt.model.len() > CONFIG_FIELD_MAX_LEN
+        || seg.stt.language.len() > CONFIG_FIELD_MAX_LEN
+        || seg.tts.provider.len() > CONFIG_FIELD_MAX_LEN
+        || seg.tts.voice.len() > AUDIO_VOICE_MAX_LEN
+        || seg.tts.rate.len() > AUDIO_RATE_MAX_LEN
+        || seg.tts.pitch.len() > AUDIO_PITCH_MAX_LEN
+    {
+        return Err(Error::config(
+            "audio",
+            "audio text fields exceed max length",
+        ));
+    }
+    if seg.stt.api_key.len() > AUDIO_STT_API_KEY_MAX_LEN {
+        return Err(Error::config(
+            "audio",
+            format!("stt.api_key length must be <= {}", AUDIO_STT_API_KEY_MAX_LEN),
+        ));
+    }
+    if seg.stt.api_url.len() > CONFIG_URL_MAX_LEN {
+        return Err(Error::config(
+            "audio",
+            format!("stt.api_url length must be <= {}", CONFIG_URL_MAX_LEN),
+        ));
+    }
+
+    if seg.microphone.enabled {
+        validate_pin_range(seg.microphone.pins.ws)?;
+        validate_pin_range(seg.microphone.pins.sck)?;
+        validate_pin_range(seg.microphone.pins.din)?;
+        validate_audio_sample_rate(seg.microphone.sample_rate, "microphone.sample_rate")?;
+        validate_audio_bits_per_sample(
+            seg.microphone.bits_per_sample,
+            "microphone.bits_per_sample",
+        )?;
+        if !(AUDIO_BUFFER_SIZE_MIN..=AUDIO_BUFFER_SIZE_MAX).contains(&seg.microphone.buffer_size) {
+            return Err(Error::config(
+                "audio",
+                format!(
+                    "microphone.buffer_size must be {}..={}",
+                    AUDIO_BUFFER_SIZE_MIN, AUDIO_BUFFER_SIZE_MAX
+                ),
+            ));
+        }
+    }
+    if seg.speaker.enabled {
+        validate_pin_range(seg.speaker.pins.ws)?;
+        validate_pin_range(seg.speaker.pins.sck)?;
+        validate_pin_range(seg.speaker.pins.dout)?;
+        if let Some(sd) = seg.speaker.pins.sd {
+            validate_pin_range(sd)?;
+        }
+        validate_audio_sample_rate(seg.speaker.sample_rate, "speaker.sample_rate")?;
+        validate_audio_bits_per_sample(seg.speaker.bits_per_sample, "speaker.bits_per_sample")?;
+    }
+    if seg.vad.enabled {
+        if !(0.0..=1.0).contains(&seg.vad.threshold) {
+            return Err(Error::config("audio", "vad.threshold must be in [0.0, 1.0]"));
+        }
+        if seg.vad.silence_duration_ms == 0 || seg.vad.silence_duration_ms > 60_000 {
+            return Err(Error::config(
+                "audio",
+                "vad.silence_duration_ms must be 1..=60000",
+            ));
+        }
+    }
+    if seg.ambient_listening.sound_events.len() > AUDIO_SOUND_EVENTS_MAX {
+        return Err(Error::config(
+            "audio",
+            format!("sound_events count must be <= {}", AUDIO_SOUND_EVENTS_MAX),
+        ));
+    }
+    for (i, evt) in seg.ambient_listening.sound_events.iter().enumerate() {
+        if evt.is_empty() || evt.len() > AUDIO_SOUND_EVENT_MAX_LEN {
+            return Err(Error::config(
+                "audio",
+                format!(
+                    "sound_events[{}] length must be 1..={}",
+                    i, AUDIO_SOUND_EVENT_MAX_LEN
+                ),
+            ));
+        }
+    }
+    if seg.ambient_listening.cooldown_minutes > 24 * 60 {
+        return Err(Error::config(
+            "audio",
+            "ambient_listening.cooldown_minutes must be <= 1440",
+        ));
+    }
+    if seg.ambient_listening.check_interval_seconds == 0
+        || seg.ambient_listening.check_interval_seconds > 24 * 3600
+    {
+        return Err(Error::config(
+            "audio",
+            "ambient_listening.check_interval_seconds must be 1..=86400",
+        ));
+    }
+    if seg.led_indicator.enabled {
+        validate_pin_range(seg.led_indicator.pin)?;
+    }
+    if seg.led_indicator.states.listening.len() > CONFIG_FIELD_MAX_LEN
+        || seg.led_indicator.states.processing.len() > CONFIG_FIELD_MAX_LEN
+        || seg.led_indicator.states.speaking.len() > CONFIG_FIELD_MAX_LEN
+    {
+        return Err(Error::config(
+            "audio",
+            format!("led_indicator.states field length must be <= {}", CONFIG_FIELD_MAX_LEN),
+        ));
+    }
+
     Ok(())
 }
 
@@ -1525,6 +1951,28 @@ pub fn save_hardware_segment(writer: &dyn ConfigFileStore, body: &str) -> Result
     let json =
         serde_json::to_string(&seg).map_err(|e| Error::config("serialize", e.to_string()))?;
     writer.write_config_file("config/hardware.json", json.as_bytes())?;
+    Ok(())
+}
+
+/// GET /api/config/audio：返回 audio.json 内容（不存在时返回 disabled 默认配置）。
+pub fn get_audio_segment(reader: &dyn ConfigFileStore) -> Result<String> {
+    match reader.read_config_file("config/audio.json")? {
+        Some(b) => Ok(String::from_utf8_lossy(&b).into_owned()),
+        None => serde_json::to_string(&default_disabled_audio_segment())
+            .map_err(|e| Error::config("audio", e.to_string())),
+    }
+}
+
+/// POST /api/config/audio：校验并写入 SPIFFS config/audio.json；body 即全量，不做合并。
+pub fn save_audio_segment(writer: &dyn ConfigFileStore, body: &str) -> Result<()> {
+    let mut seg: AudioSegment =
+        serde_json::from_str(body).map_err(|e| Error::config("deserialize", e.to_string()))?;
+    if seg.version == 0 {
+        seg.version = AUDIO_CONFIG_VERSION;
+    }
+    validate_audio_segment(&seg)?;
+    let json = serde_json::to_string(&seg).map_err(|e| Error::config("serialize", e.to_string()))?;
+    writer.write_config_file("config/audio.json", json.as_bytes())?;
     Ok(())
 }
 

@@ -450,6 +450,34 @@ pub(super) fn register_all_esp_routes(
 
     esp_route!(
         server,
+        "/api/config/audio",
+        Get,
+        ctx,
+        env,
+        config_store,
+        EspBodyMode::None
+    );
+    esp_route!(
+        server,
+        "/api/config/audio",
+        Options,
+        ctx,
+        env,
+        config_store,
+        EspBodyMode::None
+    );
+    esp_route!(
+        server,
+        "/api/config/audio",
+        Post,
+        ctx,
+        env,
+        config_store,
+        EspBodyMode::Utf8(POST_BODY_MAX_LEN)
+    );
+
+    esp_route!(
+        server,
         "/api/config/display",
         Get,
         ctx,

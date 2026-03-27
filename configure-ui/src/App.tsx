@@ -20,6 +20,7 @@ import {
 import { SkillsPage } from './pages/SkillsPage'
 import { DeviceConfigLayout } from './pages/DeviceConfigLayout'
 import { DisplayConfigPanel } from './pages/DisplayConfigPanel'
+import { AudioConfigPanel } from './pages/AudioConfigPanel'
 import { HardwareGpioPanel } from './pages/HardwareGpioPanel'
 import { PlaceholderPage } from './pages/PlaceholderPage'
 import { useScrollToTop } from './hooks/useScrollToTop'
@@ -46,6 +47,7 @@ function App() {
           <Route path="/device-config" element={<DeviceConfigLayout />}>
             <Route index element={<Navigate to="display" replace />} />
             <Route path="display" element={<DisplayConfigPanel />} />
+            <Route path="audio" element={<AudioConfigPanel />} />
             <Route path="hardware" element={<HardwareGpioPanel />} />
           </Route>
           <Route

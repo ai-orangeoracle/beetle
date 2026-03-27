@@ -238,6 +238,40 @@ pub fn dispatch(
                 .map_err(|e| err_other("http_router_dispatch", e))?;
             Ok(api_to_out(r))
         }
+        ("GET", "/api/config/audio") => {
+            if let Some(r) = auth::require_activated(store) {
+                return Ok(api_to_out(r));
+            }
+            let body =
+                handlers::config::get_audio_body(ctx).map_err(|e| err_other("http_router_dispatch", e))?;
+            Ok(OutgoingResponse::json(
+                200,
+                "OK",
+                CORS_HEADERS,
+                body.into_bytes(),
+            ))
+        }
+        ("POST", "/api/config/audio") => {
+            if let Some(r) = auth::require_pairing_code(store, uri, &incoming.headers) {
+                return Ok(api_to_out(r));
+            }
+            if let Some(r) = auth::require_csrf(store, &incoming.headers) {
+                return Ok(api_to_out(r));
+            }
+            let body_str = std::str::from_utf8(&incoming.body).map_err(|_| Error::Other {
+                source: Box::new(std::io::Error::other("invalid utf8")),
+                stage: "http_router_dispatch",
+            })?;
+            let r =
+                handlers::config::post_audio(ctx, body_str).map_err(|e| err_other("http_router_dispatch", e))?;
+            let mut restart = RestartAction::None;
+            if r.status == 200 && common::restart_requested_from_uri(uri) {
+                restart = RestartAction::After300Ms;
+            }
+            let mut out = api_to_out(r);
+            out.restart = restart;
+            Ok(out)
+        }
         ("GET", "/api/config/display") => {
             if let Some(r) = auth::require_activated(store) {
                 return Ok(api_to_out(r));

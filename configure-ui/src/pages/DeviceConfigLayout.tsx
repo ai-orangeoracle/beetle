@@ -9,7 +9,7 @@ import { ConfirmDialog } from "../components/ConfirmDialog";
 import { NavBlockerContext } from "../contexts/NavBlockerContext";
 
 /** 与路由 `/device-config/:tab` 对齐；新增设备子模块时在此追加 */
-const TAB_SEGMENTS = ["display", "hardware"] as const;
+const TAB_SEGMENTS = ["display", "audio", "hardware"] as const;
 type TabSegment = (typeof TAB_SEGMENTS)[number];
 
 function tabFromPathname(pathname: string): TabSegment {
@@ -20,7 +20,7 @@ function tabFromPathname(pathname: string): TabSegment {
 
 /**
  * 设备配置壳层：顶部 Tab 固定，子路由内容在下方独立滚动。
- * /device-config/display — 显示；/device-config/hardware — GPIO 等硬件设备
+ * /device-config/display — 显示；/device-config/audio — 音频；/device-config/hardware — GPIO 等硬件设备
  */
 export function DeviceConfigLayout() {
   const { t } = useTranslation();
@@ -103,6 +103,7 @@ export function DeviceConfigLayout() {
           }}
         >
           <Tab value="display" label={t("deviceConfig.tabDisplay")} />
+          <Tab value="audio" label={t("deviceConfig.tabAudio")} />
           <Tab value="hardware" label={t("deviceConfig.tabGpioDevices")} />
         </Tabs>
       </Box>

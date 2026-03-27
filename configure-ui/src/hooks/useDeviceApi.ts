@@ -6,6 +6,7 @@ import { request } from '../api/client'
 import * as configApi from '../api/endpoints/config'
 import * as displayApi from '../api/endpoints/display'
 import * as hardwareApi from '../api/endpoints/hardware'
+import * as audioApi from '../api/endpoints/audio'
 import * as soulUserApi from '../api/endpoints/soulUser'
 import * as skillsApi from '../api/endpoints/skills'
 import * as systemApi from '../api/endpoints/system'
@@ -17,6 +18,7 @@ import type {
 import type { SkillItem } from '../api/endpoints/skills'
 import type { DisplayConfig } from '../types/displayConfig'
 import type { HardwareSegment } from '../types/hardwareConfig'
+import type { AudioConfig } from '../types/audioConfig'
 
 export { API_ERROR }
 
@@ -42,6 +44,11 @@ export function useDeviceApi() {
         get: () => displayApi.getDisplayConfig(baseUrl ?? ''),
         save: (body: DisplayConfig) =>
           displayApi.saveDisplayConfig(baseUrl ?? '', (pairingCode ?? '').trim(), body),
+      },
+      audio: {
+        get: () => audioApi.getAudioConfig(baseUrl ?? ''),
+        save: (body: AudioConfig) =>
+          audioApi.saveAudioConfig(baseUrl ?? '', (pairingCode ?? '').trim(), body),
       },
       hardware: {
         get: () => hardwareApi.getHardwareConfig(baseUrl ?? ''),

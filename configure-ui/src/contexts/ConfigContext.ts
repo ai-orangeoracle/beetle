@@ -7,6 +7,7 @@ import type {
 } from '../types/appConfig'
 import type { DisplayConfig } from '../types/displayConfig'
 import type { HardwareSegment } from '../types/hardwareConfig'
+import type { AudioConfig } from '../types/audioConfig'
 
 export interface ConfigContextValue {
   config: AppConfig | null
@@ -24,6 +25,13 @@ export interface ConfigContextValue {
   loadDisplayConfig: () => Promise<void>
   saveDisplayConfig: (
     body: DisplayConfig,
+  ) => Promise<{ ok: boolean; error?: string; restartRequired?: boolean }>
+  audioConfig: AudioConfig | null
+  audioLoading: boolean
+  audioError: string | null
+  loadAudioConfig: () => Promise<void>
+  saveAudioConfig: (
+    body: AudioConfig,
   ) => Promise<{ ok: boolean; error?: string; restartRequired?: boolean }>
   hardwareSegment: HardwareSegment | null
   hardwareLoading: boolean

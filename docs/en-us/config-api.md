@@ -37,7 +37,7 @@ Other paths return **401** when not activated (wording may vary by locale).
 
 These require **activation** but **not** `?code=` or `X-Pairing-Code` (this is what “no pairing code” means in user docs: **not** “works before activation”):
 
-**GET /**, **GET /api/config**, **GET /api/config/hardware**, **GET /api/config/display**, **GET /api/health**, **GET /api/metrics**, **GET /api/resource**, **GET /api/diagnose**, **GET /api/system_info**, **GET /api/channel_connectivity**, **GET /api/sessions**, **GET /api/memory/status**, **GET /api/skills**, **GET /api/soul**, **GET /api/user**; with `ota` feature, **GET /api/ota/check**.
+**GET /**, **GET /api/config**, **GET /api/config/hardware**, **GET /api/config/audio**, **GET /api/config/display**, **GET /api/health**, **GET /api/metrics**, **GET /api/resource**, **GET /api/diagnose**, **GET /api/system_info**, **GET /api/channel_connectivity**, **GET /api/sessions**, **GET /api/memory/status**, **GET /api/skills**, **GET /api/soul**, **GET /api/user**; with `ota` feature, **GET /api/ota/check**.
 
 ### Writes: pairing code + CSRF
 
@@ -46,7 +46,7 @@ After activation, these **POST**/**DELETE** calls also need:
 1. **Pairing code**: `?code=<6 digits>` and/or `X-Pairing-Code: <6 digits>`.
 2. **CSRF**: Header `X-CSRF-Token` or `x-csrf-token` with the `csrf_token` value from **GET /api/csrf_token**; missing/invalid → **403**.
 
-Includes: `POST /api/config/wifi`, `/api/config/llm`, `/api/config/channels`, `/api/config/system`, `/api/config/hardware`, `/api/config/display`; **POST/DELETE /api/skills**, **POST /api/skills/import**; **POST /api/soul**, **POST /api/user**; **DELETE /api/sessions**; **POST /api/restart**, **POST /api/config_reset**, **POST /api/webhook**; **POST /api/ota** (if built with `ota`).
+Includes: `POST /api/config/wifi`, `/api/config/llm`, `/api/config/channels`, `/api/config/system`, `/api/config/hardware`, `/api/config/audio`, `/api/config/display`; **POST/DELETE /api/skills**, **POST /api/skills/import**; **POST /api/soul**, **POST /api/user**; **DELETE /api/sessions**; **POST /api/restart**, **POST /api/config_reset**, **POST /api/webhook**; **POST /api/ota** (if built with `ota`).
 
 **Exceptions**: **POST /api/pairing_code** (not activated only) needs neither; **channel webhooks** use platform-specific verification, not pairing/CSRF.
 
@@ -111,7 +111,7 @@ Includes: `POST /api/config/wifi`, `/api/config/llm`, `/api/config/channels`, `/
 
 ## Config read/write
 
-**Storage**: NVS holds only 6 small keys (WiFi SSID/password, proxy, session count, group trigger, UI locale). LLM multi-source and channel config are on SPIFFS (`config/llm.json`, `config/channels.json`); hardware device config on `config/hardware.json`; skill enable/order on `config/skills_meta.json`. GET /api/config merges NVS and SPIFFS and returns the full config.
+**Storage**: NVS holds only 6 small keys (WiFi SSID/password, proxy, session count, group trigger, UI locale). LLM multi-source and channel config are on SPIFFS (`config/llm.json`, `config/channels.json`); hardware device config on `config/hardware.json`; audio config on `config/audio.json`; skill enable/order on `config/skills_meta.json`. GET /api/config merges NVS and SPIFFS and returns the full config.
 
 ### GET /api/wifi/scan
 
@@ -191,6 +191,25 @@ Includes: `POST /api/config/wifi`, `/api/config/llm`, `/api/config/channels`, `/
   - `adc_in` pin must be in ADC1 range (GPIO 1–10)
   - `pwm_out` device count ≤ 4; `options.frequency_hz` if present must be 1–40000
 - **Response**: Success 200 `{"ok": true}`; validation failure 400.
+
+### GET /api/config/audio
+
+- **Purpose**: Get current audio device config segment (`config/audio.json` content).
+- **Auth**: Activated; GET does **not** need a pairing code in the request.
+- **Response**: 200, JSON is `AudioSegment`. If the file does not exist, returns disabled defaults (`enabled=false`).
+
+### POST /api/config/audio
+
+- **Purpose**: Write the audio device config segment to SPIFFS (`config/audio.json`); request body is the full segment; backend validates and writes. Takes effect after reboot.
+- **Auth**: Activated + pairing code + CSRF.
+- **Request**: `Content-Type: application/json`, Body is `AudioSegment`, structure aligned with the `config/audio.json` example in [`voice-interaction-plan.md`](../../dev-docs/voice-interaction-plan.md) (`microphone`, `speaker`, `vad`, `wake_word`, `stt`, `tts`, `ambient_listening`, `led_indicator`).
+- **Validation** (this segment only):
+  - `version` must be `1`
+  - For enabled microphone/speaker: pins in 1–48; sample rate 8000–48000; bits per sample in 16/24/32
+  - microphone `buffer_size` must be 256–16384
+  - `vad.threshold` must be in [0,1], `silence_duration_ms` in 1–60000
+  - `ambient_listening.sound_events` max 16 items, each 1–32 chars; `check_interval_seconds` in 1–86400
+- **Response**: Success 200 `{"ok": true, "restart_required": true}`; validation failure 400.
 
 ### POST /api/config/wifi
 

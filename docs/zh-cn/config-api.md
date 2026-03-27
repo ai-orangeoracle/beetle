@@ -37,7 +37,7 @@
 
 以下接口在**已激活**后，**无需** `?code=` 或 `X-Pairing-Code`（与部分用户文档中「无需配对码」同义：**指请求不必附带码**，不是指未激活即可访问）：
 
-**GET /**、**GET /api/config**、**GET /api/config/hardware**、**GET /api/config/display**、**GET /api/health**、**GET /api/metrics**、**GET /api/resource**、**GET /api/diagnose**、**GET /api/system_info**、**GET /api/channel_connectivity**、**GET /api/sessions**、**GET /api/memory/status**、**GET /api/skills**、**GET /api/soul**、**GET /api/user**；启用 `ota` 时另有 **GET /api/ota/check**。
+**GET /**、**GET /api/config**、**GET /api/config/hardware**、**GET /api/config/audio**、**GET /api/config/display**、**GET /api/health**、**GET /api/metrics**、**GET /api/resource**、**GET /api/diagnose**、**GET /api/system_info**、**GET /api/channel_connectivity**、**GET /api/sessions**、**GET /api/memory/status**、**GET /api/skills**、**GET /api/soul**、**GET /api/user**；启用 `ota` 时另有 **GET /api/ota/check**。
 
 未激活时访问上述接口 → 401。
 
@@ -48,7 +48,7 @@
 1. **配对码**：`?code=<6位数字>` 和/或 `X-Pairing-Code: <6位数字>`。
 2. **CSRF**：`X-CSRF-Token`（或 `x-csrf-token`）为 **GET /api/csrf_token** 返回体中的 `csrf_token`；缺失或无效 → **403**。
 
-包括但不限于：`POST /api/config/wifi`、`/api/config/llm`、`/api/config/channels`、`/api/config/system`、`/api/config/hardware`、`/api/config/display`；**POST**/**DELETE /api/skills**、**POST /api/skills/import**；**POST /api/soul**、**POST /api/user**；**DELETE /api/sessions**；**POST /api/restart**、**POST /api/config_reset**、**POST /api/webhook**；**POST /api/ota**（若编译启用）。
+包括但不限于：`POST /api/config/wifi`、`/api/config/llm`、`/api/config/channels`、`/api/config/system`、`/api/config/hardware`、`/api/config/audio`、`/api/config/display`；**POST**/**DELETE /api/skills**、**POST /api/skills/import**；**POST /api/soul**、**POST /api/user**；**DELETE /api/sessions**；**POST /api/restart**、**POST /api/config_reset**、**POST /api/webhook**；**POST /api/ota**（若编译启用）。
 
 **例外**：**POST /api/pairing_code**（仅未激活）不要求精；各**通道 webhook** 使用平台约定鉴权，**不要求精**配对码/CSRF。
 
@@ -112,7 +112,7 @@
 
 ## 配置读写
 
-**存储策略**：NVS 仅存 6 个小键（WiFi SSID/密码、代理、会话条数、群组触发、界面语言）；LLM 多源与通道配置存 SPIFFS（`config/llm.json`、`config/channels.json`），硬件设备配置存 `config/hardware.json`，技能启用/顺序存 `config/skills_meta.json`。GET /api/config 合并 NVS 与 SPIFFS 后返回完整配置。
+**存储策略**：NVS 仅存 6 个小键（WiFi SSID/密码、代理、会话条数、群组触发、界面语言）；LLM 多源与通道配置存 SPIFFS（`config/llm.json`、`config/channels.json`），硬件设备配置存 `config/hardware.json`，音频配置存 `config/audio.json`，技能启用/顺序存 `config/skills_meta.json`。GET /api/config 合并 NVS 与 SPIFFS 后返回完整配置。
 
 ### GET /api/wifi/scan
 
@@ -192,6 +192,25 @@
   - `adc_in` 引脚须在 ADC1 范围（GPIO 1–10）
   - `pwm_out` 设备总数 ≤ 4；`options.frequency_hz` 若存在须在 1–40000
 - **响应**：成功 200 `{"ok": true}`；校验失败 400。
+
+### GET /api/config/audio
+
+- **用途**：获取当前音频设备配置段（`config/audio.json` 内容）。
+- **鉴权**：已激活；GET **不必**附带配对码。
+- **响应**：200，JSON 为 `AudioSegment`。文件不存在时返回 disabled 默认配置（`enabled=false`）。
+
+### POST /api/config/audio
+
+- **用途**：写入音频设备配置段到 SPIFFS（`config/audio.json`）；请求体为 segment 全量，后端校验并写入。重启后生效。
+- **鉴权**：已激活 + 配对码 + CSRF。
+- **请求**：`Content-Type: application/json`，Body 为 `AudioSegment`，结构见 [`voice-interaction-plan.md`](../../dev-docs/voice-interaction-plan.md) 的 `config/audio.json` 示例（含 `microphone`、`speaker`、`vad`、`wake_word`、`stt`、`tts`、`ambient_listening`、`led_indicator`）。
+- **校验**（仅本段）：
+  - `version` 必须为 `1`
+  - 启用的 microphone/speaker 引脚需在 1～48；采样率 8000～48000；位深 16/24/32
+  - microphone `buffer_size` 需在 256～16384
+  - `vad.threshold` 需在 [0,1]；`silence_duration_ms` 需在 1～60000
+  - `ambient_listening.sound_events` 最多 16 项，每项 1～32 字符；`check_interval_seconds` 需在 1～86400
+- **响应**：成功 200，`{"ok": true, "restart_required": true}`；校验失败 400。
 
 ### POST /api/config/wifi
 

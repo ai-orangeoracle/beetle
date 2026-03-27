@@ -88,6 +88,22 @@ pub fn post_hardware(ctx: &HandlerContext, body: &str) -> Result<ApiResponse, st
     }
 }
 
+/// GET /api/config/audio：返回 AudioSegment JSON（文件不存在时返回 disabled 默认配置）。
+pub fn get_audio_body(ctx: &HandlerContext) -> Result<String, std::io::Error> {
+    config::get_audio_segment(ctx.config_file_store.as_ref()).map_err(|e| to_io(e.to_string()))
+}
+
+/// POST /api/config/audio：校验并写入 AudioSegment 到 SPIFFS config/audio.json。
+pub fn post_audio(ctx: &HandlerContext, body: &str) -> Result<ApiResponse, std::io::Error> {
+    let loc = locale_from_store(ctx.config_store.as_ref());
+    match config::save_audio_segment(ctx.config_file_store.as_ref(), body) {
+        Ok(()) => Ok(ApiResponse::ok_200_json(
+            r#"{"ok":true,"restart_required":true}"#,
+        )),
+        Err(e) => Ok(ApiResponse::err_400(&tr_error(&e, loc))),
+    }
+}
+
 /// GET /api/config/display：返回 DisplayConfig JSON（文件不存在时返回 disabled 默认配置）。
 pub fn get_display_body(ctx: &HandlerContext) -> Result<String, std::io::Error> {
     config::get_display_segment(ctx.config_file_store.as_ref()).map_err(|e| to_io(e.to_string()))
