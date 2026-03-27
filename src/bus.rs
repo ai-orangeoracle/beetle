@@ -25,8 +25,32 @@ pub struct PcMsg {
     )]
     pub chat_id: Arc<str>,
     pub content: String,
+    /// 请求关联 ID：用于贯通 agent -> dispatch -> sender 的端到端时延日志。
+    #[serde(default)]
+    pub req_id: Option<String>,
+    /// 入站来源：用于调度与指标分流；默认 user（兼容历史持久化消息）。
+    #[serde(default)]
+    pub ingress: IngressKind,
+    /// 消息入队时间（Unix ms）；用于排队等待时延与 cron 端到端时延基线。
+    #[serde(default = "current_unix_ms")]
+    pub enqueue_ts_ms: u64,
     /// 是否来自群组（group/supergroup）；用于 system 注入与 SILENT 约定。
     pub is_group: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum IngressKind {
+    #[default]
+    User,
+    System,
+}
+
+fn current_unix_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis().min(u64::MAX as u128) as u64)
+        .unwrap_or(0)
 }
 
 fn serialize_arc_str<S>(arc: &Arc<str>, serializer: S) -> std::result::Result<S::Ok, S::Error>
@@ -51,7 +75,16 @@ impl PcMsg {
         chat_id: impl Into<String>,
         content: impl Into<String>,
     ) -> Result<Self> {
-        Self::new_inbound(channel, chat_id, content, false)
+        Self::new_inbound_with_ingress(channel, chat_id, content, false, IngressKind::User)
+    }
+
+    /// 系统入站消息构造（cron/remind/heartbeat 等），默认非群消息。
+    pub fn new_system(
+        channel: impl Into<String>,
+        chat_id: impl Into<String>,
+        content: impl Into<String>,
+    ) -> Result<Self> {
+        Self::new_inbound_with_ingress(channel, chat_id, content, false, IngressKind::System)
     }
 
     /// 入站消息用；与 `new` 相同但可指定 is_group（群聊/话题群为 true）。
@@ -61,10 +94,21 @@ impl PcMsg {
         content: impl Into<String>,
         is_group: bool,
     ) -> Result<Self> {
+        Self::new_inbound_with_ingress(channel, chat_id, content, is_group, IngressKind::User)
+    }
+
+    /// 入站消息构造（可显式指定 ingress）。
+    pub fn new_inbound_with_ingress(
+        channel: impl Into<String>,
+        chat_id: impl Into<String>,
+        content: impl Into<String>,
+        is_group: bool,
+        ingress: IngressKind,
+    ) -> Result<Self> {
         let content = content.into();
         if content.len() > MAX_CONTENT_LEN {
             return Err(Error::config(
-                "PcMsg::new_inbound",
+                "PcMsg::new_inbound_with_ingress",
                 format!(
                     "content length {} exceeds max {}",
                     content.len(),
@@ -76,6 +120,9 @@ impl PcMsg {
             channel: Arc::from(channel.into().as_str()),
             chat_id: Arc::from(chat_id.into().as_str()),
             content,
+            req_id: None,
+            ingress,
+            enqueue_ts_ms: current_unix_ms(),
             is_group,
         })
     }
@@ -142,12 +189,43 @@ impl<T> TrackedReceiver<T> {
         }
         result
     }
+
+    /// 非阻塞接收；队列空返回 Err(TryRecvError::Empty)。
+    pub fn try_recv(&self) -> std::result::Result<T, mpsc::TryRecvError> {
+        let result = self.inner.try_recv();
+        if result.is_ok() {
+            self.depth.fetch_sub(1, Ordering::Relaxed);
+        }
+        result
+    }
 }
 
 pub type InboundTx = TrackedSender<PcMsg>;
 pub type OutboundTx = TrackedSender<PcMsg>;
 pub type InboundRx = TrackedReceiver<PcMsg>;
 pub type OutboundRx = TrackedReceiver<PcMsg>;
+pub type UserInboundTx = InboundTx;
+pub type UserInboundRx = InboundRx;
+pub type SystemInboundTx = InboundTx;
+pub type SystemInboundRx = InboundRx;
+
+/// 独立创建一个 PcMsg 入站队列（用于 user/system 双队列拆分）。
+pub fn new_inbound_channel(capacity: usize) -> (InboundTx, InboundRx, Arc<AtomicUsize>) {
+    let (tx, rx) = mpsc::sync_channel(capacity);
+    let depth = Arc::new(AtomicUsize::new(0));
+    let depth_rx = Arc::clone(&depth);
+    (
+        TrackedSender {
+            inner: tx,
+            depth: Arc::clone(&depth),
+        },
+        TrackedReceiver {
+            inner: rx,
+            depth: depth_rx,
+        },
+        depth,
+    )
+}
 
 /// 消息总线：main 唯一创建；通道侧持 `inbound_tx` 推入站，dispatch 持 `outbound_rx` 取出站。
 /// 背压：队满时 `send()` 阻塞，直至有空间。深度由 Arc<AtomicUsize> 暴露供 health 使用。

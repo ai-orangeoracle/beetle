@@ -13,6 +13,7 @@ pub mod get_time;
 pub mod hardware;
 pub mod http_request;
 pub mod i2c_device;
+pub mod i2c_sensor;
 pub mod kv_store;
 pub mod memory_manage;
 pub mod model_config;
@@ -34,6 +35,7 @@ pub use get_time::GetTimeTool;
 pub use hardware::DeviceControlTool;
 pub use http_request::HttpRequestTool;
 pub use i2c_device::I2cDeviceTool;
+pub use i2c_sensor::I2cSensorTool;
 pub use kv_store::KvStoreTool;
 pub use memory_manage::MemoryManageTool;
 pub use model_config::ModelConfigTool;
@@ -84,6 +86,15 @@ pub trait ToolContext {
         headers: &[(&str, &str)],
         body: &[u8],
     ) -> Result<(u16, crate::platform::ResponseBody)>;
+    /// HTTP PATCH 请求；默认回退到 post_with_headers。
+    fn patch_with_headers(
+        &mut self,
+        url: &str,
+        headers: &[(&str, &str)],
+        body: &[u8],
+    ) -> Result<(u16, crate::platform::ResponseBody)> {
+        self.post_with_headers(url, headers, body)
+    }
     /// HTTP PUT 请求；默认回退到 post_with_headers。
     fn put_with_headers(
         &mut self,
@@ -109,6 +120,8 @@ pub trait ToolContext {
     fn current_channel(&self) -> Option<&str> {
         None
     }
+    /// 当前用户界面语言（来自设备 NVS），供工具返回人话时使用。
+    fn user_locale(&self) -> crate::i18n::Locale;
 }
 
 /// 工具 trait；Agent 按 name 派发，execute 时传入 ctx 以发 HTTP 等。

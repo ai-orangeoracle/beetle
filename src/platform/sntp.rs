@@ -4,6 +4,21 @@
 
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 use esp_idf_svc::sys;
+#[cfg(all(
+    not(any(target_arch = "xtensa", target_arch = "riscv32")),
+    target_os = "linux"
+))]
+use std::net::{ToSocketAddrs, UdpSocket};
+#[cfg(all(
+    not(any(target_arch = "xtensa", target_arch = "riscv32")),
+    target_os = "linux"
+))]
+use std::sync::Once;
+#[cfg(all(
+    not(any(target_arch = "xtensa", target_arch = "riscv32")),
+    target_os = "linux"
+))]
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const TAG: &str = "platform::sntp";
 
@@ -30,7 +45,205 @@ pub fn init_sntp() {
     );
 }
 
-#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+#[cfg(all(
+    not(any(target_arch = "xtensa", target_arch = "riscv32")),
+    target_os = "linux"
+))]
+static SNTP_ONCE: Once = Once::new();
+
+#[cfg(all(
+    not(any(target_arch = "xtensa", target_arch = "riscv32")),
+    target_os = "linux"
+))]
+const NTP_UNIX_OFFSET_SECS: u64 = 2_208_988_800;
+#[cfg(all(
+    not(any(target_arch = "xtensa", target_arch = "riscv32")),
+    target_os = "linux"
+))]
+const SNTP_RETRY_SECS: u64 = 5;
+#[cfg(all(
+    not(any(target_arch = "xtensa", target_arch = "riscv32")),
+    target_os = "linux"
+))]
+const SNTP_QUERY_TIMEOUT_SECS: u64 = 5;
+#[cfg(all(
+    not(any(target_arch = "xtensa", target_arch = "riscv32")),
+    target_os = "linux"
+))]
+const UNIX_TIME_SYNC_THRESHOLD_SECS: u64 = 1_700_000_000;
+
+/// 每 6 小时重新同步一次，防止长时间运行后漂移。
+#[cfg(all(
+    not(any(target_arch = "xtensa", target_arch = "riscv32")),
+    target_os = "linux"
+))]
+const SNTP_RESYNC_SECS: u64 = 6 * 3600;
+
+#[cfg(all(
+    not(any(target_arch = "xtensa", target_arch = "riscv32")),
+    target_os = "linux"
+))]
 pub fn init_sntp() {
-    log::info!("[{}] SNTP no-op on host", TAG);
+    SNTP_ONCE.call_once(|| {
+        crate::util::spawn_guarded("sntp", || {
+            log::info!("[{}] Linux SNTP background sync started", TAG);
+
+            // 先判断系统时间是否已正确（RTC 或 NTP 已设置过）。
+            if current_unix_secs() >= UNIX_TIME_SYNC_THRESHOLD_SECS {
+                log::info!("[{}] system time already looks valid (>2023)", TAG);
+            } else {
+                // 不再严格等待 STA：先快速尝试几次（可能有有线网络、其它连接方式）。
+                let mut synced = false;
+                for attempt in 0u32..60 {
+                    if current_unix_secs() >= UNIX_TIME_SYNC_THRESHOLD_SECS {
+                        log::info!("[{}] system time became valid during wait", TAG);
+                        synced = true;
+                        break;
+                    }
+                    match sync_once() {
+                        Ok(epoch) => {
+                            log::info!(
+                                "[{}] SNTP synchronized on attempt {}, unix={}",
+                                TAG,
+                                attempt + 1,
+                                epoch
+                            );
+                            synced = true;
+                            break;
+                        }
+                        Err(_) => {
+                            std::thread::sleep(Duration::from_secs(SNTP_RETRY_SECS));
+                        }
+                    }
+                }
+                if !synced {
+                    log::warn!("[{}] SNTP initial sync failed after 60 attempts; will keep retrying in background", TAG);
+                }
+            }
+
+            // 周期重同步：已同步则 6h 间隔；未同步则 30s 快轮询直到成功。
+            let mut ever_synced = current_unix_secs() >= UNIX_TIME_SYNC_THRESHOLD_SECS;
+            loop {
+                let interval = if ever_synced {
+                    SNTP_RESYNC_SECS
+                } else {
+                    30
+                };
+                std::thread::sleep(Duration::from_secs(interval));
+                match sync_once() {
+                    Ok(epoch) => {
+                        if !ever_synced {
+                            log::info!("[{}] SNTP late sync ok, unix={}", TAG, epoch);
+                        }
+                        ever_synced = true;
+                    }
+                    Err(e) => {
+                        if !ever_synced {
+                            log::debug!("[{}] SNTP retry failed: {}", TAG, e);
+                        } else {
+                            log::warn!("[{}] SNTP resync failed: {}", TAG, e);
+                        }
+                    }
+                }
+            }
+        });
+    });
+}
+
+#[cfg(all(
+    not(any(target_arch = "xtensa", target_arch = "riscv32")),
+    target_os = "linux"
+))]
+fn sync_once() -> crate::error::Result<u64> {
+    let epoch = query_ntp_unix_secs()?;
+    set_system_time(epoch)?;
+    Ok(epoch)
+}
+
+#[cfg(all(
+    not(any(target_arch = "xtensa", target_arch = "riscv32")),
+    target_os = "linux"
+))]
+fn query_ntp_unix_secs() -> crate::error::Result<u64> {
+    for server in ["pool.ntp.org:123", "time.google.com:123"] {
+        let addrs = match server.to_socket_addrs() {
+            Ok(v) => v.collect::<Vec<_>>(),
+            Err(e) => {
+                log::debug!("[{}] resolve {} failed: {}", TAG, server, e);
+                continue;
+            }
+        };
+        for addr in addrs {
+            let socket = UdpSocket::bind("0.0.0.0:0")
+                .map_err(|e| crate::error::Error::io("sntp_udp_bind", e))?;
+            socket
+                .set_read_timeout(Some(Duration::from_secs(SNTP_QUERY_TIMEOUT_SECS)))
+                .map_err(|e| crate::error::Error::io("sntp_udp_timeout", e))?;
+            socket
+                .set_write_timeout(Some(Duration::from_secs(SNTP_QUERY_TIMEOUT_SECS)))
+                .map_err(|e| crate::error::Error::io("sntp_udp_timeout", e))?;
+
+            let mut req = [0u8; 48];
+            req[0] = 0x1b; // LI=0, VN=3, Mode=3 (client)
+            if let Err(e) = socket.send_to(&req, addr) {
+                log::debug!("[{}] send {} failed: {}", TAG, addr, e);
+                continue;
+            }
+
+            let mut resp = [0u8; 48];
+            let Ok((n, _)) = socket.recv_from(&mut resp) else {
+                continue;
+            };
+            if n < 48 {
+                continue;
+            }
+            let secs = u32::from_be_bytes([resp[40], resp[41], resp[42], resp[43]]) as u64;
+            if secs <= NTP_UNIX_OFFSET_SECS {
+                continue;
+            }
+            return Ok(secs - NTP_UNIX_OFFSET_SECS);
+        }
+    }
+    Err(crate::error::Error::config(
+        "sntp_query",
+        "all NTP servers failed",
+    ))
+}
+
+#[cfg(all(
+    not(any(target_arch = "xtensa", target_arch = "riscv32")),
+    target_os = "linux"
+))]
+fn set_system_time(epoch_secs: u64) -> crate::error::Result<()> {
+    let ts = libc::timespec {
+        tv_sec: epoch_secs as _,
+        tv_nsec: 0,
+    };
+    let rc = unsafe { libc::clock_settime(libc::CLOCK_REALTIME, &ts) };
+    if rc != 0 {
+        return Err(crate::error::Error::io(
+            "sntp_settime",
+            std::io::Error::last_os_error(),
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(all(
+    not(any(target_arch = "xtensa", target_arch = "riscv32")),
+    target_os = "linux"
+))]
+fn current_unix_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+#[cfg(all(
+    not(any(target_arch = "xtensa", target_arch = "riscv32")),
+    not(target_os = "linux")
+))]
+pub fn init_sntp() {
+    log::info!("[{}] SNTP no-op on non-Linux host", TAG);
 }

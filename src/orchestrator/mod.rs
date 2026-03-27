@@ -18,7 +18,7 @@ use std::time::Duration;
 
 pub use admission::{AdmissionDecision, LlmDecision, ToolDecision};
 pub use channel_health::is_channel_healthy;
-pub use permit::{HttpPermitGuard, Priority};
+pub use permit::{AgentTaskGuard, HttpPermitGuard, Priority};
 pub use pressure::{PressureLevel, ResourceBudget};
 pub use state::ResourceSnapshot;
 
@@ -137,12 +137,13 @@ pub fn snapshot() -> ResourceSnapshot {
 pub fn format_resource_baseline_line() -> String {
     let s = snapshot();
     format!(
-        "resource pressure={:?} heap_internal={} heap_spiram={} heap_largest={} active_http={} inbound={} outbound={}",
+        "resource pressure={:?} heap_internal={} heap_spiram={} heap_largest={} active_http={} agent_tasks={} inbound={} outbound={}",
         s.pressure,
         s.heap_free_internal,
         s.heap_free_spiram,
         s.heap_largest_block_internal,
         s.active_http_count,
+        s.active_agent_tasks,
         s.inbound_depth,
         s.outbound_depth,
     )
@@ -152,6 +153,13 @@ pub fn format_resource_baseline_line() -> String {
 /// Request HTTP admission permit.
 pub fn request_http_permit(priority: Priority, timeout: Duration) -> Result<HttpPermitGuard> {
     permit::request_http_permit(&STATE, &TLS_PERMIT, priority, timeout)
+}
+
+/// 开始一个 agent 任务：返回 RAII guard，Drop 时自动递减计数。
+/// Begin an agent task: returns an RAII guard that decrements the counter on drop.
+/// 应在准入通过后、开始处理消息前立即调用，确保整个任务生命周期内 `active_agent_tasks > 0`。
+pub fn begin_agent_task() -> AgentTaskGuard {
+    AgentTaskGuard::new(&STATE)
 }
 
 /// 记录通道发送结果（成功/失败）。

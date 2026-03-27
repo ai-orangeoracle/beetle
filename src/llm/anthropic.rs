@@ -96,14 +96,11 @@ impl LlmClient for AnthropicClient {
             return self.chat(http, system, messages, tools);
         }
         let body = build_request_body(&self.model, self.max_tokens, system, messages, tools, true)?;
-        // Cannot use retry wrapper with mutable on_progress, so do single attempt.
-        do_request_streaming(
-            http,
-            &self.api_base,
-            &self.api_key,
-            &body,
-            Some(on_progress),
-        )
+        // 与 chat() 保持同一重试策略；仅首轮传递 progress 回调，后续重试避免重复回放增量。
+        let mut progress = Some(on_progress);
+        crate::llm::retry::with_retry(2, 500, TAG, http, |http| {
+            do_request_streaming(http, &self.api_base, &self.api_key, &body, progress.take())
+        })
     }
 }
 

@@ -17,10 +17,10 @@ export function FormCard({
         p: 2,
         borderRadius: 'var(--radius-control)',
         bgcolor: 'var(--surface)',
-        border: '1px solid var(--border-subtle)',
+        border: '1px solid color-mix(in srgb, var(--border) 18%, transparent)',
         transition: 'border-color var(--transition-duration) ease',
         '&:focus-within': {
-          borderColor: 'color-mix(in srgb, var(--primary) 16%, var(--border))',
+          borderColor: 'color-mix(in srgb, var(--primary) 22%, var(--border))',
         },
       }}
     >

@@ -113,11 +113,12 @@ impl WssConnection for EspWssConnection {
     }
 }
 
-const WSS_TLS_ADMISSION_TIMEOUT_SECS: u64 = 10;
+/// 与 HTTP 客户端 TLS 准入窗口对齐，避免 HTTP 长请求期间 WSS 过早饿死。
+const WSS_TLS_ADMISSION_TIMEOUT_SECS: u64 = 30;
 
 pub fn connect_esp_wss(url: &str) -> Result<EspWssConnection> {
     let _permit = crate::orchestrator::request_http_permit(
-        crate::orchestrator::Priority::Normal,
+        crate::orchestrator::Priority::High,
         Duration::from_secs(WSS_TLS_ADMISSION_TIMEOUT_SECS),
     )?;
 

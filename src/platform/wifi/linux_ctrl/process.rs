@@ -22,7 +22,7 @@ pub struct CmdOutput {
 fn is_allowed_bin(bin: &str) -> bool {
     matches!(
         bin,
-        "ip" | "iw" | "wpa_cli" | "wpa_supplicant" | "hostapd" | "dnsmasq" | "kill"
+        "ip" | "iw" | "wpa_cli" | "wpa_supplicant" | "hostapd" | "dnsmasq" | "udhcpc" | "kill"
     )
 }
 
@@ -102,11 +102,7 @@ pub fn run_checked(
             }
             return Err(Error::config(
                 stage,
-                format!(
-                    "{} failed: {}",
-                    exe.to_string_lossy(),
-                    stderr.trim()
-                ),
+                format!("{} failed: {}", exe.to_string_lossy(), stderr.trim()),
             ));
         }
         if start.elapsed() > timeout {

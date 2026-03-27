@@ -23,7 +23,7 @@ pub struct CliContext {
     pub config_store: Arc<dyn ConfigStore + Send + Sync>,
     pub memory: Arc<dyn MemoryStore + Send + Sync>,
     pub session: Arc<dyn SessionStore + Send + Sync>,
-    pub platform: Arc<dyn crate::platform::Platform>,
+    pub platform: Arc<dyn crate::Platform>,
     /// 入站/出站队列深度（实时读取）；None 表示 bus 未暴露深度。
     pub inbound_depth: Option<Arc<std::sync::atomic::AtomicUsize>>,
     pub outbound_depth: Option<Arc<std::sync::atomic::AtomicUsize>>,
@@ -36,7 +36,7 @@ impl CliContext {
         config_store: Arc<dyn ConfigStore + Send + Sync>,
         memory: Arc<dyn MemoryStore + Send + Sync>,
         session: Arc<dyn SessionStore + Send + Sync>,
-        platform: Arc<dyn crate::platform::Platform>,
+        platform: Arc<dyn crate::Platform>,
         inbound_depth: Option<Arc<std::sync::atomic::AtomicUsize>>,
         outbound_depth: Option<Arc<std::sync::atomic::AtomicUsize>>,
     ) -> Self {

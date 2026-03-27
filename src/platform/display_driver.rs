@@ -6,7 +6,8 @@
 )]
 
 use crate::display::{
-    DisplayChannelStatus, DisplayCommand, DisplayConfig, DisplayPressureLevel, DisplaySystemState,
+    compute_layout, DisplayChannelStatus, DisplayCommand, DisplayConfig, DisplayLayout,
+    DisplayPressureLevel, DisplaySystemState, DISPLAY_LAYOUT_REF_PX,
 };
 use crate::error::Result;
 use std::time::Instant;
@@ -28,7 +29,7 @@ mod esp_backend {
     };
     use esp_idf_svc::sys::*;
 
-    /// SPI-connected display backend (ST7789 / ILI9341).
+    /// SPI-connected display backend (ST7789 / ILI9341 / ST7735 family).
     /// Framebuffer lives in PSRAM; rendering via `embedded-graphics` `DrawTarget`.
     pub(super) struct SpiDisplayBackend {
         spi_host: u32,
@@ -242,9 +243,49 @@ mod esp_backend {
             self.send_cmd(0x11)?;
             std::thread::sleep(std::time::Duration::from_millis(120));
 
-            // COLMOD: 16-bit RGB565
-            self.send_cmd(0x3A)?;
-            self.send_data(&[0x55])?;
+            match config.driver {
+                DisplayDriver::St7735 => {
+                    // ST7735 / ST7735R / ST7735S: frame rate, power, gamma (not used on ST7789/ILI9341).
+                    self.send_cmd(0xB1)?;
+                    self.send_data(&[0x01, 0x2C, 0x2D])?; // FRMCTR1
+                    self.send_cmd(0xB2)?;
+                    self.send_data(&[0x01, 0x2C, 0x2D])?; // FRMCTR2
+                    self.send_cmd(0xB3)?;
+                    self.send_data(&[0x01, 0x2C, 0x2D, 0x01, 0x2C, 0x2D])?; // FRMCTR3
+                    self.send_cmd(0xB4)?;
+                    self.send_data(&[0x07])?; // INVCTR: no line inversion
+                    self.send_cmd(0xC0)?;
+                    self.send_data(&[0xA2, 0x02, 0x84])?; // PWCTR1
+                    self.send_cmd(0xC1)?;
+                    self.send_data(&[0xC5])?; // PWCTR2
+                    self.send_cmd(0xC2)?;
+                    self.send_data(&[0x0A, 0x00])?; // PWCTR3
+                    self.send_cmd(0xC3)?;
+                    self.send_data(&[0x8A, 0x2A])?; // PWCTR4
+                    self.send_cmd(0xC4)?;
+                    self.send_data(&[0x8A, 0xEE])?; // PWCTR5
+                    self.send_cmd(0xC5)?;
+                    self.send_data(&[0x0E])?; // VMCTR1
+                                              // COLMOD: 16-bit RGB565 (ST7735 uses 0x05; ST7789 uses 0x55)
+                    self.send_cmd(0x3A)?;
+                    self.send_data(&[0x05])?;
+                    self.send_cmd(0xE0)?;
+                    self.send_data(&[
+                        0x02, 0x1c, 0x07, 0x12, 0x37, 0x32, 0x29, 0x2d, 0x29, 0x25, 0x2B, 0x39,
+                        0x00, 0x01, 0x03, 0x10,
+                    ])?; // GMCTRP1
+                    self.send_cmd(0xE1)?;
+                    self.send_data(&[
+                        0x03, 0x1d, 0x07, 0x06, 0x2E, 0x2C, 0x29, 0x2D, 0x2E, 0x2E, 0x37, 0x3F,
+                        0x00, 0x00, 0x02, 0x10,
+                    ])?; // GMCTRN1
+                }
+                DisplayDriver::St7789 | DisplayDriver::Ili9341 => {
+                    // COLMOD: 16-bit RGB565 (ST7789/ILI9341)
+                    self.send_cmd(0x3A)?;
+                    self.send_data(&[0x55])?;
+                }
+            }
 
             // MADCTL: rotation + color order
             let madctl = Self::compute_madctl(config.rotation, &config.color_order);
@@ -252,12 +293,11 @@ mod esp_backend {
             self.send_data(&[madctl])?;
 
             // INVON / INVOFF
-            // ST7789 panels are typically inverted by default, so normal display needs INVON.
-            // ILI9341 panels are typically non-inverted, so normal display needs INVOFF.
-            // config.invert_colors flips the driver's default behavior.
+            // ST7789: panel often inverted by default → INVON unless invert_colors.
+            // ILI9341 / ST7735: typically non-inverted → INVOFF unless invert_colors.
             let needs_invon = match config.driver {
                 DisplayDriver::St7789 => !config.invert_colors,
-                DisplayDriver::Ili9341 => config.invert_colors,
+                DisplayDriver::Ili9341 | DisplayDriver::St7735 => config.invert_colors,
             };
             if needs_invon {
                 self.send_cmd(0x21)?; // INVON
@@ -307,7 +347,7 @@ mod esp_backend {
                 return Ok(());
             }
 
-            // ST7789/ILI9341 require full-width rows for RAMWR; we send only the dirty row band.
+            // ST7789 / ILI9341 / ST7735: full-width rows for RAMWR; send only the dirty row band.
             let x0 = offset_x.max(0) as u16;
             let y0 = offset_y.max(0) as u16 + ry;
             let x1 = x0 + self.width - 1;
@@ -386,6 +426,8 @@ mod esp_backend {
 
 pub struct DisplayState {
     pub config: DisplayConfig,
+    /// 由 `config.width`/`height` 计算的仪表盘布局（与 SPI 是否启用无关）。
+    pub layout: DisplayLayout,
     pub available: bool,
     pub last_command_at: Option<Instant>,
     /// BL GPIO pin number (if configured). Used for backlight on/off control.
@@ -405,9 +447,11 @@ const BL_LEDC_MAX_DUTY: u32 = 8191;
 
 impl DisplayState {
     pub fn init(config: &DisplayConfig) -> Result<Self> {
+        let layout = compute_layout(config.width, config.height);
         if !config.enabled {
             return Ok(Self {
                 config: config.clone(),
+                layout,
                 available: false,
                 last_command_at: None,
                 bl_pin: None,
@@ -424,6 +468,7 @@ impl DisplayState {
             let backend = esp_backend::SpiDisplayBackend::new(config)?;
             let mut state = Self {
                 config: config.clone(),
+                layout,
                 available: true,
                 last_command_at: None,
                 bl_pin,
@@ -440,6 +485,7 @@ impl DisplayState {
             log::info!("[display] host stub: init skipped (no SPI hardware)");
             Ok(Self {
                 config: config.clone(),
+                layout,
                 available: false,
                 last_command_at: None,
                 bl_pin,
@@ -530,6 +576,7 @@ impl DisplayState {
                     render_dashboard(
                         backend,
                         &DashboardParams {
+                            layout: &self.layout,
                             state: *state,
                             ip_address: ip_address.as_deref(),
                             channels,
@@ -548,15 +595,22 @@ impl DisplayState {
                     );
                     backend.flush(self.config.offset_x, self.config.offset_y)?;
                 }
-                DisplayCommand::UpdateIp { ip } => {
+                DisplayCommand::UpdateIp { ip, uptime_secs } => {
                     let bg = DISPLAY_BG;
-                    render_ip_partial(backend, ip, bg, self.config.width);
-                    let layout = LAYOUT;
+                    render_ip_partial(
+                        backend,
+                        ip.as_str(),
+                        *uptime_secs,
+                        self.config.width,
+                        &self.layout,
+                    );
+                    let layout = &self.layout;
+                    let flush_h = subtitle_ip_flush_rows(self.config.width, *uptime_secs);
                     backend.flush_rows(
                         self.config.offset_x,
                         self.config.offset_y,
                         layout.subtitle_top,
-                        16,
+                        flush_h,
                     )?;
                 }
                 DisplayCommand::UpdatePressure {
@@ -573,6 +627,7 @@ impl DisplayState {
                         backend,
                         level,
                         bg,
+                        &self.layout,
                         &FooterPartialParams {
                             heap_percent: *heap_percent,
                             width: self.config.width,
@@ -584,7 +639,7 @@ impl DisplayState {
                             error_flash: *error_flash,
                         },
                     );
-                    let layout = LAYOUT;
+                    let layout = &self.layout;
                     let footer_h = self.config.height.saturating_sub(layout.footer_top);
                     backend.flush_rows(
                         self.config.offset_x,
@@ -595,9 +650,9 @@ impl DisplayState {
                 }
                 DisplayCommand::UpdateChannels { channels } => {
                     let bg = DISPLAY_BG;
-                    render_channels_partial(backend, channels, bg, self.config.width);
-                    let layout = LAYOUT;
-                    let ch_h = layout.footer_top.saturating_sub(layout.middle_top);
+                    render_channels_partial(backend, channels, bg, self.config.width, &self.layout);
+                    let layout = &self.layout;
+                    let ch_h = layout_middle_panel_height(layout) as u16;
                     backend.flush_rows(
                         self.config.offset_x,
                         self.config.offset_y,
@@ -613,8 +668,9 @@ impl DisplayState {
                         self.config.width,
                         self.config.height,
                         bg,
+                        &self.layout,
                     );
-                    let layout = LAYOUT;
+                    let layout = &self.layout;
                     let footer_h = self.config.height.saturating_sub(layout.footer_top);
                     backend.flush_rows(
                         self.config.offset_x,
@@ -733,18 +789,6 @@ use embedded_graphics::{
 };
 use embedded_graphics_core::pixelcolor::Rgb565;
 
-/// Cached layout constants (avoid re-creating on each call).
-const LAYOUT: crate::display::DisplayLayout = crate::display::DisplayLayout {
-    header_top: 16,
-    icon_left: 12,
-    icon_size: 64,
-    title_left: 88,
-    title_top: 18,
-    subtitle_top: 44,
-    middle_top: 104,
-    footer_top: 168,
-};
-
 /// Beetle drawing options.
 #[derive(Default)]
 struct BeetleOpts {
@@ -763,6 +807,12 @@ fn darken(c: Rgb565, amt: u8) -> Rgb565 {
     let g = c.g().saturating_sub(amt >> 2);
     let b = c.b().saturating_sub(amt >> 3);
     Rgb565::new(r, g, b)
+}
+
+/// Dim fill for beetle body/head glow halo on dark dashboard background.
+/// 深色底上的甲壳虫光晕填充色（高对比下的柔和外圈）。
+fn beetle_glow_fill(base: Rgb565) -> Rgb565 {
+    darken(base, 180)
 }
 
 /// Draw a beetle icon using embedded-graphics primitives.
@@ -889,6 +939,16 @@ fn draw_beetle<D: DrawTarget<Color = Rgb565>>(
         }
     }
 
+    // --- Body glow halo (dim ring behind filled body) ---
+    let glow_fill = PrimitiveStyle::with_fill(beetle_glow_fill(color));
+    let body_glow_r = body_r + 4;
+    let _ = Circle::new(
+        Point::new(cx - body_glow_r, body_cy - body_glow_r),
+        (body_glow_r * 2) as u32,
+    )
+    .into_styled(glow_fill)
+    .draw(target);
+
     // --- Body (large filled circle) ---
     let body_fill = PrimitiveStyle::with_fill(color);
     let _ = Circle::new(
@@ -923,6 +983,15 @@ fn draw_beetle<D: DrawTarget<Color = Rgb565>>(
                 .draw(target);
         }
     }
+
+    // --- Head glow halo ---
+    let head_glow_r = head_r + 3;
+    let _ = Circle::new(
+        Point::new(cx - head_glow_r, head_cy - head_glow_r),
+        (head_glow_r * 2) as u32,
+    )
+    .into_styled(PrimitiveStyle::with_fill(beetle_glow_fill(color)))
+    .draw(target);
 
     // --- Head (smaller filled circle, slightly darker) ---
     let head_color = darken(color, 20);
@@ -1060,6 +1129,7 @@ fn draw_dashed_top_arc<D: DrawTarget<Color = Rgb565>>(
 
 /// Dashboard render parameters (avoids clippy::too_many_arguments).
 struct DashboardParams<'a> {
+    layout: &'a DisplayLayout,
     state: DisplaySystemState,
     ip_address: Option<&'a str>,
     channels: &'a [DisplayChannelStatus; 5],
@@ -1080,9 +1150,30 @@ struct DashboardParams<'a> {
     error_flash: bool,
 }
 
+/// Title column strip: only covers the state title row (ends above `subtitle_top`).
+/// 标题区窄背景；不覆盖副标题行，与 `UpdateIp` 局部刷新兼容。
+fn draw_title_strip<D: DrawTarget<Color = Rgb565>>(
+    target: &mut D,
+    layout: &DisplayLayout,
+    width: u16,
+    fill: Rgb565,
+) {
+    let x = layout.title_left.saturating_sub(6) as i32;
+    let y = layout.title_top as i32;
+    let inner = layout.subtitle_top.saturating_sub(layout.title_top);
+    let h_strip = inner.saturating_sub(3).max(10) as u32;
+    let w_strip = (width as i32 - x).max(0) as u32;
+    if w_strip == 0 {
+        return;
+    }
+    let _ = Rectangle::new(Point::new(x, y), Size::new(w_strip, h_strip))
+        .into_styled(PrimitiveStyle::with_fill(fill))
+        .draw(target);
+}
+
 /// Render the full dashboard UI.
 fn render_dashboard<D: DrawTarget<Color = Rgb565>>(target: &mut D, p: &DashboardParams<'_>) {
-    let layout = LAYOUT;
+    let layout = p.layout;
 
     // --- Background fill ---
     let bg_color = DISPLAY_BG;
@@ -1090,14 +1181,59 @@ fn render_dashboard<D: DrawTarget<Color = Rgb565>>(target: &mut D, p: &Dashboard
         .into_styled(PrimitiveStyle::with_fill(bg_color))
         .draw(target);
 
-    // --- Beetle icon ---
-    let beetle_color = match p.state {
-        DisplaySystemState::Booting => rgb565(0xdd, 0x99, 0x22),
-        DisplaySystemState::NoWifi => rgb565(0xaa, 0xaa, 0xaa),
-        DisplaySystemState::Idle => rgb565(0x22, 0xcc, 0x22),
-        DisplaySystemState::Busy => rgb565(0x44, 0x88, 0xee),
-        DisplaySystemState::Fault => rgb565(0xee, 0x33, 0x33),
-    };
+    let beetle_color = state_accent_color(p.state);
+
+    // --- Top accent stripe (state color) ---
+    let _ = Rectangle::new(Point::new(0, 0), Size::new(p.width as u32, 3))
+        .into_styled(PrimitiveStyle::with_fill(beetle_color))
+        .draw(target);
+
+    // --- Section dividers ---
+    let div_style = PrimitiveStyle::with_stroke(DIVIDER, 1);
+    let mid_div_y = layout.middle_top.saturating_sub(6) as i32;
+    let foot_div_y = layout.footer_top.saturating_sub(6) as i32;
+    let _ = Line::new(
+        Point::new(0, mid_div_y),
+        Point::new(p.width as i32, mid_div_y),
+    )
+    .into_styled(div_style)
+    .draw(target);
+    let _ = Line::new(
+        Point::new(0, foot_div_y),
+        Point::new(p.width as i32, foot_div_y),
+    )
+    .into_styled(div_style)
+    .draw(target);
+
+    // Header / middle / footer panels.
+    let head_y = (layout.header_top as i32).saturating_sub(8).max(4);
+    let middle_y = layout.middle_top as i32;
+    let footer_y = layout.footer_top as i32;
+    let head_h = (mid_div_y - head_y).max(24) as u32;
+    let middle_h = layout_middle_panel_height(layout) as u32;
+    let footer_h = (p.height as i32 - footer_y).max(1) as u32;
+    draw_panel_fill(target, 0, head_y, p.width as u32, head_h, PANEL_BG, PANEL_BORDER);
+    draw_panel_fill(
+        target,
+        0,
+        middle_y,
+        p.width as u32,
+        middle_h,
+        PANEL_BG,
+        PANEL_BORDER,
+    );
+    draw_panel_fill(
+        target,
+        0,
+        footer_y,
+        p.width as u32,
+        footer_h,
+        PANEL_BG,
+        PANEL_BORDER,
+    );
+
+    draw_title_strip(target, layout, p.width, TITLE_STRIP_BG);
+
     let icon_size = layout.icon_size as i32;
     let opts = match p.state {
         DisplaySystemState::Busy => BeetleOpts {
@@ -1147,7 +1283,7 @@ fn render_dashboard<D: DrawTarget<Color = Rgb565>>(target: &mut D, p: &Dashboard
                 draw_top_arc(target, cx, sig_y, r, &arc_style);
             }
             // X mark over WiFi (signal crossed out)
-            let x_style = PrimitiveStyle::with_stroke(rgb565(0xcc, 0x22, 0x22), 2);
+            let x_style = PrimitiveStyle::with_stroke(rgb565(0xff, 0x44, 0x44), 2);
             let x_sz = 6i32;
             let _ = Line::new(
                 Point::new(cx - x_sz, sig_y - 13 - x_sz),
@@ -1210,7 +1346,7 @@ fn render_dashboard<D: DrawTarget<Color = Rgb565>>(target: &mut D, p: &Dashboard
     }
 
     // --- Title text: state name ---
-    let title_style = MonoTextStyle::new(&FONT_9X18_BOLD, rgb565(0x22, 0x22, 0x22));
+    let title_style = MonoTextStyle::new(&FONT_9X18_BOLD, beetle_color);
     let state_name = match p.state {
         DisplaySystemState::Booting => "BOOTING",
         DisplaySystemState::NoWifi => "NO WIFI",
@@ -1224,9 +1360,16 @@ fn render_dashboard<D: DrawTarget<Color = Rgb565>>(target: &mut D, p: &Dashboard
         title_style,
     )
     .draw(target);
+    render_status_badge(
+        target,
+        layout.title_left as i32,
+        layout.title_top as i32 - 16,
+        state_name,
+        beetle_color,
+    );
 
     // --- Subtitle: IP address (+ uptime for Idle/Busy) or version ---
-    let subtitle_style = MonoTextStyle::new(&FONT_6X13, rgb565(0x66, 0x66, 0x66));
+    let subtitle_style = MonoTextStyle::new(&FONT_6X13, TEXT_SECONDARY);
     if p.state == DisplaySystemState::Booting {
         let ip_text = p
             .ip_address
@@ -1238,27 +1381,44 @@ fn render_dashboard<D: DrawTarget<Color = Rgb565>>(target: &mut D, p: &Dashboard
         )
         .draw(target);
     } else {
-        // F3: IP + uptime — 栈上格式化
+        // F3: IP + uptime — 窄屏单行；宽屏（≥200px）分两行，避免 `Up:` 被裁切。
         let ip = p.ip_address.unwrap_or("---.---.---.---");
-        let mut sub_buf = [0u8; 30];
-        let sub_str = format_subtitle_with_uptime(ip, p.uptime_secs, &mut sub_buf);
-        let _ = Text::new(
-            sub_str,
-            Point::new(layout.title_left as i32, layout.subtitle_top as i32 + 11),
-            subtitle_style,
-        )
-        .draw(target);
+        let sx = layout.title_left as i32;
+        let y0 = layout.subtitle_top as i32 + 11;
+        if p.width >= DISPLAY_WIDE_LAYOUT_MIN_PX {
+            let mut ip_line = [0u8; 40];
+            let max_px = (p.width as usize).saturating_sub(layout.title_left as usize);
+            let max_chars = (max_px / 6).clamp(1, 40);
+            let ip_b = ip.as_bytes();
+            let n = ip_b.len().min(max_chars);
+            ip_line[..n].copy_from_slice(&ip_b[..n]);
+            let ip_str = core::str::from_utf8(&ip_line[..n]).unwrap_or("---");
+            let _ = Text::new(ip_str, Point::new(sx, y0), subtitle_style).draw(target);
+            if p.uptime_secs > 0 {
+                let mut up_buf = [0u8; 24];
+                let up_str = format_uptime_line(p.uptime_secs, &mut up_buf);
+                if !up_str.is_empty() {
+                    let _ = Text::new(up_str, Point::new(sx, y0 + 13), subtitle_style).draw(target);
+                }
+            }
+        } else {
+            let mut sub_buf = [0u8; 30];
+            let sub_str = format_subtitle_with_uptime(ip, p.uptime_secs, &mut sub_buf);
+            let _ = Text::new(sub_str, Point::new(sx, y0), subtitle_style).draw(target);
+        }
     }
 
     // --- Channel status (middle section) with F5 failure count ---
-    render_channels_inner(target, p.channels, p.width, layout.middle_top as i32);
+    render_channels_inner(target, p.channels, p.width, layout);
 
     // --- Footer: pressure level + heap progress bar ---
     render_footer(
         target,
+        layout,
         p.pressure,
         p.heap_percent,
         p.width,
+        p.height,
         p.messages_in,
         p.messages_out,
         p.last_active_epoch_secs,
@@ -1267,10 +1427,113 @@ fn render_dashboard<D: DrawTarget<Color = Rgb565>>(target: &mut D, p: &Dashboard
     );
 }
 
-/// Dashboard background color (white).
-const DISPLAY_BG: Rgb565 = Rgb565::WHITE;
+/// Dashboard base background.
+/// 仪表盘主背景色。
+const DISPLAY_BG: Rgb565 = Rgb565::new(1, 2, 2);
+/// Panel surface color (header/channels/footer cards).
+/// 面板背景色（头部/通道/底部卡片）。
+const PANEL_BG: Rgb565 = Rgb565::new(2, 4, 5);
+/// Thin border color for panels.
+/// 面板细边框色。
+const PANEL_BORDER: Rgb565 = Rgb565::new(5, 8, 9);
+/// Section divider color.
+/// 分区分割线颜色。
+const DIVIDER: Rgb565 = Rgb565::new(4, 7, 8);
+/// Subtle title strip in header panel.
+/// 头部标题条背景色。
+const TITLE_STRIP_BG: Rgb565 = Rgb565::new(3, 6, 7);
+/// Primary text color.
+/// 主文本色。
+const TEXT_PRIMARY: Rgb565 = Rgb565::new(25, 51, 56);
+/// Secondary text color.
+/// 次文本色。
+const TEXT_SECONDARY: Rgb565 = Rgb565::new(16, 35, 42);
+/// Weak text color.
+/// 弱文本色。
+const TEXT_WEAK: Rgb565 = Rgb565::new(10, 22, 29);
+/// Status colors.
+/// 状态强调色。
+const STATUS_SUCCESS: Rgb565 = Rgb565::new(0, 59, 12);
+const STATUS_WARNING: Rgb565 = Rgb565::new(27, 42, 0);
+const STATUS_DANGER: Rgb565 = Rgb565::new(31, 12, 8);
+const STATUS_INFO: Rgb565 = Rgb565::new(4, 42, 31);
+const STATUS_OFF: Rgb565 = Rgb565::new(8, 17, 10);
+/// 宽屏阈值（px）：通道三列、副标题 IP 与 `Up:` 分两行，避免窄屏单行截断。
+const DISPLAY_WIDE_LAYOUT_MIN_PX: u16 = 200;
 
-/// F3: 格式化副标题 "IP Up:XdYh" 或 "IP Up:XhYm"（栈上，无堆分配）。
+/// 中间通道区像素高度：与 `render_dashboard` 里 `draw_panel_fill(..., middle_y, middle_h, ...)` 一致
+///（`footer_top` 上方 6px 留给分隔线，不得用满 `footer_top - middle_top`，否则行内容会画出面板边框）。
+fn layout_middle_panel_height(layout: &DisplayLayout) -> i32 {
+    let foot_div_y = layout.footer_top.saturating_sub(6) as i32;
+    let middle_y = layout.middle_top as i32;
+    (foot_div_y - middle_y).max(20)
+}
+
+/// `UpdateIp` / 副标题区 `flush_rows` 高度：宽屏且显示 `Up:` 时为双行。
+fn subtitle_ip_flush_rows(width: u16, uptime_secs: u64) -> u16 {
+    if width >= DISPLAY_WIDE_LAYOUT_MIN_PX && uptime_secs > 0 {
+        30
+    } else {
+        16
+    }
+}
+
+#[inline]
+fn state_accent_color(state: DisplaySystemState) -> Rgb565 {
+    match state {
+        DisplaySystemState::Booting => STATUS_WARNING,
+        DisplaySystemState::NoWifi => rgb565(0x88, 0x99, 0xbb),
+        DisplaySystemState::Idle => STATUS_SUCCESS,
+        DisplaySystemState::Busy => STATUS_INFO,
+        DisplaySystemState::Fault => STATUS_DANGER,
+    }
+}
+
+#[inline]
+fn pressure_accent_color(level: &DisplayPressureLevel) -> Rgb565 {
+    match level {
+        DisplayPressureLevel::Normal => STATUS_SUCCESS,
+        DisplayPressureLevel::Cautious => STATUS_WARNING,
+        DisplayPressureLevel::Critical => STATUS_DANGER,
+    }
+}
+
+fn draw_panel_fill<D: DrawTarget<Color = Rgb565>>(
+    target: &mut D,
+    x: i32,
+    y: i32,
+    w: u32,
+    h: u32,
+    fill: Rgb565,
+    border: Rgb565,
+) {
+    if w == 0 || h == 0 {
+        return;
+    }
+    let _ = Rectangle::new(Point::new(x, y), Size::new(w, h))
+        .into_styled(PrimitiveStyle::with_fill(fill))
+        .draw(target);
+    let _ = Rectangle::new(Point::new(x, y), Size::new(w, h))
+        .into_styled(PrimitiveStyle::with_stroke(border, 1))
+        .draw(target);
+}
+
+fn render_status_badge<D: DrawTarget<Color = Rgb565>>(
+    target: &mut D,
+    x: i32,
+    y: i32,
+    label: &str,
+    accent: Rgb565,
+) {
+    let text_w = label.len() as i32 * 6;
+    let badge_w = (text_w + 10).max(30) as u32;
+    let badge_h = 14u32;
+    draw_panel_fill(target, x, y, badge_w, badge_h, PANEL_BG, accent);
+    let style = MonoTextStyle::new(&FONT_6X13, accent);
+    let _ = Text::new(label, Point::new(x + 5, y + 11), style).draw(target);
+}
+
+/// F3: 窄屏单行副标题 "IP Up:XdYh"（IP 截断为给 uptime 留位）。
 fn format_subtitle_with_uptime<'a>(ip: &'a str, secs: u64, buf: &'a mut [u8; 30]) -> &'a str {
     let mut pos = 0usize;
     // 写入 IP（截断到留空间给 uptime）
@@ -1280,44 +1543,62 @@ fn format_subtitle_with_uptime<'a>(ip: &'a str, secs: u64, buf: &'a mut [u8; 30]
     pos += ip_max;
 
     if secs > 0 {
-        // " Up:"
         let tag = b" Up:";
         let tag_len = tag.len().min(buf.len() - pos);
         buf[pos..pos + tag_len].copy_from_slice(&tag[..tag_len]);
         pos += tag_len;
-
-        let days = secs / 86400;
-        let hours = (secs % 86400) / 3600;
-        let mins = (secs % 3600) / 60;
-
-        if days > 0 {
-            // "Xd Yh"
-            pos = write_u64_to_buf(days, buf, pos);
-            if pos < buf.len() {
-                buf[pos] = b'd';
-                pos += 1;
-            }
-            pos = write_u64_to_buf(hours, buf, pos);
-            if pos < buf.len() {
-                buf[pos] = b'h';
-                pos += 1;
-            }
-        } else {
-            // "Xh Ym"
-            pos = write_u64_to_buf(hours, buf, pos);
-            if pos < buf.len() {
-                buf[pos] = b'h';
-                pos += 1;
-            }
-            pos = write_u64_to_buf(mins, buf, pos);
-            if pos < buf.len() {
-                buf[pos] = b'm';
-                pos += 1;
-            }
-        }
+        pos = append_uptime_duration(secs, buf, pos);
     }
 
     core::str::from_utf8(&buf[..pos]).unwrap_or(ip)
+}
+
+/// 第二行 `Up:1d2h` / `Up:3h45m`（`secs == 0` 时返回空串）。
+fn format_uptime_line(secs: u64, buf: &mut [u8; 24]) -> &str {
+    if secs == 0 {
+        return "";
+    }
+    let mut pos = 0usize;
+    for &b in b"Up:".iter() {
+        if pos < buf.len() {
+            buf[pos] = b;
+            pos += 1;
+        }
+    }
+    pos = append_uptime_duration(secs, buf, pos);
+    core::str::from_utf8(&buf[..pos]).unwrap_or("")
+}
+
+/// 将运行时长写入 `buf[pos..]`（`XdYh` / `XhYm`），返回新 pos。
+fn append_uptime_duration(secs: u64, buf: &mut [u8], mut pos: usize) -> usize {
+    let days = secs / 86400;
+    let hours = (secs % 86400) / 3600;
+    let mins = (secs % 3600) / 60;
+
+    if days > 0 {
+        pos = write_u64_to_buf(days, buf, pos);
+        if pos < buf.len() {
+            buf[pos] = b'd';
+            pos += 1;
+        }
+        pos = write_u64_to_buf(hours, buf, pos);
+        if pos < buf.len() {
+            buf[pos] = b'h';
+            pos += 1;
+        }
+    } else {
+        pos = write_u64_to_buf(hours, buf, pos);
+        if pos < buf.len() {
+            buf[pos] = b'h';
+            pos += 1;
+        }
+        pos = write_u64_to_buf(mins, buf, pos);
+        if pos < buf.len() {
+            buf[pos] = b'm';
+            pos += 1;
+        }
+    }
+    pos
 }
 
 /// Write a u64 value into a byte buffer at `pos`, return new pos (generic version).
@@ -1346,106 +1627,162 @@ fn write_u64_to_buf(val: u64, buf: &mut [u8], mut pos: usize) -> usize {
     pos
 }
 
+/// 通道内部 ID → 屏上缩写（仅展示；不改变 orchestrator / 配置中的 ID）。
+/// 未知 ID：最多 4 字符 ASCII 大写写入 `scratch`。
+fn channel_display_label<'a>(name: &str, scratch: &'a mut [u8; 8]) -> &'a str {
+    match name {
+        "telegram" => "TG",
+        "feishu" => "FS",
+        "dingtalk" => "DT",
+        "wecom" => "WC",
+        "qq_channel" => "QQ",
+        _ => {
+            let bytes = name.as_bytes();
+            let n = bytes.len().min(4).min(scratch.len());
+            for i in 0..n {
+                scratch[i] = bytes[i].to_ascii_uppercase();
+            }
+            core::str::from_utf8(&scratch[..n]).unwrap_or("?")
+        }
+    }
+}
+
 /// Shared channel rendering logic (used by full dashboard and partial update).
 fn render_channels_inner<D: DrawTarget<Color = Rgb565>>(
     target: &mut D,
     channels: &[DisplayChannelStatus; 5],
     width: u16,
-    middle_y: i32,
+    layout: &DisplayLayout,
 ) {
-    let healthy_color = rgb565(0x22, 0xcc, 0x22);
-    let unhealthy_color = rgb565(0xcc, 0x22, 0x22);
-    let disabled_color = rgb565(0xbb, 0xbb, 0xbb);
-    let text_style = MonoTextStyle::new(&FONT_6X13, rgb565(0x33, 0x33, 0x33));
-    let disabled_text_style = MonoTextStyle::new(&FONT_6X13, rgb565(0x99, 0x99, 0x99));
-    let fail_text_style = MonoTextStyle::new(&FONT_6X13, unhealthy_color);
+    let middle_y = layout.middle_top as i32;
+    let margin_x = layout.margin_x as i32;
+    let text_style = MonoTextStyle::new(&FONT_6X13, TEXT_PRIMARY);
+    let weak_style = MonoTextStyle::new(&FONT_6X13, TEXT_WEAK);
+    let middle_h = layout_middle_panel_height(layout);
+    let cols: usize = if width >= DISPLAY_WIDE_LAYOUT_MIN_PX { 3 } else { 2 };
+    let rows_needed = channels.len().div_ceil(cols);
+    // 行高不得超过 middle_h / rows，避免 `clamp(14,24)` 在矮中间区把行画出面板底边。
+    let row_step = (middle_h / rows_needed as i32).clamp(8, 24);
+    let row_h = (row_step - 4)
+        .clamp(6, 18)
+        .min(row_step.saturating_sub(2));
+    let row_pad = ((row_step - row_h) / 2).max(1);
+    let dot_d = (row_h.saturating_sub(2) / 2).clamp(4, 10) as u32;
+    let text_base_dy = (row_h - 2).clamp(7, 13);
 
-    let col_width = width as i32 / 2;
+    let col_width = width as i32 / cols as i32;
     let mut col = 0i32;
     let mut row = 0i32;
+    let mut label_scratch = [0u8; 8];
     for ch in channels.iter() {
-        let px = 8 + col * col_width;
-        let py = middle_y + row * 18;
+        let px = margin_x + col * col_width;
+        let row_y = middle_y + row * row_step + row_pad;
+        let py = row_y + row_h / 2;
+        let row_x = px - 2;
+        let row_w = (col_width - margin_x + 2).max(26) as u32;
+        draw_panel_fill(
+            target,
+            row_x,
+            row_y,
+            row_w,
+            row_h.max(1) as u32,
+            DISPLAY_BG,
+            DIVIDER,
+        );
 
-        if ch.enabled {
-            // Enabled channel: filled dot (green=healthy, red=unhealthy)
-            let dot_color = if ch.healthy {
-                healthy_color
+        let dot_color = if ch.enabled {
+            if ch.healthy {
+                STATUS_SUCCESS
             } else {
-                unhealthy_color
-            };
-            let _ = Circle::new(Point::new(px, py + 2), 8)
-                .into_styled(PrimitiveStyle::with_fill(dot_color))
-                .draw(target);
+                STATUS_DANGER
+            }
         } else {
-            // Disabled channel: hollow circle (gray stroke)
-            let _ = Circle::new(Point::new(px, py + 2), 8)
-                .into_styled(PrimitiveStyle::with_stroke(disabled_color, 1))
-                .draw(target);
-        }
-
-        // Channel name
-        let name_style = if ch.enabled {
-            text_style
-        } else {
-            disabled_text_style
+            STATUS_OFF
         };
-        let _ = Text::new(ch.name, Point::new(px + 14, py + 11), name_style).draw(target);
+        let dot_y = py - (dot_d as i32 / 2);
+        let _ = Circle::new(Point::new(px, dot_y), dot_d)
+            .into_styled(PrimitiveStyle::with_fill(dot_color))
+            .draw(target);
 
-        // F5: 通道失败计数 — enabled + unhealthy + failures>0 时显示红色 "xN"
-        if ch.enabled && !ch.healthy && ch.consecutive_failures > 0 {
-            let name_pixel_w = ch.name.len() as i32 * 6; // FONT_6X13 = 6px per char
-            let fail_x = px + 14 + name_pixel_w + 2;
-            let mut fail_buf = [0u8; 6]; // "x" + up to 5 digits
-            fail_buf[0] = b'x';
-            let mut fpos = 1;
-            // write failure count
-            let fc = ch.consecutive_failures;
+        let name_style = if ch.enabled { text_style } else { weak_style };
+        let label = channel_display_label(ch.name, &mut label_scratch);
+        let _ = Text::new(label, Point::new(px + 14, row_y + text_base_dy), name_style).draw(target);
+
+        let mut token_buf = [0u8; 8];
+        let (token, token_color) = if !ch.enabled {
+            ("OFF", STATUS_OFF)
+        } else if ch.healthy {
+            ("OK", STATUS_SUCCESS)
+        } else if ch.consecutive_failures > 0 {
+            token_buf[0] = b'x';
+            let mut pos = 1;
             let mut tmp = [0u8; 10];
-            let mut n = fc;
-            let mut i = 0;
-            while n > 0 && i < 10 {
+            let mut n = ch.consecutive_failures;
+            let mut i = 0usize;
+            while n > 0 && i < tmp.len() {
                 tmp[i] = b'0' + (n % 10) as u8;
                 n /= 10;
                 i += 1;
             }
             for j in (0..i).rev() {
-                if fpos < fail_buf.len() {
-                    fail_buf[fpos] = tmp[j];
-                    fpos += 1;
+                if pos < token_buf.len() {
+                    token_buf[pos] = tmp[j];
+                    pos += 1;
                 }
             }
-            if let Ok(s) = core::str::from_utf8(&fail_buf[..fpos]) {
-                let _ = Text::new(s, Point::new(fail_x, py + 11), fail_text_style).draw(target);
-            }
-        }
+            (core::str::from_utf8(&token_buf[..pos]).unwrap_or("DOWN"), STATUS_DANGER)
+        } else {
+            ("DOWN", STATUS_DANGER)
+        };
+        let token_style = MonoTextStyle::new(&FONT_6X13, token_color);
+        let token_x = px + col_width - margin_x - (token.len() as i32 * 6);
+        let _ = Text::new(token, Point::new(token_x, row_y + text_base_dy), token_style).draw(target);
 
         col += 1;
-        if col >= 2 {
+        if col >= cols as i32 {
             col = 0;
             row += 1;
         }
     }
 }
 
-/// Partial update: repaint only the IP subtitle region.
+/// Partial update: repaint only the IP subtitle region。
 fn render_ip_partial<D: DrawTarget<Color = Rgb565>>(
     target: &mut D,
     ip: &str,
-    bg: Rgb565,
+    uptime_secs: u64,
     width: u16,
+    layout: &DisplayLayout,
 ) {
-    let layout = LAYOUT;
-    // Clear subtitle row: from title_left to right edge, height = font height (13px)
     let y = layout.subtitle_top as i32;
     let x = layout.title_left as i32;
     let clear_w = (width as i32 - x).max(0) as u32;
-    let _ = Rectangle::new(Point::new(x, y), Size::new(clear_w, 16))
-        .into_styled(PrimitiveStyle::with_fill(bg))
+    let clear_h = subtitle_ip_flush_rows(width, uptime_secs) as u32;
+    let _ = Rectangle::new(Point::new(x, y), Size::new(clear_w, clear_h))
+        .into_styled(PrimitiveStyle::with_fill(TITLE_STRIP_BG))
         .draw(target);
 
-    let subtitle_style = MonoTextStyle::new(&FONT_6X13, rgb565(0x66, 0x66, 0x66));
-    let _ = Text::new(ip, Point::new(x, y + 11), subtitle_style).draw(target);
+    let subtitle_style = MonoTextStyle::new(&FONT_6X13, TEXT_SECONDARY);
+    let y0 = y + 11;
+    if width >= DISPLAY_WIDE_LAYOUT_MIN_PX {
+        let mut ip_line = [0u8; 40];
+        let max_px = (width as usize).saturating_sub(layout.title_left as usize);
+        let max_chars = (max_px / 6).clamp(1, 40);
+        let ip_b = ip.as_bytes();
+        let n = ip_b.len().min(max_chars);
+        ip_line[..n].copy_from_slice(&ip_b[..n]);
+        let ip_str = core::str::from_utf8(&ip_line[..n]).unwrap_or("---");
+        let _ = Text::new(ip_str, Point::new(x, y0), subtitle_style).draw(target);
+        if uptime_secs > 0 {
+            let mut up_buf = [0u8; 24];
+            let up_str = format_uptime_line(uptime_secs, &mut up_buf);
+            if !up_str.is_empty() {
+                let _ = Text::new(up_str, Point::new(x, y0 + 13), subtitle_style).draw(target);
+            }
+        }
+    } else {
+        let _ = Text::new(ip, Point::new(x, y0), subtitle_style).draw(target);
+    }
 }
 
 /// Partial update: repaint only the channel status (middle) region.
@@ -1454,18 +1791,19 @@ fn render_channels_partial<D: DrawTarget<Color = Rgb565>>(
     channels: &[DisplayChannelStatus; 5],
     bg: Rgb565,
     width: u16,
+    layout: &DisplayLayout,
 ) {
-    let layout = LAYOUT;
     let middle_y = layout.middle_top as i32;
-    let ch_h = (layout.footer_top - layout.middle_top) as u32;
+    let ch_h = layout_middle_panel_height(layout) as u32;
 
     // Clear middle region
     let _ = Rectangle::new(Point::new(0, middle_y), Size::new(width as u32, ch_h))
         .into_styled(PrimitiveStyle::with_fill(bg))
         .draw(target);
+    draw_panel_fill(target, 0, middle_y, width as u32, ch_h, PANEL_BG, PANEL_BORDER);
 
     // F5: 使用共享渲染逻辑（含失败计数）
-    render_channels_inner(target, channels, width, middle_y);
+    render_channels_inner(target, channels, width, layout);
 }
 
 /// Footer partial-update parameters (avoids clippy::too_many_arguments).
@@ -1487,9 +1825,9 @@ fn render_pressure_partial<D: DrawTarget<Color = Rgb565>>(
     target: &mut D,
     level: &DisplayPressureLevel,
     bg: Rgb565,
+    layout: &DisplayLayout,
     fp: &FooterPartialParams,
 ) {
-    let layout = LAYOUT;
     let footer_y = layout.footer_top as i32;
 
     // Clear entire footer region
@@ -1503,9 +1841,11 @@ fn render_pressure_partial<D: DrawTarget<Color = Rgb565>>(
 
     render_footer(
         target,
+        layout,
         level,
         fp.heap_percent,
         fp.width,
+        fp.height,
         fp.messages_in,
         fp.messages_out,
         fp.last_active_epoch_secs,
@@ -1518,46 +1858,63 @@ fn render_pressure_partial<D: DrawTarget<Color = Rgb565>>(
 #[allow(clippy::too_many_arguments)]
 fn render_footer<D: DrawTarget<Color = Rgb565>>(
     target: &mut D,
+    layout: &DisplayLayout,
     level: &DisplayPressureLevel,
     heap_percent: u8,
     width: u16,
+    height: u16,
     messages_in: u32,
     messages_out: u32,
     last_active_epoch_secs: u32,
     llm_last_ms: u32,
     error_flash: bool,
 ) {
-    let footer_y = LAYOUT.footer_top as i32;
+    let footer_y = layout.footer_top as i32;
+    let margin_x = layout.margin_x as i32;
+    let footer_h = (height as i32 - footer_y).max(1) as u32;
+    draw_panel_fill(
+        target,
+        0,
+        footer_y,
+        width as u32,
+        footer_h,
+        PANEL_BG,
+        PANEL_BORDER,
+    );
     let pressure_text = match level {
         DisplayPressureLevel::Normal => "NORMAL",
         DisplayPressureLevel::Cautious => "CAUTIOUS",
         DisplayPressureLevel::Critical => "CRITICAL",
     };
-    let pressure_color = match level {
-        DisplayPressureLevel::Normal => rgb565(0x22, 0xcc, 0x22),
-        DisplayPressureLevel::Cautious => rgb565(0xdd, 0xaa, 0x00),
-        DisplayPressureLevel::Critical => rgb565(0xee, 0x33, 0x33),
-    };
+    let pressure_color = pressure_accent_color(level);
 
-    // F7: 错误闪烁 — error_flash=true 时反色渲染压力标签（彩色背景 + 白字）
+    // Summary badge.
     if error_flash {
         let text_w = pressure_text.len() as u32 * 6 + 4; // FONT_6X13 + padding
-        let _ = Rectangle::new(Point::new(6, footer_y), Size::new(text_w, 14))
+        let _ = Rectangle::new(Point::new(margin_x - 2, footer_y), Size::new(text_w, 14))
             .into_styled(PrimitiveStyle::with_fill(pressure_color))
             .draw(target);
         let flash_style = MonoTextStyle::new(&FONT_6X13, Rgb565::WHITE);
-        let _ = Text::new(pressure_text, Point::new(8, footer_y + 11), flash_style).draw(target);
+        let _ = Text::new(
+            pressure_text,
+            Point::new(margin_x, footer_y + 11),
+            flash_style,
+        )
+        .draw(target);
     } else {
-        let pressure_style = MonoTextStyle::new(&FONT_6X13, pressure_color);
-        let _ = Text::new(pressure_text, Point::new(8, footer_y + 11), pressure_style).draw(target);
+        render_status_badge(target, margin_x, footer_y, pressure_text, pressure_color);
     }
 
-    let bar_x = 8i32;
-    let bar_y = footer_y + 20;
-    let bar_w = (width as i32 - 56).max(40) as u32;
-    let bar_h = 12u32;
+    let dim_min = width.min(height) as i32;
+    let bar_top_pad = (dim_min * 18 / DISPLAY_LAYOUT_REF_PX as i32).clamp(14, 22);
+    let stats_gap = (dim_min * 12 / DISPLAY_LAYOUT_REF_PX as i32).clamp(9, 14);
+    let bar_h = (dim_min * 8 / DISPLAY_LAYOUT_REF_PX as i32).clamp(6, 10) as u32;
 
-    let bar_border = PrimitiveStyle::with_stroke(rgb565(0xaa, 0xaa, 0xaa), 1);
+    let bar_x = margin_x;
+    let bar_y = footer_y + bar_top_pad;
+    let bar_w = (width as i32 - 56).max(40) as u32;
+
+    let bar_border = PrimitiveStyle::with_stroke(PANEL_BORDER, 1);
     let _ = Rectangle::new(Point::new(bar_x, bar_y), Size::new(bar_w, bar_h))
         .into_styled(bar_border)
         .draw(target);
@@ -1572,19 +1929,22 @@ fn render_footer<D: DrawTarget<Color = Rgb565>>(
         .draw(target);
     }
 
-    let text_style = MonoTextStyle::new(&FONT_6X13, rgb565(0x33, 0x33, 0x33));
+    let text_style = MonoTextStyle::new(&FONT_6X13, TEXT_PRIMARY);
     let mut pct_buf = [0u8; 5];
     let pct_str = format_pct(heap_percent, &mut pct_buf);
     let _ = Text::new(
         pct_str,
-        Point::new(bar_x + bar_w as i32 + 4, bar_y + 10),
+        Point::new(
+            bar_x + bar_w as i32 + 4,
+            bar_y + (bar_h as i32 - 1).clamp(6, 10),
+        ),
         text_style,
     )
     .draw(target);
 
-    // --- Message stats line: "In:NNN Out:NNN L:X.Xs HH:MM" (F6: 含 LLM 延迟) ---
-    let stats_y = bar_y + bar_h as i32 + 14; // 2px gap + 12px bar + baseline offset
-    let dim_style = MonoTextStyle::new(&FONT_6X13, rgb565(0x88, 0x88, 0x88));
+    // Stats line.
+    let stats_y = bar_y + bar_h as i32 + stats_gap;
+    let dim_style = MonoTextStyle::new(&FONT_6X13, TEXT_SECONDARY);
     let mut stats_buf = [0u8; 40]; // F6: 扩大到 40 字节
     let stats_str = format_msg_stats(
         messages_in,
@@ -1593,7 +1953,7 @@ fn render_footer<D: DrawTarget<Color = Rgb565>>(
         llm_last_ms,
         &mut stats_buf,
     );
-    let _ = Text::new(stats_str, Point::new(8, stats_y), dim_style).draw(target);
+    let _ = Text::new(stats_str, Point::new(margin_x, stats_y), dim_style).draw(target);
 }
 
 /// F8: 启动进度条渲染。4 段：WiFi → SNTP → Channels → Agent。
@@ -1603,9 +1963,10 @@ fn render_boot_progress<D: DrawTarget<Color = Rgb565>>(
     width: u16,
     height: u16,
     bg: Rgb565,
+    layout: &DisplayLayout,
 ) {
-    let layout = LAYOUT;
     let footer_y = layout.footer_top as i32;
+    let margin_x = layout.margin_x as i32;
     let footer_h = (height as i32 - footer_y).max(1) as u32;
 
     // Clear footer
@@ -1614,15 +1975,17 @@ fn render_boot_progress<D: DrawTarget<Color = Rgb565>>(
         .draw(target);
 
     let stage = stage.min(4);
-    let bar_x = 8i32;
-    let bar_y = footer_y + 8;
-    let total_w = (width as i32 - 16).max(40);
+    let bar_x = margin_x;
+    let bar_y = footer_y + 18;
+    let total_w = (width as i32 - 2 * margin_x).max(40);
     let seg_w = total_w / 4;
-    let bar_h = 14u32;
+    let bar_h = 10u32;
 
-    let filled_color = rgb565(0x22, 0xcc, 0x22);
-    let empty_color = rgb565(0xdd, 0xdd, 0xdd);
-    let border_color = rgb565(0xaa, 0xaa, 0xaa);
+    let filled_color = STATUS_SUCCESS;
+    let empty_color = DISPLAY_BG;
+    let border_color = PANEL_BORDER;
+
+    render_status_badge(target, margin_x, footer_y, "BOOTING", STATUS_INFO);
 
     // 4 segments
     for i in 0..4u8 {
@@ -1637,8 +2000,8 @@ fn render_boot_progress<D: DrawTarget<Color = Rgb565>>(
     }
 
     // Labels below bar
-    let label_y = bar_y + bar_h as i32 + 12;
-    let label_style = MonoTextStyle::new(&FONT_6X13, rgb565(0x66, 0x66, 0x66));
+    let label_y = bar_y + bar_h as i32 + 11;
+    let label_style = MonoTextStyle::new(&FONT_6X13, TEXT_SECONDARY);
     let labels = ["WiFi", "SNTP", "Chan", "Agent"];
     for (i, lbl) in labels.iter().enumerate() {
         let lx = bar_x + i as i32 * seg_w + (seg_w - lbl.len() as i32 * 6) / 2;

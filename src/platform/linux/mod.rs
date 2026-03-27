@@ -42,7 +42,7 @@ pub struct LinuxPlatform {
 impl LinuxPlatform {
     pub fn new() -> Self {
         let state_fs: Arc<dyn StateFs + Send + Sync> =
-            Arc::new(crate::platform::state_fs::LinuxStateFs::default());
+            Arc::new(crate::platform::state_fs::LinuxStateFs);
         Self {
             state_fs,
             config_store: Arc::new(NvsConfigStore),
@@ -325,6 +325,25 @@ impl Platform for LinuxPlatform {
         params: &serde_json::Value,
     ) -> crate::error::Result<String> {
         crate::platform::hardware_drivers::drive_buzzer(pins, params)
+    }
+
+    fn drive_dht(
+        &self,
+        pins: &crate::config::PinConfig,
+        params: &serde_json::Value,
+        options: &serde_json::Value,
+    ) -> crate::error::Result<String> {
+        crate::platform::hardware_drivers::drive_dht(pins, params, options)
+    }
+
+    fn drive_i2c_sensor(
+        &self,
+        addr: u8,
+        model: &str,
+        _watch_field: &str,
+        _options: &serde_json::Value,
+    ) -> crate::error::Result<String> {
+        crate::platform::hardware_drivers::drive_i2c_sensor_stub(addr, model)
     }
 
     fn i2c_read(&self, addr: u8, register: u8, len: usize) -> crate::error::Result<Vec<u8>> {

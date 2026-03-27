@@ -1,6 +1,7 @@
 //! remind_at 工具：按 at（ISO8601 或 Unix 秒）与 context 写入 RemindAtStore；到点由主循环外线程 pop_due 并注入 PcMsg。
 
 use crate::error::{Error, Result};
+use crate::i18n::{tr, Message as UiMessage};
 use crate::memory::RemindAtStore;
 use crate::tools::{parse_tool_args, Tool, ToolContext};
 use crate::util::parse_iso8601;
@@ -66,7 +67,7 @@ impl Tool for RemindAtTool {
         let context = obj.get("context").and_then(Value::as_str).unwrap_or("");
         let at_secs = parse_at_to_unix_secs(at_val)?;
         self.store.add(channel, chat_id, at_secs, context)?;
-        Ok("已设置提醒。".to_string())
+        Ok(tr(UiMessage::RemindAtSetOk, ctx.user_locale()))
     }
 }
 

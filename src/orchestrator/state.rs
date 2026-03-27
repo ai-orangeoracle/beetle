@@ -43,6 +43,10 @@ pub struct OrchestratorState {
     // 连接计数（permit acquire/release 时增减）
     pub active_http_count: AtomicU32,
 
+    /// Agent 正在处理的任务数（AgentTaskGuard 持有期间非零）。
+    /// Number of agent tasks currently in flight (non-zero while AgentTaskGuard is held).
+    pub active_agent_tasks: AtomicU32,
+
     // 压力等级（由 update_heap_state 计算写入）
     pub pressure_level: AtomicU8,
 
@@ -73,6 +77,7 @@ impl OrchestratorState {
             heap_free_spiram: AtomicU32::new(0),
             heap_largest_block: AtomicU32::new(u32::MAX),
             active_http_count: AtomicU32::new(0),
+            active_agent_tasks: AtomicU32::new(0),
             pressure_level: AtomicU8::new(0), // PressureLevel::Normal
             channel_health: [
                 ChannelHealthSlot::new(),
@@ -129,6 +134,8 @@ pub struct ResourceSnapshot {
     /// internal 堆最大连续空闲块（字节），与 TLS 准入、mbedTLS 碎片诊断一致。
     pub heap_largest_block_internal: u32,
     pub active_http_count: u32,
+    /// Agent 当前处理中的任务数（0 表示空闲）。
+    pub active_agent_tasks: u32,
     pub inbound_depth: u32,
     pub outbound_depth: u32,
     pub budget: super::pressure::ResourceBudget,
@@ -164,6 +171,7 @@ impl ResourceSnapshot {
             heap_free_spiram: state.heap_free_spiram.load(Ordering::Relaxed),
             heap_largest_block_internal: state.heap_largest_block.load(Ordering::Relaxed),
             active_http_count: state.active_http_count.load(Ordering::Relaxed),
+            active_agent_tasks: state.active_agent_tasks.load(Ordering::Relaxed),
             inbound_depth: state.inbound_depth.load(Ordering::Relaxed),
             outbound_depth: state.outbound_depth.load(Ordering::Relaxed),
             budget: super::pressure::budget_for_level(pressure),

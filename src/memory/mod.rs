@@ -35,7 +35,7 @@ pub const REL_PATH_IMPORTANT_MESSAGE: &str = "memory/important_message.json";
 /// 相对路径：会话摘要（单文件 JSON，chat_id -> { summary, last_summary_at_count }）。
 pub const REL_PATH_SESSION_SUMMARIES: &str = "memory/session_summaries.json";
 
-/// 会话摘要存储。模型通过 update_session_summary 工具写入；build_context 将 get 到的摘要注入 messages 首条。实现方按 SESSION_SUMMARY_MAX_LEN 截断。
+/// 会话摘要存储。可由 `update_session_summary` 工具或 agent 程序性摘要写入；build_context 将 get 到的摘要注入 messages 首条。实现方按 SESSION_SUMMARY_MAX_LEN 截断。
 pub trait SessionSummaryStore: Send + Sync {
     fn get(&self, chat_id: &str) -> Result<Option<String>>;
     fn set(&self, chat_id: &str, summary: &str) -> Result<()>;
@@ -218,8 +218,9 @@ pub fn build_system_prompt(
 /// 每 `poll_interval_secs` 秒检查一次 RemindAtStore，到点的条目通过 inbound_tx 注入。
 pub fn run_remind_loop(
     remind_store: std::sync::Arc<dyn RemindAtStore + Send + Sync>,
-    inbound_tx: crate::bus::InboundTx,
+    inbound_tx: crate::bus::SystemInboundTx,
     poll_interval_secs: u64,
+    resolve_locale: std::sync::Arc<dyn Fn() -> crate::i18n::Locale + Send + Sync>,
 ) {
     crate::util::spawn_guarded("remind", move || loop {
         std::thread::sleep(std::time::Duration::from_secs(poll_interval_secs));
@@ -228,8 +229,16 @@ pub fn run_remind_loop(
             .map(|d| d.as_secs())
             .unwrap_or(0);
         while let Ok(Some((channel, chat_id, context))) = remind_store.pop_due(now) {
-            let content = format!("提醒：{}", context);
-            if let Ok(msg) = PcMsg::new(channel, chat_id, content) {
+            let loc = resolve_locale();
+            let prefix = crate::i18n::tr(crate::i18n::Message::RemindPrefix, loc);
+            let content = format!("{}{}", prefix, context);
+            if let Ok(msg) = PcMsg::new_inbound_with_ingress(
+                channel,
+                chat_id,
+                content,
+                false,
+                crate::bus::IngressKind::System,
+            ) {
                 let _ = inbound_tx.send(msg);
             }
         }

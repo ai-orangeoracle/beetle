@@ -127,6 +127,8 @@ export interface SystemInfoData {
   current_time?: string
   firmware_version: string
   board_id?: string
+  /** STA 下路由器分配的 IPv4；未连接时设备返回 "—"。 */
+  lan_ip?: string
   ota_available?: boolean
   locale?: string
 }

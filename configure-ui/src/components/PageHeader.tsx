@@ -56,8 +56,9 @@ export function PageHeader({ title, description, variant = 'page' }: PageHeaderP
             fontSize: inBar ? 'var(--font-size-caption)' : 'var(--font-size-body-sm)',
             fontWeight: 400,
             lineHeight: 'var(--line-height-normal)',
-            color: 'var(--muted)',
-            maxWidth: '42rem',
+            color: inBar ? 'var(--foreground)' : 'var(--muted)',
+            opacity: inBar ? 0.55 : 1,
+            maxWidth: inBar ? '42rem' : '52ch',
             ...(inBar && { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }),
           }}
         >

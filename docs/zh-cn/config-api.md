@@ -125,20 +125,19 @@
 - **用途**：获取当前完整配置（含各字段真实值，含密钥类字段）。
 - **鉴权**：已激活；GET **不必**附带配对码。
 - **响应**：200，JSON 为 `AppConfig` 序列化，各字段为实际存储值。
-- **多 LLM 源**：`llm_sources` 为数组，每项含 `provider`、`api_key`、`model`、`api_url`、`stream`（可选 bool，默认 false，true 时使用 SSE 流式读取）、`max_tokens`（可选 u32，null 时各客户端使用内置默认值 1024）；空时 load 从旧字段构造单源。`llm_router_source_index`、`llm_worker_source_index` 为可选 0～255，两者均设且 < `llm_sources.len()` 时启用路由模式。
+- **多 LLM 源**：`llm_sources` 为数组，每项含 `provider`、`api_key`、`model`、`api_url`、`max_tokens`（可选 u32，null 时各客户端使用内置默认值 1024）；空时 load 从旧字段构造单源。运行时固定为**单段 worker 主链路 + 多源顺序 fallback**。全局流式开关为 `llm_stream`（位于 LLM 段顶层）。
 
 ### POST /api/config/llm
 
-- **用途**：仅写入 LLM 段（多源与路由/worker 下标）到 SPIFFS（`config/llm.json`）；请求体为 segment 全量，后端按 body 校验并写入。
+- **用途**：仅写入 LLM 段（多源 + 全局流式开关）到 SPIFFS（`config/llm.json`）；请求体为 segment 全量，后端按 body 校验并写入。
 - **鉴权**：已激活 + 配对码 + CSRF（要求同本节「写操作：配对码 + CSRF」）。
-- **请求**：`Content-Type: application/json`，Body 为 `{ "llm_sources": [...], "llm_router_source_index": 0, "llm_worker_source_index": 0 }`（后两者可选）。`llm_sources` 非空；每项 `api_key` 必填。每项可含：
+- **请求**：`Content-Type: application/json`，Body 为 `{ "llm_sources": [...], "llm_stream": false }`。`llm_sources` 非空；每项 `api_key` 必填。每项可含：
   - `provider`（必填，非空字符串；长度等校验见 `config` 模块。运行时客户端分流见 [`llm/mod.rs`](../../src/llm/mod.rs)：常见值含 `anthropic` 与 `openai`、`openai_compatible`、`gemini`、`glm`、`qwen`、`deepseek`、`moonshot`、`ollama` 等；完整说明见 [LLM 提供商](llm-providers.md)）
   - `api_key`（必填）
   - `model`（必填）
   - `api_url`（必填字段；若 `provider` 属于 OpenAI 兼容族且留空，则由客户端使用各厂商默认 base URL，见 `build_llm_clients`）
-  - `stream`（可选 bool，默认 false；true 时使用 SSE 流式读取，降低峰值内存）
   - `max_tokens`（可选 u32，默认 null；null 时各客户端使用内置默认值 1024）
-- **校验**：仅本段——`llm_sources` 非空，各字段长度（provider/api_key/model ≤ 64，api_url ≤ 256）；router/worker 下标须 < `llm_sources.len()`。
+- **校验**：仅本段——`llm_sources` 非空，各字段长度（provider/api_key/model ≤ 64，api_url ≤ 256）；`llm_stream` 为布尔值。
 - **响应**：成功 200 `{"ok": true}`；校验失败 400。
 
 ### POST /api/config/channels

@@ -1,11 +1,12 @@
 //! sensor_watch 工具：传感器持续监控与阈值告警。
 //! sensor_watch tool: sensor monitoring with threshold alerts.
 
-use crate::config::DeviceEntry;
+use crate::config::{DeviceEntry, I2cSensorEntry};
 use crate::constants::{
     SENSOR_WATCH_MAX_ALERT_LEN, SENSOR_WATCH_MAX_ENTRIES, SENSOR_WATCH_MIN_INTERVAL_SECS,
 };
 use crate::error::{Error, Result};
+use crate::i18n::{tr, Message as UiMessage, SensorWatchThresholdKind};
 use crate::memory::MemoryStore;
 use crate::tools::{parse_tool_args, Tool, ToolContext};
 use serde::{Deserialize, Serialize};
@@ -45,11 +46,20 @@ pub struct SensorWatch {
 pub struct SensorWatchTool {
     store: Arc<dyn MemoryStore + Send + Sync>,
     devices: Vec<DeviceEntry>,
+    i2c_sensors: Vec<I2cSensorEntry>,
 }
 
 impl SensorWatchTool {
-    pub fn new(store: Arc<dyn MemoryStore + Send + Sync>, devices: Vec<DeviceEntry>) -> Self {
-        Self { store, devices }
+    pub fn new(
+        store: Arc<dyn MemoryStore + Send + Sync>,
+        devices: Vec<DeviceEntry>,
+        i2c_sensors: Vec<I2cSensorEntry>,
+    ) -> Self {
+        Self {
+            store,
+            devices,
+            i2c_sensors,
+        }
     }
 
     fn load_watches(&self) -> Result<Vec<SensorWatch>> {
@@ -68,9 +78,19 @@ impl SensorWatchTool {
     }
 
     fn is_valid_sensor_device(&self, device_id: &str) -> bool {
-        self.devices
+        if self
+            .i2c_sensors
             .iter()
-            .any(|d| d.id == device_id && (d.device_type == "adc_in" || d.device_type == "gpio_in"))
+            .any(|s| s.id == device_id && s.model != "raw")
+        {
+            return true;
+        }
+        self.devices.iter().any(|d| {
+            d.id == device_id
+                && (d.device_type == "adc_in"
+                    || d.device_type == "gpio_in"
+                    || d.device_type == "dht")
+        })
     }
 }
 
@@ -80,22 +100,29 @@ impl Tool for SensorWatchTool {
     }
 
     fn description(&self) -> &str {
-        "Manage sensor monitoring watches with threshold alerts. Op: add (create watch on adc_in/gpio_in device), list, remove (by id), update (toggle enabled or change threshold). Max 8 watches. Watches are checked by cron loop."
+        "Manage sensor monitoring watches with threshold alerts. Op: add (create watch on adc_in/gpio_in/dht or configured i2c_sensors except raw), list, remove (by id), update (toggle enabled or change threshold). Max 8 watches. Watches are checked by cron loop."
     }
 
     fn schema(&self) -> Value {
-        let sensor_ids: Vec<Value> = self
+        let mut sensor_ids: Vec<Value> = self
             .devices
             .iter()
-            .filter(|d| d.device_type == "adc_in" || d.device_type == "gpio_in")
+            .filter(|d| {
+                d.device_type == "adc_in" || d.device_type == "gpio_in" || d.device_type == "dht"
+            })
             .map(|d| Value::String(d.id.clone()))
             .collect();
+        for s in &self.i2c_sensors {
+            if s.model != "raw" {
+                sensor_ids.push(Value::String(s.id.clone()));
+            }
+        }
         json!({
             "type": "object",
             "properties": {
                 "op": { "type": "string", "description": "Operation: add|list|remove|update" },
                 "id": { "type": "string", "description": "Watch ID (for remove/update)" },
-                "device_id": { "type": "string", "enum": sensor_ids, "description": "Sensor device ID (adc_in or gpio_in)" },
+                "device_id": { "type": "string", "enum": sensor_ids, "description": "Sensor device ID (adc_in, gpio_in, dht, or i2c_sensors id)" },
                 "interval_secs": { "type": "integer", "description": "Check interval in seconds (min 60)" },
                 "threshold_type": { "type": "string", "description": "Threshold type: above|below|change" },
                 "threshold_value": { "type": "number", "description": "Threshold value" },
@@ -123,7 +150,7 @@ impl Tool for SensorWatchTool {
                     return Err(Error::config(
                         "tool_sensor_watch",
                         format!(
-                            "device_id '{}' not found or not a sensor (adc_in/gpio_in)",
+                            "device_id '{}' not found or not a monitorable sensor (adc_in/gpio_in/dht or i2c_sensors non-raw)",
                             device_id
                         ),
                     ));
@@ -340,8 +367,10 @@ pub fn save_sensor_watches(store: &dyn MemoryStore, watches: &[SensorWatch]) {
 pub(crate) fn check_sensor_watches(
     store: &dyn MemoryStore,
     inbound_tx: &crate::bus::InboundTx,
-    platform: &dyn crate::platform::Platform,
+    platform: &dyn crate::Platform,
     devices: &[DeviceEntry],
+    i2c_sensors: &[I2cSensorEntry],
+    loc: crate::i18n::Locale,
 ) {
     let mut watches = load_sensor_watches(store);
     if watches.is_empty() {
@@ -359,7 +388,7 @@ pub(crate) fn check_sensor_watches(
             continue;
         }
 
-        let read_result = read_sensor_value(&watch.device_id, platform, devices);
+        let read_result = read_sensor_value(&watch.device_id, platform, devices, i2c_sensors);
         let value = match read_result {
             Ok(v) => v,
             Err(e) => {
@@ -388,17 +417,20 @@ pub(crate) fn check_sensor_watches(
         };
 
         if triggered {
-            let content = format!(
-                "传感器告警 [{}] {}: 当前值={:.2}, 阈值={:.2} ({})",
-                watch.id,
-                watch.alert_message,
-                value,
-                watch.threshold_value,
-                match watch.threshold_type {
-                    ThresholdType::Above => "above",
-                    ThresholdType::Below => "below",
-                    ThresholdType::Change => "change",
-                }
+            let threshold_kind = match watch.threshold_type {
+                ThresholdType::Above => SensorWatchThresholdKind::Above,
+                ThresholdType::Below => SensorWatchThresholdKind::Below,
+                ThresholdType::Change => SensorWatchThresholdKind::Change,
+            };
+            let content = tr(
+                UiMessage::SensorWatchAlert {
+                    id: watch.id.clone(),
+                    label: watch.alert_message.clone(),
+                    value,
+                    threshold: watch.threshold_value,
+                    threshold_kind,
+                },
+                loc,
             );
             match crate::bus::PcMsg::new(&watch.channel, &watch.chat_id, content) {
                 Ok(msg) => {
@@ -428,12 +460,50 @@ pub(crate) fn check_sensor_watches(
     }
 }
 
-/// 读取传感器值：按 `device_id` 查配置，经 [`Platform`] 委托 GPIO/ADC（与 `device_control` 一致）。
+/// 读取传感器值：按 `device_id` 查 `i2c_sensors` 或 `hardware_devices`，经 [`Platform`] 委托。
 fn read_sensor_value(
     device_id: &str,
-    platform: &dyn crate::platform::Platform,
+    platform: &dyn crate::Platform,
     devices: &[DeviceEntry],
+    i2c_sensors: &[I2cSensorEntry],
 ) -> Result<f64> {
+    if let Some(e) = i2c_sensors.iter().find(|s| s.id == device_id) {
+        if e.model == "raw" {
+            return Err(Error::config(
+                "sensor_watch",
+                "i2c_sensor raw model has no numeric temperature/humidity for threshold watches",
+            ));
+        }
+        let s = platform.drive_i2c_sensor(
+            e.addr,
+            e.model.as_str(),
+            e.watch_field.as_str(),
+            &e.options,
+        )?;
+        let v: Value = serde_json::from_str(&s)
+            .map_err(|er| Error::config("sensor_watch", format!("i2c_sensor JSON: {}", er)))?;
+        let field = e.watch_field.as_str();
+        if field != "temperature" && field != "humidity" {
+            return Err(Error::config(
+                "sensor_watch",
+                format!(
+                    "i2c watch_field must be 'temperature' or 'humidity', got '{}'",
+                    field
+                ),
+            ));
+        }
+        let val = v.get(field).and_then(|x| x.as_f64()).ok_or_else(|| {
+            Error::config(
+                "sensor_watch",
+                format!(
+                    "i2c_sensor response missing or non-numeric field '{}'",
+                    field
+                ),
+            )
+        })?;
+        return Ok(val);
+    }
+
     let dev = devices.iter().find(|d| d.id == device_id).ok_or_else(|| {
         Error::config("sensor_watch", format!("unknown device_id '{}'", device_id))
     })?;
@@ -445,10 +515,14 @@ fn read_sensor_value(
                 .map_err(|e| Error::config("sensor_watch", format!("gpio_in JSON: {}", e)))?;
             let n = v
                 .get("value")
-                .and_then(|x| x.as_f64())
-                .or_else(|| v.get("value").and_then(|x| x.as_i64()).map(|i| i as f64))
-                .or_else(|| v.get("value").and_then(|x| x.as_u64()).map(|u| u as f64))
-                .unwrap_or(0.0);
+                .and_then(|x| {
+                    x.as_f64()
+                        .or_else(|| x.as_i64().map(|i| i as f64))
+                        .or_else(|| x.as_u64().map(|u| u as f64))
+                })
+                .ok_or_else(|| {
+                    Error::config("sensor_watch", "gpio_in response missing numeric 'value'")
+                })?;
             Ok(n)
         }
         "adc_in" => {
@@ -457,14 +531,44 @@ fn read_sensor_value(
                 .map_err(|e| Error::config("sensor_watch", format!("adc_in JSON: {}", e)))?;
             let raw = v
                 .get("raw")
-                .and_then(|x| x.as_f64())
-                .or_else(|| v.get("raw").and_then(|x| x.as_i64()).map(|i| i as f64))
-                .unwrap_or(0.0);
+                .and_then(|x| x.as_f64().or_else(|| x.as_i64().map(|i| i as f64)))
+                .ok_or_else(|| {
+                    Error::config("sensor_watch", "adc_in response missing numeric 'raw'")
+                })?;
             Ok(raw)
+        }
+        "dht" => {
+            let s = platform.drive_dht(&dev.pins, &empty, &dev.options)?;
+            let v: Value = serde_json::from_str(&s)
+                .map_err(|e| Error::config("sensor_watch", format!("dht JSON: {}", e)))?;
+            let field = dev
+                .options
+                .get("watch_field")
+                .and_then(|f| f.as_str())
+                .unwrap_or("temperature");
+            if field != "temperature" && field != "humidity" {
+                return Err(Error::config(
+                    "sensor_watch",
+                    format!(
+                        "dht watch_field must be 'temperature' or 'humidity', got '{}'",
+                        field
+                    ),
+                ));
+            }
+            let val = v.get(field).and_then(|x| x.as_f64()).ok_or_else(|| {
+                Error::config(
+                    "sensor_watch",
+                    format!("dht response missing or non-numeric field '{}'", field),
+                )
+            })?;
+            Ok(val)
         }
         _ => Err(Error::config(
             "sensor_watch",
-            format!("device '{}' is not gpio_in or adc_in", device_id),
+            format!(
+                "device '{}' type '{}' not supported for monitoring",
+                device_id, dev.device_type
+            ),
         )),
     }
 }

@@ -85,11 +85,7 @@ impl Tool for HttpRequestTool {
             "POST" => ctx.post_with_headers(url, &headers_ref, body_str.as_bytes())?,
             "PUT" => ctx.put_with_headers(url, &headers_ref, body_str.as_bytes())?,
             "DELETE" => ctx.delete_with_headers(url, &headers_ref)?,
-            "PATCH" => {
-                // PATCH uses post_with_headers with a method override or direct support
-                // For now we rely on the existing post_with_headers as a fallback
-                ctx.post_with_headers(url, &headers_ref, body_str.as_bytes())?
-            }
+            "PATCH" => ctx.patch_with_headers(url, &headers_ref, body_str.as_bytes())?,
             _ => {
                 return Err(Error::config(
                     "tool_http_request",

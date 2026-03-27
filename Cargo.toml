@@ -37,13 +37,16 @@ thiserror = "1.0"
 # QQ 频道 Ed25519 验签；关 default features 省体积（去掉 fast 预计算表、zeroize）
 ed25519-dalek = { version = "2.1", default-features = false, features = ["std"] }
 hex = "0.4"
+getrandom = "0.2"
 indexmap = "2.0"
 
 [target.'cfg(any(target_arch = "xtensa", target_arch = "riscv32"))'.dependencies]
 embedded-svc = "0.29"
+esp-idf-hal = "0.46.2"
 esp-idf-svc = "0.52"
 
 [target.'cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))'.dependencies]
+libc = "0.2"
 env_logger = "0.11"
 # Step 7.2：Linux 配置 API（同步 HTTP，无 tokio）
 tiny_http = "0.12"
@@ -54,7 +57,7 @@ tungstenite = { version = "0.24", default-features = false, features = ["handsha
 # Linux embedded WiFi：rtnetlink 控制面（仅 target_os=linux 编译进图）
 [target.'cfg(target_os = "linux")'.dependencies]
 rtnetlink = "0.20"
-tokio = { version = "1", features = ["rt", "macros", "net"] }
+tokio = { version = "1", features = ["rt", "macros", "net", "time"] }
 futures = "0.3"
 
 [features]

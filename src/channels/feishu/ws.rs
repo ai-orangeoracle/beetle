@@ -8,6 +8,7 @@ use crate::channels::wss_gateway::{
 };
 use crate::channels::ChannelHttpClient;
 use crate::error::{Error, Result};
+use crate::memory::PendingRetryStore;
 use prost::Message;
 
 use super::frame::pbbp2;
@@ -229,6 +230,7 @@ pub fn run_feishu_ws_loop<H, C, CreateHttp, Conn>(
     app_secret: String,
     allowed_chat_ids: Vec<String>,
     inbound_tx: InboundTx,
+    pending_retry: &dyn PendingRetryStore,
     create_http: CreateHttp,
     connect: Conn,
 ) where
@@ -243,5 +245,5 @@ pub fn run_feishu_ws_loop<H, C, CreateHttp, Conn>(
         allowed_chat_ids,
         dedup: DeduplicateRing::new(DEDUP_CACHE_CAPACITY),
     };
-    run_wss_gateway_loop(TAG, driver, inbound_tx, create_http, connect);
+    run_wss_gateway_loop(TAG, driver, inbound_tx, pending_retry, create_http, connect);
 }

@@ -7,23 +7,18 @@ use crate::platform::spiffs::MAX_WRITE_SIZE;
 use crate::platform::state_root::state_mount_path;
 use std::io::ErrorKind;
 use std::path::PathBuf;
-use std::sync::Mutex;
 
-/// 串行化状态根访问，与 `Esp32StateFs` 经 `spiffs` 互斥一致。
-pub struct LinuxStateFs {
-    lock: Mutex<()>,
-}
+/// Linux/host 使用底层文件系统并发能力；写路径采用同目录原子替换。
+pub struct LinuxStateFs;
 
 impl Default for LinuxStateFs {
     fn default() -> Self {
-        Self {
-            lock: Mutex::new(()),
-        }
+        Self
     }
 }
 
 fn abs(rel_path: &str) -> Result<PathBuf> {
-    let rel = super::normalize_state_rel_path(rel_path)?;
+    let rel = crate::util::normalize_state_rel_path(rel_path)?;
     Ok(state_mount_path().join(rel))
 }
 
@@ -37,7 +32,6 @@ fn map_read(r: std::result::Result<Vec<u8>, std::io::Error>) -> Result<Option<Ve
 
 impl StateFs for LinuxStateFs {
     fn read(&self, rel_path: &str) -> Result<Option<Vec<u8>>> {
-        let _g = self.lock.lock().unwrap_or_else(|e| e.into_inner());
         let path = abs(rel_path)?;
         map_read(std::fs::read(&path))
     }
@@ -49,18 +43,11 @@ impl StateFs for LinuxStateFs {
                 format!("write size {} exceeds limit {}", data.len(), MAX_WRITE_SIZE),
             ));
         }
-        let _g = self.lock.lock().unwrap_or_else(|e| e.into_inner());
         let path = abs(rel_path)?;
-        if let Some(parent) = path.parent() {
-            if !parent.as_os_str().is_empty() {
-                std::fs::create_dir_all(parent).map_err(|e| Error::io("state_fs", e))?;
-            }
-        }
-        std::fs::write(&path, data).map_err(|e| Error::io("state_fs", e))
+        crate::platform::fs_atomic::atomic_write(&path, data)
     }
 
     fn remove(&self, rel_path: &str) -> Result<()> {
-        let _g = self.lock.lock().unwrap_or_else(|e| e.into_inner());
         let path = abs(rel_path)?;
         match std::fs::remove_file(&path) {
             Ok(()) => Ok(()),
@@ -70,8 +57,7 @@ impl StateFs for LinuxStateFs {
     }
 
     fn list_dir(&self, rel_path: &str) -> Result<Vec<String>> {
-        let rel = super::normalize_state_rel_path(rel_path)?;
-        let _g = self.lock.lock().unwrap_or_else(|e| e.into_inner());
+        let rel = crate::util::normalize_state_rel_path(rel_path)?;
         let path = state_mount_path().join(rel);
         let mut names = Vec::new();
         for e in std::fs::read_dir(&path).map_err(|e| Error::io("state_fs", e))? {

@@ -368,6 +368,11 @@ export function DevicePage() {
                         breakWords
                       />
                     )}
+                    <Row
+                      label={t("device.deviceInfoLanIp")}
+                      value={systemInfo.lan_ip?.trim() ? systemInfo.lan_ip : "—"}
+                      valueNoWrap
+                    />
                     <Box
                       sx={{
                         display: "grid",
@@ -387,7 +392,12 @@ export function DevicePage() {
                         />
                       )}
                       {systemInfo.current_time && (
-                        <Row label={t("device.deviceInfoCurrentTime")} value={systemInfo.current_time} />
+                        <Row
+                          wide
+                          label={t("device.deviceInfoCurrentTime")}
+                          value={systemInfo.current_time}
+                          valueNoWrap
+                        />
                       )}
                     </Box>
                   </Box>
@@ -450,6 +460,7 @@ function Row({
   valueColor = "var(--text-primary)",
   wide,
   breakWords,
+  valueNoWrap,
 }: {
   label: string;
   value: string;
@@ -457,18 +468,24 @@ function Row({
   /** 占满两列（与 `gridTemplateColumns: repeat(2, 1fr)` 父级配合）。 */
   wide?: boolean;
   breakWords?: boolean;
+  /** 时间等短串：整段不换行（需配合 `wide` 保证有足够横向空间）。 */
+  valueNoWrap?: boolean;
 }) {
   return (
     <Box
       sx={{
         gridColumn: wide ? "1 / -1" : undefined,
         display: "flex",
-        flexWrap: "wrap",
+        flexWrap: valueNoWrap ? "nowrap" : "wrap",
         gap: 0.5,
         alignItems: "baseline",
+        minWidth: 0,
       }}
     >
-      <Typography variant="body2" sx={{ color: "var(--muted)", minWidth: 100 }}>
+      <Typography
+        variant="body2"
+        sx={{ color: "var(--muted)", minWidth: 100, flexShrink: 0 }}
+      >
         {label}:
       </Typography>
       <Typography
@@ -477,6 +494,11 @@ function Row({
           fontFamily: "var(--font-mono)",
           color: valueColor,
           wordBreak: breakWords ? "break-word" : undefined,
+          whiteSpace: valueNoWrap ? "nowrap" : undefined,
+          minWidth: 0,
+          ...(valueNoWrap
+            ? { flex: 1, overflowX: "auto" as const }
+            : {}),
         }}
       >
         {value}

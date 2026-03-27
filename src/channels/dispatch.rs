@@ -17,6 +17,10 @@ use std::time::Duration;
 pub trait MessageSink: Send + Sync {
     fn send(&self, chat_id: &str, content: &str) -> Result<()>;
 
+    fn send_with_req(&self, chat_id: &str, content: &str, _req_id: Option<&str>) -> Result<()> {
+        self.send(chat_id, content)
+    }
+
     /// 发送消息并返回平台侧 message_id（用于后续编辑）。默认回退到 send + None。
     fn send_and_get_id(&self, chat_id: &str, content: &str) -> Result<Option<String>> {
         self.send(chat_id, content)?;
@@ -31,21 +35,32 @@ pub trait MessageSink: Send + Sync {
 
 /// 队列型 Sink：将 (chat_id, content) 送入 channel，由 main 的 flush_*_sends 消费。各通道仅 stage 不同。
 pub struct QueuedSink {
-    tx: std::sync::mpsc::SyncSender<(String, String)>,
+    tx: std::sync::mpsc::SyncSender<(String, String, Option<String>)>,
     stage: &'static str,
 }
 
 impl QueuedSink {
-    pub fn new(tx: std::sync::mpsc::SyncSender<(String, String)>, stage: &'static str) -> Self {
+    pub fn new(
+        tx: std::sync::mpsc::SyncSender<(String, String, Option<String>)>,
+        stage: &'static str,
+    ) -> Self {
         Self { tx, stage }
     }
 }
 
 impl MessageSink for QueuedSink {
     fn send(&self, chat_id: &str, content: &str) -> Result<()> {
+        self.send_with_req(chat_id, content, None)
+    }
+
+    fn send_with_req(&self, chat_id: &str, content: &str, req_id: Option<&str>) -> Result<()> {
         let content = truncate_content_to_max(content, MAX_CONTENT_LEN);
         self.tx
-            .try_send((chat_id.to_string(), content.into_owned()))
+            .try_send((
+                chat_id.to_string(),
+                content.into_owned(),
+                req_id.map(str::to_string),
+            ))
             .map_err(|e| crate::error::Error::Other {
                 source: Box::new(e),
                 stage: self.stage,
@@ -81,7 +96,11 @@ impl Default for ChannelSinks {
 }
 
 /// 可选重试次数（含首次）；重试间隔（毫秒），避免连续锤击失败通道。
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 const SEND_RETRY: u32 = 2;
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+const SEND_RETRY: u32 = 3;
+
 const SEND_RETRY_DELAY_MS: u64 = 500;
 
 fn is_channel_in_cooldown(channel: &str) -> bool {
@@ -97,7 +116,10 @@ fn record_channel_ok(channel: &str) {
 }
 
 /// 熔断冷却期暂存的消息上限，防止无限积累。
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 const COOLDOWN_BUFFER_MAX: usize = 16;
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+const COOLDOWN_BUFFER_MAX: usize = 64;
 
 /// 循环接收出站消息，按 msg.channel 查找 sink 并调用 send；失败打日志并重试；
 /// 单通道熔断冷却期内暂存消息，冷却结束后重放。
@@ -105,7 +127,15 @@ pub fn run_dispatch(outbound_rx: OutboundRx, sinks: Arc<ChannelSinks>) {
     const TAG: &str = "channel_dispatch";
     let mut cooldown_buffer: VecDeque<crate::bus::PcMsg> = VecDeque::new();
 
-    while let Ok(msg) = outbound_rx.recv() {
+    loop {
+        let msg = match outbound_rx.recv() {
+            Ok(m) => m,
+            Err(e) => {
+                log::warn!("[{}] outbound disconnected, dispatch exiting: {:?}", TAG, e);
+                break;
+            }
+        };
+
         let content = truncate_content_to_max(&msg.content, MAX_CONTENT_LEN);
         if content.trim() == "SILENT" || msg.channel.as_ref() == "cron" {
             continue;
@@ -114,26 +144,38 @@ pub fn run_dispatch(outbound_rx: OutboundRx, sinks: Arc<ChannelSinks>) {
         // Replay buffered messages whose channel is out of cooldown
         let mut i = 0;
         while i < cooldown_buffer.len() {
-            if !is_channel_in_cooldown(&cooldown_buffer[i].channel) {
-                if let Some(buffered) = cooldown_buffer.swap_remove_back(i) {
-                    let bc = truncate_content_to_max(&buffered.content, MAX_CONTENT_LEN);
-                    if let Some(sink) = sinks.get(&buffered.channel) {
-                        if sink.send(&buffered.chat_id, &bc).is_ok() {
-                            record_channel_ok(&buffered.channel);
-                            metrics::record_dispatch_send(true);
-                        } else {
-                            record_channel_fail(&buffered.channel);
-                            metrics::record_dispatch_send(false);
-                            log::warn!(
-                                "[{}] channel={} cooldown replay failed",
-                                TAG,
-                                buffered.channel
-                            );
-                        }
-                    }
-                }
-            } else {
+            if is_channel_in_cooldown(&cooldown_buffer[i].channel) {
                 i += 1;
+                continue;
+            }
+            if let Some(buffered) = cooldown_buffer.swap_remove_back(i) {
+                let bc = truncate_content_to_max(&buffered.content, MAX_CONTENT_LEN);
+                if let Some(sink) = sinks.get(buffered.channel.as_ref()) {
+                    if sink
+                        .send_with_req(&buffered.chat_id, &bc, buffered.req_id.as_deref())
+                        .is_ok()
+                    {
+                        record_channel_ok(&buffered.channel);
+                        metrics::record_dispatch_send(true);
+                    } else {
+                        record_channel_fail(&buffered.channel);
+                        metrics::record_dispatch_send(false);
+                        log::warn!(
+                            "[{}] req_id={} channel={} cooldown replay failed",
+                            TAG,
+                            buffered.req_id.as_deref().unwrap_or("-"),
+                            buffered.channel
+                        );
+                    }
+                } else {
+                    log::warn!(
+                        "[{}] no sink for channel={}, message kept in cooldown buffer",
+                        TAG,
+                        buffered.channel
+                    );
+                    cooldown_buffer.push_back(buffered);
+                    i += 1;
+                }
             }
         }
 
@@ -142,8 +184,9 @@ pub fn run_dispatch(outbound_rx: OutboundRx, sinks: Arc<ChannelSinks>) {
                 cooldown_buffer.push_back(msg);
             } else {
                 log::warn!(
-                    "[{}] channel={} cooldown buffer full, dropping oldest",
+                    "[{}] req_id={} channel={} cooldown buffer full, dropping oldest",
                     TAG,
+                    msg.req_id.as_deref().unwrap_or("-"),
                     msg.channel
                 );
                 cooldown_buffer.pop_front();
@@ -165,9 +208,15 @@ pub fn run_dispatch(outbound_rx: OutboundRx, sinks: Arc<ChannelSinks>) {
                 if attempt > 0 {
                     std::thread::sleep(Duration::from_millis(SEND_RETRY_DELAY_MS));
                 }
-                match sink.send(&msg.chat_id, &content) {
+                match sink.send_with_req(&msg.chat_id, &content, msg.req_id.as_deref()) {
                     Ok(()) => {
                         last_err = None;
+                        log::info!(
+                            "[latency][dispatch] req_id={} channel={} attempt={} status=ok",
+                            msg.req_id.as_deref().unwrap_or("-"),
+                            msg.channel,
+                            attempt + 1
+                        );
                         record_channel_ok(&msg.channel);
                         metrics::record_dispatch_send(true);
                         break;
@@ -182,8 +231,9 @@ pub fn run_dispatch(outbound_rx: OutboundRx, sinks: Arc<ChannelSinks>) {
                 metrics::record_dispatch_send(false);
                 metrics::record_error_by_stage("channel_dispatch");
                 log::warn!(
-                    "[{}] channel={} send failed after retries: {}",
+                    "[{}] req_id={} channel={} send failed after retries: {}",
                     TAG,
+                    msg.req_id.as_deref().unwrap_or("-"),
                     msg.channel,
                     e
                 );
@@ -200,7 +250,7 @@ pub fn run_dispatch(outbound_rx: OutboundRx, sinks: Arc<ChannelSinks>) {
 
 /// 各通道的 rx 及 flush 所需凭证，由 build_channel_sinks 填充；未启用通道为 None。
 pub struct ChannelRxSet {
-    pub telegram: Option<mpsc::Receiver<(String, String)>>,
+    pub telegram: Option<mpsc::Receiver<(String, String, Option<String>)>>,
     pub feishu: Option<FeishuRxConfig>,
     pub dingtalk: Option<DingtalkRxConfig>,
     pub wecom: Option<WecomRxConfig>,
@@ -208,18 +258,18 @@ pub struct ChannelRxSet {
 }
 
 pub struct FeishuRxConfig {
-    pub rx: mpsc::Receiver<(String, String)>,
+    pub rx: mpsc::Receiver<(String, String, Option<String>)>,
     pub app_id: String,
     pub app_secret: String,
 }
 
 pub struct DingtalkRxConfig {
-    pub rx: mpsc::Receiver<(String, String)>,
+    pub rx: mpsc::Receiver<(String, String, Option<String>)>,
     pub webhook_url: String,
 }
 
 pub struct WecomRxConfig {
-    pub rx: mpsc::Receiver<(String, String)>,
+    pub rx: mpsc::Receiver<(String, String, Option<String>)>,
     pub corp_id: String,
     pub corp_secret: String,
     pub agent_id: String,
@@ -227,11 +277,17 @@ pub struct WecomRxConfig {
 }
 
 pub struct QqChannelRxConfig {
-    pub rx: mpsc::Receiver<(String, String)>,
+    pub rx: mpsc::Receiver<(String, String, Option<String>)>,
     pub app_id: String,
     pub app_secret: String,
     pub msg_id_cache: super::QqMsgIdCache,
 }
+
+/// Sender 二级队列深度。ESP 受内存限制为 8，Linux 有充足内存用 32。
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+const SENDER_QUEUE_DEPTH: usize = 8;
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+const SENDER_QUEUE_DEPTH: usize = 32;
 
 /// 根据 config.enabled_channel 与凭证创建 ChannelSinks 并注册，返回 sinks 与各通道 rx 集合。
 pub fn build_channel_sinks(
@@ -242,7 +298,7 @@ pub fn build_channel_sinks(
     let enabled = config.enabled_channel.as_str();
 
     let telegram = if enabled == "telegram" && !config.tg_token.trim().is_empty() {
-        let (tx, rx) = mpsc::sync_channel(8);
+        let (tx, rx) = mpsc::sync_channel(SENDER_QUEUE_DEPTH);
         sinks.register(
             "telegram",
             Box::new(QueuedSink::new(tx, "telegram_send_queue")),
@@ -256,7 +312,7 @@ pub fn build_channel_sinks(
         && !config.feishu_app_id.trim().is_empty()
         && !config.feishu_app_secret.trim().is_empty()
     {
-        let (tx, rx) = mpsc::sync_channel(8);
+        let (tx, rx) = mpsc::sync_channel(SENDER_QUEUE_DEPTH);
         sinks.register("feishu", Box::new(QueuedSink::new(tx, "feishu_send_queue")));
         Some(FeishuRxConfig {
             rx,
@@ -268,7 +324,7 @@ pub fn build_channel_sinks(
     };
 
     let dingtalk = if enabled == "dingtalk" && !config.dingtalk_webhook_url.trim().is_empty() {
-        let (tx, rx) = mpsc::sync_channel(8);
+        let (tx, rx) = mpsc::sync_channel(SENDER_QUEUE_DEPTH);
         sinks.register(
             "dingtalk",
             Box::new(QueuedSink::new(tx, "dingtalk_send_queue")),
@@ -286,7 +342,7 @@ pub fn build_channel_sinks(
         && !config.wecom_corp_secret.trim().is_empty()
         && config.wecom_agent_id.trim().parse::<u32>().is_ok()
     {
-        let (tx, rx) = mpsc::sync_channel(8);
+        let (tx, rx) = mpsc::sync_channel(SENDER_QUEUE_DEPTH);
         sinks.register("wecom", Box::new(QueuedSink::new(tx, "wecom_send_queue")));
         Some(WecomRxConfig {
             rx,
@@ -303,7 +359,7 @@ pub fn build_channel_sinks(
         && !config.qq_channel_app_id.trim().is_empty()
         && !config.qq_channel_secret.trim().is_empty()
     {
-        let (tx, rx) = mpsc::sync_channel(8);
+        let (tx, rx) = mpsc::sync_channel(SENDER_QUEUE_DEPTH);
         sinks.register(
             "qq_channel",
             Box::new(QueuedSink::new(tx, "qq_channel_send_queue")),

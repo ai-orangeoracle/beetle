@@ -58,7 +58,10 @@ pub fn init_spiffs() -> Result<()> {
     {
         crate::platform::state_root::init_host_state_root()?;
         let root = state_mount_path();
-        log::info!("[platform::spiffs] host state root ready: {:?}", root);
+        log::info!(
+            "[platform::spiffs] state root ready (file-backed, not SPIFFS flash): {:?}",
+            root
+        );
         Ok(())
     }
     #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
@@ -108,7 +111,7 @@ pub fn spiffs_usage() -> Option<(usize, usize)> {
     }
     #[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
     {
-        None
+        crate::platform::board_info::host_state_root_usage()
     }
 }
 

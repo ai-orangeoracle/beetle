@@ -13,35 +13,58 @@ const CONNECTIVITY_MESSAGE: &str = "BOT, Hello";
 pub fn check_connectivity<H: ChannelHttpClient + ?Sized>(
     config: &AppConfig,
     http: &mut H,
+    loc: crate::i18n::Locale,
 ) -> super::super::connectivity::ChannelConnectivityItem {
     use super::super::connectivity;
+    use crate::i18n::{tr, Message};
     let configured = !config.dingtalk_webhook_url.trim().is_empty();
-    let (ok, message) = if !configured {
-        (false, None)
-    } else {
-        let body = serde_json::json!({
-            "msgtype": "text",
-            "text": { "content": CONNECTIVITY_MESSAGE }
-        });
-        let body_bytes = match serde_json::to_vec(&body) {
-            Ok(b) => b,
-            Err(e) => {
-                return connectivity::item("dingtalk", configured, false, Some(e.to_string()))
-            }
-        };
-        let (status, _) = match http.http_post(config.dingtalk_webhook_url.trim(), &body_bytes) {
-            Ok(r) => r,
-            Err(e) => {
-                return connectivity::item("dingtalk", configured, false, Some(e.to_string()))
-            }
-        };
-        if (200..300).contains(&status) {
-            (true, None)
-        } else {
-            (false, Some(format!("webhook status {}", status)))
+    if !configured {
+        return connectivity::item(
+            "dingtalk",
+            false,
+            false,
+            Some(tr(Message::ConnectivityNotConfigured, loc)),
+        );
+    }
+    let body = serde_json::json!({
+        "msgtype": "text",
+        "text": { "content": CONNECTIVITY_MESSAGE }
+    });
+    let body_bytes = match serde_json::to_vec(&body) {
+        Ok(b) => b,
+        Err(e) => {
+            log::warn!("[dingtalk_connectivity] json: {}", e);
+            return connectivity::item(
+                "dingtalk",
+                configured,
+                false,
+                Some(tr(Message::ConnectivityCheckFailed, loc)),
+            );
         }
     };
-    connectivity::item("dingtalk", configured, ok, message)
+    let (status, _) = match http.http_post(config.dingtalk_webhook_url.trim(), &body_bytes) {
+        Ok(r) => r,
+        Err(e) => {
+            log::warn!("[dingtalk_connectivity] post: {}", e);
+            return connectivity::item(
+                "dingtalk",
+                configured,
+                false,
+                Some(tr(Message::ConnectivityCheckFailed, loc)),
+            );
+        }
+    };
+    if (200..300).contains(&status) {
+        connectivity::item("dingtalk", configured, true, None)
+    } else {
+        log::warn!("[dingtalk_connectivity] webhook status {}", status);
+        connectivity::item(
+            "dingtalk",
+            configured,
+            false,
+            Some(tr(Message::ConnectivityCheckFailed, loc)),
+        )
+    }
 }
 
 fn send_one_dingtalk<H: ChannelHttpClient>(http: &mut H, webhook_url: &str, content: &str) {
@@ -65,21 +88,21 @@ fn send_one_dingtalk<H: ChannelHttpClient>(http: &mut H, webhook_url: &str, cont
 
 /// 从 rx 取出待发送（一次性 drain）。
 pub fn flush_dingtalk_sends<H: ChannelHttpClient>(
-    rx: &std::sync::mpsc::Receiver<(String, String)>,
+    rx: &std::sync::mpsc::Receiver<(String, String, Option<String>)>,
     webhook_url: &str,
     http: &mut H,
 ) {
     if webhook_url.is_empty() {
         return;
     }
-    while let Ok((_chat_id, content)) = rx.try_recv() {
+    while let Ok((_chat_id, content, _req_id)) = rx.try_recv() {
         send_one_dingtalk(http, webhook_url, &content);
     }
 }
 
 /// 持续运行的钉钉发送循环：sender 线程内**复用**同一 HTTP 客户端，减轻 lwIP socket / TLS 压力。
 pub fn run_dingtalk_sender_loop<H, F>(
-    rx: std::sync::mpsc::Receiver<(String, String)>,
+    rx: std::sync::mpsc::Receiver<(String, String, Option<String>)>,
     webhook_url: &str,
     mut create_http: F,
 ) where
@@ -97,7 +120,7 @@ pub fn run_dingtalk_sender_loop<H, F>(
     let mut http: Option<H> = None;
     let recv_timeout = std::time::Duration::from_secs(30);
     loop {
-        let (_chat_id, content) = match rx.recv_timeout(recv_timeout) {
+        let (_chat_id, content, req_id) = match rx.recv_timeout(recv_timeout) {
             Ok(item) => item,
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
                 crate::platform::task_wdt::feed_current_task();
@@ -133,14 +156,18 @@ pub fn run_dingtalk_sender_loop<H, F>(
                 continue;
             };
             send_one_dingtalk(h, webhook_url, &content);
-            while let Ok((_, cnt)) = rx.try_recv() {
+            while let Ok((_, cnt, _)) = rx.try_recv() {
                 send_one_dingtalk(h, webhook_url, &cnt);
             }
             sent = true;
             break;
         }
         if !sent {
-            log::error!("[{}] message dropped after 3 retries", TAG);
+            log::error!(
+                "[{}] req_id={} message dropped after 3 retries",
+                TAG,
+                req_id.as_deref().unwrap_or("-")
+            );
         }
     }
 }

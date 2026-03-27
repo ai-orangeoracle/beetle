@@ -10,11 +10,14 @@ use crate::constants::{
 use crate::error::{Error, Result};
 use std::sync::atomic::Ordering;
 use std::sync::Mutex;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+use std::time::Instant;
 
 use super::pressure::PressureLevel;
 use super::state::OrchestratorState;
 
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 const TRY_INTERVAL_MS: u64 = 50;
 
 /// HTTP 请求优先级。
@@ -31,12 +34,34 @@ pub enum Priority {
 /// RAII guard: decrements active_http_count + releases TLS permit on drop.
 pub struct HttpPermitGuard {
     state: &'static OrchestratorState,
-    _tls_guard: std::sync::MutexGuard<'static, ()>,
+    _tls_guard: Option<std::sync::MutexGuard<'static, ()>>,
 }
 
 impl Drop for HttpPermitGuard {
     fn drop(&mut self) {
         self.state.active_http_count.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
+/// RAII guard：持有期间 `active_agent_tasks` 非零，Drop 时递减。
+/// Held for the full lifetime of a single agent task (from admission to reply sent).
+/// RAII guard: keeps `active_agent_tasks` > 0 while held, decrements on drop.
+pub struct AgentTaskGuard {
+    state: &'static OrchestratorState,
+}
+
+impl AgentTaskGuard {
+    pub(super) fn new(state: &'static OrchestratorState) -> Self {
+        state.active_agent_tasks.fetch_add(1, Ordering::Relaxed);
+        Self { state }
+    }
+}
+
+impl Drop for AgentTaskGuard {
+    fn drop(&mut self) {
+        self.state
+            .active_agent_tasks
+            .fetch_sub(1, Ordering::Relaxed);
     }
 }
 
@@ -72,31 +97,39 @@ pub fn request_http_permit(
         });
     }
 
-    // 获取 TLS 单并发令牌（Mutex::try_lock 循环，超时返回错误）
-    let start = Instant::now();
-    let tls_guard = loop {
-        match tls_permit.try_lock() {
-            Ok(guard) => break guard,
-            Err(std::sync::TryLockError::Poisoned(e)) => {
-                log::warn!("[orchestrator::permit] TLS permit mutex was poisoned, recovering");
-                tls_permit.clear_poison();
-                break e.into_inner();
-            }
-            Err(std::sync::TryLockError::WouldBlock) => {
-                if start.elapsed() >= timeout {
-                    return Err(Error::Other {
-                        source: Box::new(std::io::Error::new(
-                            std::io::ErrorKind::TimedOut,
-                            "tls admission permit timeout",
-                        )),
-                        stage: "tls_admission",
-                    });
+    #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+    let tls_guard = {
+        // 获取 TLS 单并发令牌（Mutex::try_lock 循环，超时返回错误）
+        let start = Instant::now();
+        let guard = loop {
+            match tls_permit.try_lock() {
+                Ok(guard) => break guard,
+                Err(std::sync::TryLockError::Poisoned(e)) => {
+                    log::warn!("[orchestrator::permit] TLS permit mutex was poisoned, recovering");
+                    tls_permit.clear_poison();
+                    break e.into_inner();
                 }
-                #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
-                crate::platform::task_wdt::feed_current_task();
-                std::thread::sleep(Duration::from_millis(TRY_INTERVAL_MS));
+                Err(std::sync::TryLockError::WouldBlock) => {
+                    if start.elapsed() >= timeout {
+                        return Err(Error::Other {
+                            source: Box::new(std::io::Error::new(
+                                std::io::ErrorKind::TimedOut,
+                                "tls admission permit timeout",
+                            )),
+                            stage: "tls_admission",
+                        });
+                    }
+                    crate::platform::task_wdt::feed_current_task();
+                    std::thread::sleep(Duration::from_millis(TRY_INTERVAL_MS));
+                }
             }
-        }
+        };
+        Some(guard)
+    };
+    #[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+    let tls_guard = {
+        let _ = (tls_permit, timeout);
+        None
     };
 
     // 堆检查

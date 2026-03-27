@@ -5,7 +5,7 @@ use std::sync::Mutex;
 static CSRF_TOKEN: Mutex<Option<String>> = Mutex::new(None);
 
 /// 生成新的 CSRF token (16 字节随机数的 hex 字符串)。
-pub fn generate_token() -> String {
+pub fn generate_token() -> crate::Result<String> {
     let mut bytes = [0u8; 16];
     #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
     unsafe {
@@ -13,16 +13,10 @@ pub fn generate_token() -> String {
     }
     #[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
     {
-        use std::time::{SystemTime, UNIX_EPOCH};
-        let seed = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos() as u64;
-        for (i, b) in bytes.iter_mut().enumerate() {
-            *b = ((seed.wrapping_mul(i as u64 + 1)) % 256) as u8;
-        }
+        getrandom::getrandom(&mut bytes)
+            .map_err(|e| crate::Error::config("csrf_entropy", e.to_string()))?;
     }
-    hex_encode(&bytes)
+    Ok(hex_encode(&bytes))
 }
 
 fn hex_encode(bytes: &[u8]) -> String {
@@ -36,20 +30,28 @@ fn hex_encode(bytes: &[u8]) -> String {
 }
 
 /// 初始化 CSRF token (启动时调用一次)。
-pub fn init() {
-    let token = generate_token();
-    *CSRF_TOKEN.lock().unwrap() = Some(token);
+pub fn init() -> crate::Result<()> {
+    let token = generate_token()?;
+    *CSRF_TOKEN.lock().unwrap_or_else(|p| p.into_inner()) = Some(token);
     log::info!("[csrf] token initialized");
+    Ok(())
 }
 
 /// 获取当前 CSRF token。
 pub fn get_token() -> Option<String> {
-    CSRF_TOKEN.lock().unwrap().clone()
+    CSRF_TOKEN
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .clone()
 }
 
 /// 验证请求的 CSRF token 是否匹配。
 pub fn verify_token(token: &str) -> bool {
-    match CSRF_TOKEN.lock().unwrap().as_ref() {
+    match CSRF_TOKEN
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .as_ref()
+    {
         Some(expected) => crate::util::constant_time_eq(token, expected),
         None => false,
     }

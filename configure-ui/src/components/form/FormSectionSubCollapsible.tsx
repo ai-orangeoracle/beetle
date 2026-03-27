@@ -28,7 +28,7 @@ export function FormSectionSubCollapsible({
     <Box
       sx={{
         '&:not(:first-of-type)': { mt: 2 },
-        border: '1px solid var(--border-subtle)',
+        border: '1px solid color-mix(in srgb, var(--border) 18%, transparent)',
         borderRadius: 'var(--radius-control)',
         overflow: 'hidden',
       }}
@@ -57,20 +57,11 @@ export function FormSectionSubCollapsible({
         aria-controls={collapseId}
         id={headerId}
       >
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-          <Box
-            sx={{
-              width: 'var(--accent-line-width, 3px)',
-              height: 14,
-              borderRadius: 1,
-              bgcolor: 'var(--primary)',
-              opacity: 0.5,
-            }}
-          />
+        <Box sx={{ display: 'flex', alignItems: 'center' }}>
           <Typography
             variant="caption"
             sx={{
-              fontWeight: 700,
+              fontWeight: 600,
               letterSpacing: 'var(--letter-spacing-label)',
               color: 'var(--muted)',
               textTransform: 'uppercase',

@@ -8,6 +8,7 @@ use crate::channels::wss_gateway::{
 };
 use crate::channels::ChannelHttpClient;
 use crate::error::{Error, Result};
+use crate::memory::PendingRetryStore;
 
 use super::send::{QqMsgIdCache, QqTokenRequest, QqTokenResponse, QQ_GET_APP_ACCESS_TOKEN_URL};
 
@@ -308,6 +309,7 @@ pub fn run_qq_ws_loop<H, C, CreateHttp, Conn>(
     client_secret: String,
     inbound_tx: crate::bus::InboundTx,
     msg_id_cache: QqMsgIdCache,
+    pending_retry: &dyn PendingRetryStore,
     create_http: CreateHttp,
     connect: Conn,
 ) where
@@ -317,5 +319,5 @@ pub fn run_qq_ws_loop<H, C, CreateHttp, Conn>(
     Conn: FnMut(&str) -> Result<C>,
 {
     let driver = QqWssDriver::new(app_id, client_secret, msg_id_cache);
-    run_wss_gateway_loop(TAG, driver, inbound_tx, create_http, connect);
+    run_wss_gateway_loop(TAG, driver, inbound_tx, pending_retry, create_http, connect);
 }

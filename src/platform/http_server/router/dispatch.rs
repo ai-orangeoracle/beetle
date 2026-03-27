@@ -5,6 +5,7 @@ use super::auth;
 use super::types::{IncomingRequest, OutgoingResponse, RestartAction, RouterEnv};
 use crate::config::AppConfig;
 use crate::error::{Error, Result};
+use crate::i18n::{locale_from_store, tr, Message};
 use crate::platform::http_server::common::{
     self, ApiResponse, CORS_AND_TEXT_PLAIN, CORS_HEADERS, CORS_OPTIONS_HEADERS, CSS_HEADERS,
     HTML_HEADERS, JS_HEADERS, REDIRECT_PAIRING_HEADERS,
@@ -147,7 +148,7 @@ pub fn dispatch(
             if let Some(r) = auth::require_pairing_code(store, uri, &incoming.headers) {
                 return Ok(api_to_out(r));
             }
-            if let Some(r) = auth::require_csrf(&incoming.headers) {
+            if let Some(r) = auth::require_csrf(store, &incoming.headers) {
                 return Ok(api_to_out(r));
             }
             let body_str = std::str::from_utf8(&incoming.body).map_err(|_| Error::Other {
@@ -168,7 +169,7 @@ pub fn dispatch(
             if let Some(r) = auth::require_pairing_code(store, uri, &incoming.headers) {
                 return Ok(api_to_out(r));
             }
-            if let Some(r) = auth::require_csrf(&incoming.headers) {
+            if let Some(r) = auth::require_csrf(store, &incoming.headers) {
                 return Ok(api_to_out(r));
             }
             let body_str = std::str::from_utf8(&incoming.body).map_err(|_| Error::Other {
@@ -183,7 +184,7 @@ pub fn dispatch(
             if let Some(r) = auth::require_pairing_code(store, uri, &incoming.headers) {
                 return Ok(api_to_out(r));
             }
-            if let Some(r) = auth::require_csrf(&incoming.headers) {
+            if let Some(r) = auth::require_csrf(store, &incoming.headers) {
                 return Ok(api_to_out(r));
             }
             let body_str = std::str::from_utf8(&incoming.body).map_err(|_| Error::Other {
@@ -198,7 +199,7 @@ pub fn dispatch(
             if let Some(r) = auth::require_pairing_code(store, uri, &incoming.headers) {
                 return Ok(api_to_out(r));
             }
-            if let Some(r) = auth::require_csrf(&incoming.headers) {
+            if let Some(r) = auth::require_csrf(store, &incoming.headers) {
                 return Ok(api_to_out(r));
             }
             let body_str = std::str::from_utf8(&incoming.body).map_err(|_| Error::Other {
@@ -226,7 +227,7 @@ pub fn dispatch(
             if let Some(r) = auth::require_pairing_code(store, uri, &incoming.headers) {
                 return Ok(api_to_out(r));
             }
-            if let Some(r) = auth::require_csrf(&incoming.headers) {
+            if let Some(r) = auth::require_csrf(store, &incoming.headers) {
                 return Ok(api_to_out(r));
             }
             let body_str = std::str::from_utf8(&incoming.body).map_err(|_| Error::Other {
@@ -254,7 +255,7 @@ pub fn dispatch(
             if let Some(r) = auth::require_pairing_code(store, uri, &incoming.headers) {
                 return Ok(api_to_out(r));
             }
-            if let Some(r) = auth::require_csrf(&incoming.headers) {
+            if let Some(r) = auth::require_csrf(store, &incoming.headers) {
                 return Ok(api_to_out(r));
             }
             let body_str = std::str::from_utf8(&incoming.body).map_err(|_| Error::Other {
@@ -309,11 +310,8 @@ pub fn dispatch(
                     body.into_bytes(),
                 )),
                 Err(_) => {
-                    let locale = crate::config::get_locale(store);
-                    let msg = crate::platform::http_server::user_message::from_api_key(
-                        "operation_failed",
-                        &locale,
-                    );
+                    let loc = locale_from_store(store);
+                    let msg = tr(Message::OperationFailed, loc);
                     Ok(api_to_out(ApiResponse::err_500(&msg)))
                 }
             }
@@ -442,7 +440,7 @@ pub fn dispatch(
             if let Some(r) = auth::require_pairing_code(store, uri, &incoming.headers) {
                 return Ok(api_to_out(r));
             }
-            if let Some(r) = auth::require_csrf(&incoming.headers) {
+            if let Some(r) = auth::require_csrf(store, &incoming.headers) {
                 return Ok(api_to_out(r));
             }
             let chat_id = {
@@ -509,7 +507,7 @@ pub fn dispatch(
             if let Some(r) = auth::require_pairing_code(store, uri, &incoming.headers) {
                 return Ok(api_to_out(r));
             }
-            if let Some(r) = auth::require_csrf(&incoming.headers) {
+            if let Some(r) = auth::require_csrf(store, &incoming.headers) {
                 return Ok(api_to_out(r));
             }
             let body_str = std::str::from_utf8(&incoming.body).map_err(|_| Error::Other {
@@ -523,17 +521,14 @@ pub fn dispatch(
             if let Some(r) = auth::require_pairing_code(store, uri, &incoming.headers) {
                 return Ok(api_to_out(r));
             }
-            if let Some(r) = auth::require_csrf(&incoming.headers) {
+            if let Some(r) = auth::require_csrf(store, &incoming.headers) {
                 return Ok(api_to_out(r));
             }
             let name = match common::name_from_uri(uri) {
                 Some(n) => n,
                 None => {
-                    let locale = crate::config::get_locale(store);
-                    let msg = crate::platform::http_server::user_message::from_api_key(
-                        "missing_name_query",
-                        &locale,
-                    );
+                    let loc = locale_from_store(store);
+                    let msg = tr(Message::MissingNameQuery, loc);
                     return Ok(api_to_out(ApiResponse::err_400(&msg)));
                 }
             };
@@ -544,7 +539,7 @@ pub fn dispatch(
             if let Some(r) = auth::require_pairing_code(store, uri, &incoming.headers) {
                 return Ok(api_to_out(r));
             }
-            if let Some(r) = auth::require_csrf(&incoming.headers) {
+            if let Some(r) = auth::require_csrf(store, &incoming.headers) {
                 return Ok(api_to_out(r));
             }
             let body_str = std::str::from_utf8(&incoming.body).map_err(|_| Error::Other {
@@ -567,11 +562,8 @@ pub fn dispatch(
                     content.into_bytes(),
                 )),
                 Err(_) => {
-                    let locale = crate::config::get_locale(store);
-                    let msg = crate::platform::http_server::user_message::from_api_key(
-                        "operation_failed",
-                        &locale,
-                    );
+                    let loc = locale_from_store(store);
+                    let msg = tr(Message::OperationFailed, loc);
                     Ok(api_to_out(ApiResponse::err_500(&msg)))
                 }
             }
@@ -588,11 +580,8 @@ pub fn dispatch(
                     content.into_bytes(),
                 )),
                 Err(_) => {
-                    let locale = crate::config::get_locale(store);
-                    let msg = crate::platform::http_server::user_message::from_api_key(
-                        "operation_failed",
-                        &locale,
-                    );
+                    let loc = locale_from_store(store);
+                    let msg = tr(Message::OperationFailed, loc);
                     Ok(api_to_out(ApiResponse::err_500(&msg)))
                 }
             }
@@ -601,7 +590,7 @@ pub fn dispatch(
             if let Some(r) = auth::require_pairing_code(store, uri, &incoming.headers) {
                 return Ok(api_to_out(r));
             }
-            if let Some(r) = auth::require_csrf(&incoming.headers) {
+            if let Some(r) = auth::require_csrf(store, &incoming.headers) {
                 return Ok(api_to_out(r));
             }
             let is_json = incoming
@@ -619,7 +608,7 @@ pub fn dispatch(
             if let Some(r) = auth::require_pairing_code(store, uri, &incoming.headers) {
                 return Ok(api_to_out(r));
             }
-            if let Some(r) = auth::require_csrf(&incoming.headers) {
+            if let Some(r) = auth::require_csrf(store, &incoming.headers) {
                 return Ok(api_to_out(r));
             }
             let is_json = incoming
@@ -637,7 +626,7 @@ pub fn dispatch(
             if let Some(r) = auth::require_pairing_code(store, uri, &incoming.headers) {
                 return Ok(api_to_out(r));
             }
-            if let Some(r) = auth::require_csrf(&incoming.headers) {
+            if let Some(r) = auth::require_csrf(store, &incoming.headers) {
                 return Ok(api_to_out(r));
             }
             let (r, do_restart) =
@@ -652,7 +641,7 @@ pub fn dispatch(
             if let Some(r) = auth::require_pairing_code(store, uri, &incoming.headers) {
                 return Ok(api_to_out(r));
             }
-            if let Some(r) = auth::require_csrf(&incoming.headers) {
+            if let Some(r) = auth::require_csrf(store, &incoming.headers) {
                 return Ok(api_to_out(r));
             }
             let r = handlers::config_reset::post(ctx)
@@ -663,7 +652,7 @@ pub fn dispatch(
             if let Some(r) = auth::require_pairing_code(store, uri, &incoming.headers) {
                 return Ok(api_to_out(r));
             }
-            if let Some(r) = auth::require_csrf(&incoming.headers) {
+            if let Some(r) = auth::require_csrf(store, &incoming.headers) {
                 return Ok(api_to_out(r));
             }
             let body_str = std::str::from_utf8(&incoming.body).map_err(|_| Error::Other {
@@ -811,7 +800,7 @@ fn dispatch_ota(
             if let Some(r) = auth::require_pairing_code(store, uri, &incoming.headers) {
                 return Ok(Some(api_to_out(r)));
             }
-            if let Some(r) = auth::require_csrf(&incoming.headers) {
+            if let Some(r) = auth::require_csrf(store, &incoming.headers) {
                 return Ok(Some(api_to_out(r)));
             }
             let body_str = std::str::from_utf8(&incoming.body).map_err(|_| Error::Other {

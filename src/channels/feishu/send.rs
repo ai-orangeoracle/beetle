@@ -111,7 +111,7 @@ fn send_feishu_message<H: ChannelHttpClient>(
 
 /// 从 rx 取出待发送，鉴权后调用飞书发消息 API（一次性 drain）。
 pub fn flush_feishu_sends<H: ChannelHttpClient>(
-    rx: &std::sync::mpsc::Receiver<(String, String)>,
+    rx: &std::sync::mpsc::Receiver<(String, String, Option<String>)>,
     app_id: &str,
     app_secret: &str,
     http: &mut H,
@@ -123,14 +123,14 @@ pub fn flush_feishu_sends<H: ChannelHttpClient>(
         Some(t) => t,
         None => return,
     };
-    while let Ok((chat_id, content)) = rx.try_recv() {
+    while let Ok((chat_id, content, _req_id)) = rx.try_recv() {
         send_feishu_message(http, &token, &chat_id, &content);
     }
 }
 
 /// 持续运行的飞书发送循环：sender 线程内**复用**同一 HTTP；tenant_access_token 仍按 TTL 缓存，减少 getToken 次数。
 pub fn run_feishu_sender_loop<H, F>(
-    rx: std::sync::mpsc::Receiver<(String, String)>,
+    rx: std::sync::mpsc::Receiver<(String, String, Option<String>)>,
     app_id: &str,
     app_secret: &str,
     mut create_http: F,
@@ -149,7 +149,7 @@ pub fn run_feishu_sender_loop<H, F>(
     let token_ttl = std::time::Duration::from_secs(7200 - TOKEN_REFRESH_MARGIN_SECS);
     let mut cached_token: Option<(String, std::time::Instant)> = None;
     loop {
-        let (chat_id, content) = match rx.recv_timeout(recv_timeout) {
+        let (chat_id, content, req_id) = match rx.recv_timeout(recv_timeout) {
             Ok(item) => item,
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
                 crate::platform::task_wdt::feed_current_task();
@@ -206,7 +206,7 @@ pub fn run_feishu_sender_loop<H, F>(
                 continue;
             };
             send_feishu_message(h, token.as_str(), &chat_id, &content);
-            while let Ok((cid, cnt)) = rx.try_recv() {
+            while let Ok((cid, cnt, _)) = rx.try_recv() {
                 send_feishu_message(h, token, &cid, &cnt);
             }
             sent = true;
@@ -217,6 +217,11 @@ pub fn run_feishu_sender_loop<H, F>(
                 "[{}] message dropped after 3 retries, chat_id={}",
                 TAG,
                 chat_id
+            );
+            log::error!(
+                "[{}] req_id={} message dropped after retries",
+                TAG,
+                req_id.as_deref().unwrap_or("-")
             );
             cached_token = None; // 连续失败后清除缓存，下次强制刷新
         }
@@ -324,43 +329,81 @@ pub fn edit_message<H: ChannelHttpClient>(
 pub fn check_connectivity<H: ChannelHttpClient + ?Sized>(
     config: &AppConfig,
     http: &mut H,
+    loc: crate::i18n::Locale,
 ) -> super::super::connectivity::ChannelConnectivityItem {
     use super::super::connectivity;
+    use crate::i18n::{tr, Message};
     let configured =
         !config.feishu_app_id.trim().is_empty() && !config.feishu_app_secret.trim().is_empty();
-    let (ok, message) = if !configured {
-        (false, None)
-    } else {
-        let body = FeishuTokenRequest {
-            app_id: config.feishu_app_id.trim().to_string(),
-            app_secret: config.feishu_app_secret.trim().to_string(),
-        };
-        let body_bytes = match serde_json::to_vec(&body) {
-            Ok(b) => b,
-            Err(e) => return connectivity::item("feishu", configured, false, Some(e.to_string())),
-        };
-        let (status, resp_body) = match http.http_post(FEISHU_TOKEN_URL, &body_bytes) {
-            Ok(r) => r,
-            Err(e) => return connectivity::item("feishu", configured, false, Some(e.to_string())),
-        };
-        if status >= 400 {
+    if !configured {
+        return connectivity::item(
+            "feishu",
+            false,
+            false,
+            Some(tr(Message::ConnectivityNotConfigured, loc)),
+        );
+    }
+    let body = FeishuTokenRequest {
+        app_id: config.feishu_app_id.trim().to_string(),
+        app_secret: config.feishu_app_secret.trim().to_string(),
+    };
+    let body_bytes = match serde_json::to_vec(&body) {
+        Ok(b) => b,
+        Err(e) => {
+            log::warn!("[feishu_connectivity] json: {}", e);
             return connectivity::item(
                 "feishu",
                 configured,
                 false,
-                Some(format!("token api status {}", status)),
+                Some(tr(Message::ConnectivityCheckFailed, loc)),
             );
         }
-        let r: FeishuTokenResponse = match serde_json::from_slice(resp_body.as_ref()) {
-            Ok(x) => x,
-            Err(e) => return connectivity::item("feishu", configured, false, Some(e.to_string())),
-        };
-        match r.tenant_access_token {
-            Some(t) if !t.is_empty() => (true, None),
-            _ => (false, Some(format!("code={}", r.code))),
+    };
+    let (status, resp_body) = match http.http_post(FEISHU_TOKEN_URL, &body_bytes) {
+        Ok(r) => r,
+        Err(e) => {
+            log::warn!("[feishu_connectivity] post: {}", e);
+            return connectivity::item(
+                "feishu",
+                configured,
+                false,
+                Some(tr(Message::ConnectivityCheckFailed, loc)),
+            );
         }
     };
-    connectivity::item("feishu", configured, ok, message)
+    if status >= 400 {
+        log::warn!("[feishu_connectivity] token api status {}", status);
+        return connectivity::item(
+            "feishu",
+            configured,
+            false,
+            Some(tr(Message::ConnectivityTokenInvalid, loc)),
+        );
+    }
+    let r: FeishuTokenResponse = match serde_json::from_slice(resp_body.as_ref()) {
+        Ok(x) => x,
+        Err(e) => {
+            log::warn!("[feishu_connectivity] parse: {}", e);
+            return connectivity::item(
+                "feishu",
+                configured,
+                false,
+                Some(tr(Message::ConnectivityCheckFailed, loc)),
+            );
+        }
+    };
+    match r.tenant_access_token {
+        Some(t) if !t.is_empty() => connectivity::item("feishu", configured, true, None),
+        _ => {
+            log::warn!("[feishu_connectivity] no token code={}", r.code);
+            connectivity::item(
+                "feishu",
+                configured,
+                false,
+                Some(tr(Message::ConnectivityTokenInvalid, loc)),
+            )
+        }
+    }
 }
 
 /// 从飞书事件 body（schema 2.0，含 header.event_type、event）解析出 im.message.receive_v1 文本消息，
@@ -440,7 +483,7 @@ pub fn event_body_to_pcmsg(event_body: &str, allowed_chat_ids: &[String]) -> Opt
     }
     if allowed_chat_ids.is_empty() {
         log::warn!(
-            "[{}] event dropped: 未配置「允许的会话 ID」，请将 chat_id={} 填入通道配置并保存",
+            "[{}] event dropped: allowed chat IDs not configured; add chat_id={} to channel config and save",
             TAG,
             chat_id
         );
@@ -448,7 +491,7 @@ pub fn event_body_to_pcmsg(event_body: &str, allowed_chat_ids: &[String]) -> Opt
     }
     if !allowed_chat_ids.iter().any(|id| id.trim() == chat_id) {
         log::warn!(
-            "[{}] event dropped: chat_id={} 不在允许列表中，请将该 ID 加入「允许的会话 ID」并保存",
+            "[{}] event dropped: chat_id={} not in allowlist; add it to allowed chat IDs in channel config",
             TAG,
             chat_id
         );

@@ -195,6 +195,7 @@ export function DisplayConfigPanel() {
               >
                 <option value="st7789">ST7789</option>
                 <option value="ili9341">ILI9341</option>
+                <option value="st7735">ST7735 (1.8&quot; / 1.44&quot; / 0.96&quot;)</option>
               </TextField>
               <TextField
                 select
@@ -308,7 +309,7 @@ export function DisplayConfigPanel() {
                 value={form.spi.host}
                 label={t("displayConfig.spiHost")}
                 onChange={(e) => {
-                  const host = Number(e.target.value) as 2 | 3;
+                  const host = Number(e.target.value) as 1 | 2;
                   setDraft((prev) => ({
                     ...(prev ?? form),
                     spi: { ...(prev ?? form).spi, host },
@@ -317,8 +318,8 @@ export function DisplayConfigPanel() {
                 }}
                 slotProps={{ select: { native: true } }}
               >
-                <option value={2}>2</option>
-                <option value={3}>3</option>
+                <option value={1}>{t("displayConfig.spiHostSpi2")}</option>
+                <option value={2}>{t("displayConfig.spiHostSpi3")}</option>
               </TextField>
               {(["sclk", "mosi", "cs", "dc", "rst", "bl"] as const).map((k) => (
                 <TextField

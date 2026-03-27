@@ -13,7 +13,7 @@
 
 写入配置时，字段长度校验见 `config` 模块。**能否进入回退链**还受 `build_llm_clients` 过滤影响：`api_url` **可为空**的 provider 为上述 OpenAI 兼容族；**`anthropic` 及任何不在该列表中的标识**在 `api_url` 为空时**不会**加入客户端列表。`AnthropicClient` 对非空 `api_url` 的语义为「完整 Messages 请求 URL」（与代码中默认 `https://api.anthropic.com/v1/messages` 同级），见 [`anthropic.rs`](../../src/llm/anthropic.rs)。
 
-**多源回退**（[`FallbackLlmClient`](../../src/llm/fallback.rs)）：按 `llm_sources` **顺序**依次调用，**首次成功即返回**；全部失败则返回**最后一次**错误。与「路由模式」（`llm_router_source_index` + `llm_worker_source_index`）可同时存在，路由细节见 [config-api](config-api.md) 中 **GET /api/config** 与多 LLM 源字段说明。
+**多源回退**（[`FallbackLlmClient`](../../src/llm/fallback.rs)）：按 `llm_sources` **顺序**依次调用，**首次成功即返回**；全部失败则返回**最后一次**错误。运行时固定为**单段 worker 主链路 + 多源回退**。
 
 各小节中的模型名为**示例**，请以服务商现行文档为准。
 

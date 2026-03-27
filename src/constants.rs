@@ -1,8 +1,11 @@
-//! 资源上界单源；仅支持带 PSRAM 的 ESP32-S3，C3/S2 已移除。
+//! 资源上界单源；仅支持带 PSRAM 的 ESP32-S3。
 //! Single source for resource bounds; only ESP32-S3 with PSRAM supported.
 
 /// 入站/出站队列固定容量（条数）。
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 pub const DEFAULT_CAPACITY: usize = 16;
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+pub const DEFAULT_CAPACITY: usize = 64;
 
 /// 单条消息 content 最大长度（字节）。
 pub const MAX_CONTENT_LEN: usize = 64 * 1024;
@@ -29,7 +32,7 @@ pub const TLS_ADMISSION_MIN_LARGEST_BLOCK_BYTES: usize = 24 * 1024;
 pub const TLS_ADMISSION_NO_PSRAM_MIN_BYTES: usize = 72 * 1024;
 
 /// 低内存且非 cron 时，重入队后休眠毫秒数，避免忙等、给 internal 恢复时间。
-pub const LOW_MEM_DEFER_SLEEP_MS: u64 = 4000;
+pub const LOW_MEM_DEFER_SLEEP_MS: u64 = 1800;
 
 /// 入站 defer 最大重试次数；超过后降级回复"设备忙碌"，不再重入队。
 /// Max defer retries for the same inbound message before degraded reply.
@@ -65,6 +68,8 @@ pub const INBOUND_RECV_TIMEOUT_SECS: u64 = 30;
 pub const AGENT_RETRY_BASE_MS: u64 = 100;
 /// Agent 重试退避上限（毫秒）。
 pub const AGENT_RETRY_MAX_MS: u64 = 500;
+/// Cautious 压力下 LLM RetryLater 的等待毫秒数，避免固定 3s 造成体感卡顿。
+pub const LLM_RETRY_LATER_DELAY_MS: u64 = 700;
 /// pending_retry 重放次数上限；超过则清除不再注入，避免重复饥饿。
 pub const PENDING_RETRY_MAX_REPLAY: u32 = 3;
 /// Dispatch 单通道连续失败后熔断冷却时间（秒）；冷却期内不再向该通道发送。
@@ -73,18 +78,35 @@ pub const CHANNEL_FAIL_COOLDOWN_SECS: u64 = 60;
 pub const CHANNEL_FAIL_THRESHOLD: u32 = 3;
 
 /// SSE 流式响应行缓冲区大小（字节）；单行 SSE data 不应超此值。
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 pub const SSE_LINE_BUF_SIZE: usize = 4096;
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+pub const SSE_LINE_BUF_SIZE: usize = 16 * 1024;
 
 /// HTTP 最大并发连接数（含 TLS）。lwIP ~10 socket，预留给 WSS/HTTP 服务器后可用 ~6，但 TLS 内存限制更紧。
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 pub const MAX_CONCURRENT_HTTP: usize = 3;
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+pub const MAX_CONCURRENT_HTTP: usize = 16;
 
-/// 压力判级：Normal 阈值的 internal 空闲下限（字节）。
+/// 压力判级（ESP32）：Normal 阈值的 internal 空闲下限（字节）。
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 pub const PRESSURE_NORMAL_INTERNAL_MIN_BYTES: usize = 70 * 1024;
-/// 压力判级：Normal 阈值的 PSRAM 空闲下限（字节）。
+/// 压力判级（Linux）：Normal 阈值的可用内存下限（字节）。64MB 以下视为紧张。
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+pub const PRESSURE_NORMAL_INTERNAL_MIN_BYTES: usize = 64 * 1024 * 1024;
+
+/// 压力判级：Normal 阈值的 PSRAM 空闲下限（字节）。Linux 无 PSRAM，此值不参与判定。
 pub const PRESSURE_NORMAL_PSRAM_MIN_BYTES: usize = 4 * 1024 * 1024;
-/// 压力判级：Cautious 阈值的 internal 空闲下限（字节）。
+
+/// 压力判级（ESP32）：Cautious 阈值的 internal 空闲下限（字节）。
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 pub const PRESSURE_CAUTIOUS_INTERNAL_MIN_BYTES: usize = 48 * 1024;
-/// 压力判级：Cautious 阈值的 PSRAM 空闲下限（字节）。
+/// 压力判级（Linux）：Cautious 阈值的可用内存下限（字节）。32MB 以下视为严重。
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+pub const PRESSURE_CAUTIOUS_INTERNAL_MIN_BYTES: usize = 32 * 1024 * 1024;
+
+/// 压力判级：Cautious 阈值的 PSRAM 空闲下限（字节）。Linux 无 PSRAM，此值不参与判定。
 pub const PRESSURE_CAUTIOUS_PSRAM_MIN_BYTES: usize = 1024 * 1024;
 /// 压力判级：队列拥塞阈值（入站+出站总深度），默认容量下为 75%。
 pub const PRESSURE_QUEUE_CONGESTION_THRESHOLD: u32 = (DEFAULT_CAPACITY as u32) * 2 * 3 / 4;
@@ -107,10 +129,14 @@ pub const SESSION_METRICS_INTERVAL_ROUNDS: u32 = 10;
 
 /// 出站门禁 Critical 压力时延迟毫秒数。
 /// Outbound admission defer delay under Critical pressure.
-pub const OUTBOUND_DEFER_DELAY_MS: u64 = 2000;
+pub const OUTBOUND_DEFER_DELAY_MS: u64 = 1400;
 /// 出站门禁 Cautious 压力时轻量退避毫秒数（短于 Critical，与队列拥塞→Cautious 闭环）。
 /// Light outbound defer under Cautious pressure (shorter than Critical).
-pub const OUTBOUND_DEFER_DELAY_MS_CAUTIOUS: u64 = 500;
+pub const OUTBOUND_DEFER_DELAY_MS_CAUTIOUS: u64 = 350;
+/// QQ sender 第一次重试前等待毫秒数（attempt=2）。
+pub const QQ_SEND_RETRY_DELAY_MS_STEP1: u64 = 300;
+/// QQ sender 第二次重试前等待毫秒数（attempt=3）。
+pub const QQ_SEND_RETRY_DELAY_MS_STEP2: u64 = 550;
 
 // ---------- 显示自适应刷新频率 ----------
 /// 显示刷新间隔：Busy 状态（秒）。
@@ -155,6 +181,8 @@ pub const WIFI_SCAN_TIMEOUT_SECS: u64 = 15;
 pub const WIFI_RETRY_BACKOFF_SECS: [u64; 3] = [5, 10, 20];
 /// Linux 嵌入式：`hostapd` / `dnsmasq` /（可选）`wpa_supplicant` 存活检查周期（秒）。
 pub const WIFI_LINUX_DAEMON_WATCH_INTERVAL_SECS: u64 = 15;
+/// 并发 STA+AP 时 hostapd 使用的虚拟 AP 接口名（`iw dev <phy> interface add` 创建）。
+pub const WIFI_LINUX_AP_VIRT_IFACE: &str = "ap0";
 
 // ---------- network_scan 工具 ----------
 /// WiFi 扫描最小间隔（毫秒）。
@@ -181,3 +209,13 @@ pub const I2C_MAX_WRITE_LEN: usize = 32;
 pub const I2C_MAX_DEVICES: usize = 8;
 /// I2C 默认频率（Hz）。
 pub const I2C_DEFAULT_FREQ_HZ: u32 = 100_000;
+
+// ---------- i2c_sensor 工具 / drive_i2c_sensor ----------
+/// I2C 传感器配置最大条目数。
+pub const I2C_SENSOR_MAX_ENTRIES: usize = 8;
+/// I2C 传感器 `id` 最大长度（字节）。
+pub const I2C_SENSOR_ID_MAX_LEN: usize = 64;
+/// I2C 传感器读取最小间隔（毫秒）。
+pub const I2C_SENSOR_RATE_LIMIT_MS: u64 = 2_000;
+/// `raw` 模型 `options.init_cmd` 最大长度（字节）。
+pub const I2C_SENSOR_MAX_CMD_LEN: usize = 4;

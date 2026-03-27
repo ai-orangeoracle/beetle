@@ -4,6 +4,43 @@
 use crate::config::PinConfig;
 use crate::error::{Error, Result};
 use serde_json::Value;
+use std::collections::HashMap;
+use std::sync::Mutex;
+use std::time::Instant;
+
+// ── DHT sensor: rate limit (ESP + host stub) ──
+/// DHT11 两次成功读数最小间隔（ms）。
+const DHT11_MIN_INTERVAL_MS: u64 = 1_000;
+/// DHT22/DHT21 两次成功读数最小间隔（ms）。
+const DHT22_MIN_INTERVAL_MS: u64 = 2_000;
+
+static DHT_LAST_READ: Mutex<Option<HashMap<i32, Instant>>> = Mutex::new(None);
+
+fn dht_rate_limit_check(pin: i32, min_interval_ms: u64) -> Result<()> {
+    let guard = DHT_LAST_READ.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(map) = guard.as_ref() {
+        if let Some(prev) = map.get(&pin) {
+            let elapsed_ms = prev.elapsed().as_millis() as u64;
+            if elapsed_ms < min_interval_ms {
+                return Err(Error::config(
+                    "drive_dht",
+                    format!(
+                        "too frequent: wait {}ms before next read (min interval {}ms)",
+                        min_interval_ms.saturating_sub(elapsed_ms),
+                        min_interval_ms
+                    ),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn dht_rate_limit_on_success(pin: i32) {
+    let mut guard = DHT_LAST_READ.lock().unwrap_or_else(|e| e.into_inner());
+    let map = guard.get_or_insert_with(HashMap::new);
+    map.insert(pin, Instant::now());
+}
 
 /// LEDC 定时器分辨率：13-bit (0–8191)。
 const LEDC_DUTY_RESOLUTION_BITS: u32 = 13;
@@ -385,6 +422,274 @@ pub fn drive_buzzer(pins: &PinConfig, params: &Value) -> Result<String> {
     }
 }
 
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+use std::time::Duration;
+
+/// DHT11 启动拉低时间（μs）。
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+const DHT11_START_LOW_US: u32 = 18_000;
+/// DHT22/DHT21 启动拉低时间（μs）。
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+const DHT22_START_LOW_US: u32 = 1_000;
+/// 启动后释放总线再等待（μs）。
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+const DHT_START_RELEASE_US: u32 = 30;
+/// 释放总线后等待从机首次拉低的最长时间（µs）。
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+const DHT_WAIT_FIRST_FALL_US: i64 = 5_000;
+/// 应答阶段单边沿最长等待（µs）（手册约 80µs）。
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+const DHT_ACK_EDGE_TIMEOUT_US: i64 = 600;
+/// 数据位：低电平结束（上升沿）最长等待（µs）（部分模块低相可略超 50µs）。
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+const DHT_BIT_LOW_END_TIMEOUT_US: i64 = 600;
+/// 上升沿后再延时该时间（µs）后读电平判 0/1（0 位高相 ~26–28µs，1 位 ~70µs；与常见 Arduino 库 40µs 一致）。
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+const DHT_BIT_SAMPLE_DELAY_US: u32 = 40;
+/// 采样后等待高电平结束（下降沿）的最长时间（µs），用于与下一位起始低电平对齐；连续 1 时必需。
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+const DHT_BIT_WAIT_FALL_US: i64 = 2_000;
+/// 失败后重试次数（不含首次）。
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+const DHT_MAX_RETRIES: u8 = 3;
+/// 重试间隔（ms）。
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+const DHT_RETRY_DELAY_MS: u64 = 150;
+
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+static DHT_SAMPLE_CRIT: esp_idf_hal::interrupt::IsrCriticalSection =
+    esp_idf_hal::interrupt::IsrCriticalSection::new();
+
+/// 等待 `gpio_get_level(pin) == target`，超时返回 `Err`。
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+unsafe fn dht_wait_until_level(
+    pin: i32,
+    target: i32,
+    timeout_us: i64,
+    err: &'static str,
+) -> Result<()> {
+    use esp_idf_svc::sys::{esp_timer_get_time, gpio_get_level};
+
+    let deadline = esp_timer_get_time().saturating_add(timeout_us);
+    while gpio_get_level(pin) != target {
+        if esp_timer_get_time() > deadline {
+            return Err(Error::config("drive_dht", err));
+        }
+    }
+    Ok(())
+}
+
+/// DHT 单总线采样：握手后读 40 位，返回 5 字节原始帧。
+/// 数据位：上升沿后 `esp_rom_delay_us` 再读电平（与常见 DHT 库一致），随后等下降沿再读下一位，避免「只测高脉宽」在 S3 上偶发等不到下降沿。
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+unsafe fn dht_sample_raw_frame(pin: i32) -> Result<[u8; 5]> {
+    use esp_idf_svc::sys::{esp_rom_delay_us, gpio_get_level};
+
+    let _g = DHT_SAMPLE_CRIT.enter();
+
+    dht_wait_until_level(
+        pin,
+        0,
+        DHT_WAIT_FIRST_FALL_US,
+        "timeout waiting for sensor response (high→low)",
+    )?;
+    dht_wait_until_level(
+        pin,
+        1,
+        DHT_ACK_EDGE_TIMEOUT_US,
+        "timeout during sensor ack (low phase)",
+    )?;
+    dht_wait_until_level(
+        pin,
+        0,
+        DHT_ACK_EDGE_TIMEOUT_US,
+        "timeout during sensor ack (high phase)",
+    )?;
+
+    let mut data = [0u8; 5];
+    for i in 0..40u32 {
+        dht_wait_until_level(
+            pin,
+            1,
+            DHT_BIT_LOW_END_TIMEOUT_US,
+            "timeout waiting for data bit low→high",
+        )?;
+        esp_rom_delay_us(DHT_BIT_SAMPLE_DELAY_US);
+        if gpio_get_level(pin) != 0 {
+            data[(i / 8) as usize] |= 1 << (7 - (i % 8));
+        }
+        dht_wait_until_level(
+            pin,
+            0,
+            DHT_BIT_WAIT_FALL_US,
+            "timeout during data bit high phase",
+        )?;
+    }
+
+    Ok(data)
+}
+
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+fn dht_pull_from_options(
+    options: &Value,
+) -> (
+    esp_idf_svc::sys::gpio_pullup_t,
+    esp_idf_svc::sys::gpio_pulldown_t,
+) {
+    use esp_idf_svc::sys::{
+        gpio_pulldown_t_GPIO_PULLDOWN_DISABLE, gpio_pulldown_t_GPIO_PULLDOWN_ENABLE,
+        gpio_pullup_t_GPIO_PULLUP_DISABLE, gpio_pullup_t_GPIO_PULLUP_ENABLE,
+    };
+    let pull = options.get("pull").and_then(|v| v.as_str()).unwrap_or("up");
+    match pull {
+        "down" => (
+            gpio_pullup_t_GPIO_PULLUP_DISABLE,
+            gpio_pulldown_t_GPIO_PULLDOWN_ENABLE,
+        ),
+        "none" => (
+            gpio_pullup_t_GPIO_PULLUP_DISABLE,
+            gpio_pulldown_t_GPIO_PULLDOWN_DISABLE,
+        ),
+        _ => (
+            gpio_pullup_t_GPIO_PULLUP_ENABLE,
+            gpio_pulldown_t_GPIO_PULLDOWN_DISABLE,
+        ),
+    }
+}
+
+/// DHT11/DHT22/DHT21 单总线读取；JSON 与 `drive_gpio_in` / `drive_adc_in` 风格一致。
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+pub fn drive_dht(pins: &PinConfig, _params: &Value, options: &Value) -> Result<String> {
+    use esp_idf_svc::sys::{
+        esp_rom_delay_us, gpio_config, gpio_config_t, gpio_int_type_t_GPIO_INTR_DISABLE,
+        gpio_mode_t_GPIO_MODE_INPUT, gpio_mode_t_GPIO_MODE_OUTPUT, gpio_reset_pin, gpio_set_level,
+        ESP_OK,
+    };
+
+    let pin = *pins
+        .get("pin")
+        .ok_or_else(|| Error::config("drive_dht", "missing pin"))?;
+
+    let model = options
+        .get("model")
+        .and_then(|v| v.as_str())
+        .unwrap_or("dht11");
+    if model != "dht11" && model != "dht22" && model != "dht21" {
+        return Err(Error::config(
+            "drive_dht",
+            format!("options.model must be dht11|dht22|dht21, got '{}'", model),
+        ));
+    }
+
+    let (start_low_us, min_interval_ms) = if model == "dht11" {
+        (DHT11_START_LOW_US, DHT11_MIN_INTERVAL_MS)
+    } else {
+        (DHT22_START_LOW_US, DHT22_MIN_INTERVAL_MS)
+    };
+
+    dht_rate_limit_check(pin, min_interval_ms)?;
+
+    let (pull_up, pull_down) = dht_pull_from_options(options);
+    let mut last_err: Option<Error> = None;
+
+    for attempt in 0..=DHT_MAX_RETRIES {
+        if attempt > 0 {
+            std::thread::sleep(Duration::from_millis(DHT_RETRY_DELAY_MS));
+        }
+
+        let sample_result: Result<[u8; 5]> = (|| unsafe {
+            gpio_reset_pin(pin);
+            let conf_out = gpio_config_t {
+                pin_bit_mask: 1u64 << pin,
+                mode: gpio_mode_t_GPIO_MODE_OUTPUT,
+                pull_up_en: pull_up,
+                pull_down_en: pull_down,
+                intr_type: gpio_int_type_t_GPIO_INTR_DISABLE,
+            };
+            let ret = gpio_config(&conf_out);
+            if ret != ESP_OK {
+                return Err(Error::Other {
+                    source: Box::new(std::io::Error::other(format!(
+                        "gpio_config output failed: {}",
+                        ret
+                    ))),
+                    stage: "drive_dht",
+                });
+            }
+
+            gpio_set_level(pin, 0);
+            esp_rom_delay_us(start_low_us);
+            gpio_set_level(pin, 1);
+            esp_rom_delay_us(DHT_START_RELEASE_US);
+
+            let conf_in = gpio_config_t {
+                pin_bit_mask: 1u64 << pin,
+                mode: gpio_mode_t_GPIO_MODE_INPUT,
+                pull_up_en: pull_up,
+                pull_down_en: pull_down,
+                intr_type: gpio_int_type_t_GPIO_INTR_DISABLE,
+            };
+            let ret = gpio_config(&conf_in);
+            if ret != ESP_OK {
+                return Err(Error::Other {
+                    source: Box::new(std::io::Error::other(format!(
+                        "gpio_config input failed: {}",
+                        ret
+                    ))),
+                    stage: "drive_dht",
+                });
+            }
+
+            dht_sample_raw_frame(pin)
+        })();
+
+        let data = match sample_result {
+            Ok(d) => d,
+            Err(e) => {
+                last_err = Some(e);
+                continue;
+            }
+        };
+
+        let sum = data[0]
+            .wrapping_add(data[1])
+            .wrapping_add(data[2])
+            .wrapping_add(data[3]);
+        if (sum & 0xFF) != data[4] {
+            log::warn!(
+                "[drive_dht] checksum mismatch: [{:#04x},{:#04x},{:#04x},{:#04x},{:#04x}] sum={:#04x} attempt={}",
+                data[0], data[1], data[2], data[3], data[4], sum & 0xFF, attempt
+            );
+            last_err = Some(Error::config("drive_dht", "checksum mismatch"));
+            continue;
+        }
+
+        let (temperature, humidity) = if model == "dht11" {
+            let h = f64::from(data[0]);
+            let t = f64::from(data[2]);
+            (t, h)
+        } else {
+            let rh_raw = u16::from_be_bytes([data[0], data[1]]);
+            let t_raw = u16::from_be_bytes([data[2], data[3]]);
+            let h = f64::from(rh_raw) / 10.0;
+            let t = if (t_raw & 0x8000) != 0 {
+                -f64::from(t_raw & 0x7FFF) / 10.0
+            } else {
+                f64::from(t_raw) / 10.0
+            };
+            (t, h)
+        };
+
+        dht_rate_limit_on_success(pin);
+        return Ok(format!(
+            r#"{{"temperature":{},"humidity":{},"model":"{}"}}"#,
+            temperature, humidity, model
+        ));
+    }
+
+    Err(last_err.unwrap_or_else(|| Error::config("drive_dht", "read failed")))
+}
+
 // ── Host target: stub drivers for cargo check / clippy ──
 
 #[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
@@ -516,91 +821,238 @@ pub fn drive_buzzer(pins: &PinConfig, params: &Value) -> Result<String> {
     }
 }
 
-// ── I2C drivers ──
-
-/// I2C 读取：ESP32 真实驱动。
-#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
-pub fn drive_i2c_read(addr: u8, register: u8, len: usize) -> Result<Vec<u8>> {
-    use esp_idf_svc::sys::{
-        i2c_ack_type_t_I2C_MASTER_ACK, i2c_ack_type_t_I2C_MASTER_LAST_NACK, i2c_cmd_handle_t,
-        i2c_cmd_link_create, i2c_cmd_link_delete, i2c_master_cmd_begin, i2c_master_read,
-        i2c_master_start, i2c_master_stop, i2c_master_write_byte, ESP_OK,
-    };
-
-    let mut buf = vec![0u8; len];
-    unsafe {
-        let cmd: i2c_cmd_handle_t = i2c_cmd_link_create();
-        if cmd.is_null() {
-            return Err(Error::config("i2c_read", "failed to create I2C cmd link"));
-        }
-        // Write register address
-        i2c_master_start(cmd);
-        i2c_master_write_byte(cmd, addr << 1, true);
-        i2c_master_write_byte(cmd, register, true);
-        // Read data
-        i2c_master_start(cmd);
-        i2c_master_write_byte(cmd, (addr << 1) | 1, true);
-        if len > 1 {
-            i2c_master_read(
-                cmd,
-                buf.as_mut_ptr(),
-                len - 1,
-                i2c_ack_type_t_I2C_MASTER_ACK,
-            );
-        }
-        i2c_master_read(
-            cmd,
-            buf.as_mut_ptr().add(len - 1),
-            1,
-            i2c_ack_type_t_I2C_MASTER_LAST_NACK,
-        );
-        i2c_master_stop(cmd);
-        let ret = i2c_master_cmd_begin(0, cmd, 100);
-        i2c_cmd_link_delete(cmd);
-        if ret != ESP_OK {
-            return Err(Error::Other {
-                source: Box::new(std::io::Error::other(format!(
-                    "i2c_master_cmd_begin (read) failed: {}",
-                    ret
-                ))),
-                stage: "i2c_read",
-            });
-        }
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+pub fn drive_dht(pins: &PinConfig, _params: &Value, options: &Value) -> Result<String> {
+    let pin = *pins
+        .get("pin")
+        .ok_or_else(|| Error::config("drive_dht", "missing pin"))?;
+    let model = options
+        .get("model")
+        .and_then(|v| v.as_str())
+        .unwrap_or("dht11");
+    if model != "dht11" && model != "dht22" && model != "dht21" {
+        return Err(Error::config(
+            "drive_dht",
+            format!("options.model must be dht11|dht22|dht21, got '{}'", model),
+        ));
     }
-    Ok(buf)
+    let min_interval_ms = if model == "dht11" {
+        DHT11_MIN_INTERVAL_MS
+    } else {
+        DHT22_MIN_INTERVAL_MS
+    };
+    dht_rate_limit_check(pin, min_interval_ms)?;
+    log::info!("[drive_dht] stub: pin={} model={}", pin, model);
+    dht_rate_limit_on_success(pin);
+    Ok(format!(
+        r#"{{"temperature":22.0,"humidity":55.0,"model":"{}","stub":true}}"#,
+        model
+    ))
 }
 
-/// I2C 写入：ESP32 真实驱动。
-#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
-pub fn drive_i2c_write(addr: u8, register: u8, data: &[u8]) -> Result<()> {
-    use esp_idf_svc::sys::{
-        i2c_cmd_handle_t, i2c_cmd_link_create, i2c_cmd_link_delete, i2c_master_cmd_begin,
-        i2c_master_start, i2c_master_stop, i2c_master_write, i2c_master_write_byte, ESP_OK,
-    };
+// ── I2C drivers (ESP-IDF `driver/i2c_master.h`, IDF 5.4+) ──
 
-    unsafe {
-        let cmd: i2c_cmd_handle_t = i2c_cmd_link_create();
-        if cmd.is_null() {
-            return Err(Error::config("i2c_write", "failed to create I2C cmd link"));
-        }
-        i2c_master_start(cmd);
-        i2c_master_write_byte(cmd, addr << 1, true);
-        i2c_master_write_byte(cmd, register, true);
-        i2c_master_write(cmd, data.as_ptr(), data.len(), true);
-        i2c_master_stop(cmd);
-        let ret = i2c_master_cmd_begin(0, cmd, 100);
-        i2c_cmd_link_delete(cmd);
+/// I2C master 总线状态：bus handle + 按 7 位地址缓存的 device handle。
+/// I2C master bus state: bus handle and per-address device handles (lazy).
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+pub(crate) struct I2cBusState {
+    bus: esp_idf_svc::sys::i2c_master_bus_handle_t,
+    devices: std::collections::HashMap<u8, esp_idf_svc::sys::i2c_master_dev_handle_t>,
+    freq_hz: u32,
+}
+
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+unsafe impl Send for I2cBusState {}
+
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+impl I2cBusState {
+    /// 使用配置的 SDA/SCL/频率创建 I2C master bus（端口 I2C_NUM_0）。
+    pub(crate) fn new(sda: i32, scl: i32, freq_hz: u32) -> Result<Self> {
+        use esp_idf_svc::sys::{i2c_new_master_bus, ESP_OK};
+
+        let mut bus_config: esp_idf_svc::sys::i2c_master_bus_config_t =
+            unsafe { core::mem::zeroed() };
+        // `i2c_port_num_t`: I2C_NUM_0；全零的 clk_source union 为默认时钟源。
+        bus_config.i2c_port = 0;
+        bus_config.sda_io_num = sda;
+        bus_config.scl_io_num = scl;
+        bus_config.glitch_ignore_cnt = 7;
+        bus_config.intr_priority = 0;
+        bus_config.trans_queue_depth = 0;
+
+        let mut bus: esp_idf_svc::sys::i2c_master_bus_handle_t = core::ptr::null_mut();
+        let ret = unsafe { i2c_new_master_bus(&bus_config, &mut bus) };
         if ret != ESP_OK {
-            return Err(Error::Other {
-                source: Box::new(std::io::Error::other(format!(
-                    "i2c_master_cmd_begin (write) failed: {}",
-                    ret
-                ))),
-                stage: "i2c_write",
-            });
+            return Err(Error::esp("i2c_init", ret));
+        }
+        Ok(Self {
+            bus,
+            devices: std::collections::HashMap::new(),
+            freq_hz,
+        })
+    }
+
+    fn ensure_device(&mut self, addr: u8) -> Result<esp_idf_svc::sys::i2c_master_dev_handle_t> {
+        use esp_idf_svc::sys::{
+            i2c_addr_bit_len_t_I2C_ADDR_BIT_LEN_7, i2c_master_bus_add_device, ESP_OK,
+        };
+
+        if let Some(&h) = self.devices.get(&addr) {
+            return Ok(h);
+        }
+        let mut dev_cfg: esp_idf_svc::sys::i2c_device_config_t = unsafe { core::mem::zeroed() };
+        dev_cfg.dev_addr_length = i2c_addr_bit_len_t_I2C_ADDR_BIT_LEN_7;
+        dev_cfg.device_address = u16::from(addr);
+        dev_cfg.scl_speed_hz = self.freq_hz;
+
+        let mut dev: esp_idf_svc::sys::i2c_master_dev_handle_t = core::ptr::null_mut();
+        let ret = unsafe { i2c_master_bus_add_device(self.bus, &dev_cfg, &mut dev) };
+        if ret != ESP_OK {
+            return Err(Error::esp("i2c_add_device", ret));
+        }
+        self.devices.insert(addr, dev);
+        Ok(dev)
+    }
+
+    /// 寄存器读：写寄存器地址后 repeated start 再读（`i2c_master_transmit_receive`）。
+    pub(crate) fn read(&mut self, addr: u8, register: u8, len: usize) -> Result<Vec<u8>> {
+        use esp_idf_svc::sys::{i2c_master_transmit_receive, ESP_OK};
+
+        let dev = self.ensure_device(addr)?;
+        let write_buf = [register];
+        let mut read_buf = vec![0u8; len];
+        let ret = unsafe {
+            i2c_master_transmit_receive(
+                dev,
+                write_buf.as_ptr(),
+                write_buf.len(),
+                read_buf.as_mut_ptr(),
+                read_buf.len(),
+                -1,
+            )
+        };
+        if ret != ESP_OK {
+            return Err(Error::esp("i2c_read", ret));
+        }
+        Ok(read_buf)
+    }
+
+    /// 寄存器写：单帧发送 `[register, ...data]`。
+    pub(crate) fn write(&mut self, addr: u8, register: u8, data: &[u8]) -> Result<()> {
+        use esp_idf_svc::sys::{i2c_master_transmit, ESP_OK};
+
+        let dev = self.ensure_device(addr)?;
+        let mut buf = Vec::with_capacity(1 + data.len());
+        buf.push(register);
+        buf.extend_from_slice(data);
+        let ret = unsafe { i2c_master_transmit(dev, buf.as_ptr(), buf.len(), -1) };
+        if ret != ESP_OK {
+            return Err(Error::esp("i2c_write", ret));
+        }
+        Ok(())
+    }
+
+    /// 纯读：无寄存器前缀（`i2c_master_receive`），用于 SHT3x/AHT20 等测量后读回。
+    pub(crate) fn receive(&mut self, addr: u8, len: usize) -> Result<Vec<u8>> {
+        use esp_idf_svc::sys::{i2c_master_receive, ESP_OK};
+
+        let dev = self.ensure_device(addr)?;
+        let mut read_buf = vec![0u8; len];
+        let ret = unsafe { i2c_master_receive(dev, read_buf.as_mut_ptr(), read_buf.len(), -1) };
+        if ret != ESP_OK {
+            return Err(Error::esp("i2c_read", ret));
+        }
+        Ok(read_buf)
+    }
+}
+
+/// SHT3x CRC-8：多项式 0x31，初值 0xFF。
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+fn crc8_sht3x(data: &[u8]) -> u8 {
+    let mut crc = 0xFFu8;
+    for b in data {
+        crc ^= *b;
+        for _ in 0..8 {
+            if (crc & 0x80) != 0 {
+                crc = (crc << 1) ^ 0x31;
+            } else {
+                crc <<= 1;
+            }
         }
     }
-    Ok(())
+    crc
+}
+
+/// 解析 SHT3x 单次测量 6 字节帧（湿度 + CRC + 温度 + CRC）。
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+pub(crate) fn parse_sht3x(data: &[u8]) -> Result<(f64, f64)> {
+    if data.len() < 6 {
+        return Err(Error::config(
+            "drive_i2c_sensor",
+            format!("sht3x expected 6 bytes, got {}", data.len()),
+        ));
+    }
+    if crc8_sht3x(&data[0..2]) != data[2] {
+        return Err(Error::config(
+            "drive_i2c_sensor",
+            "sht3x humidity CRC mismatch",
+        ));
+    }
+    if crc8_sht3x(&data[3..5]) != data[5] {
+        return Err(Error::config(
+            "drive_i2c_sensor",
+            "sht3x temperature CRC mismatch",
+        ));
+    }
+    let rh_raw = u16::from_be_bytes([data[0], data[1]]);
+    let t_raw = u16::from_be_bytes([data[3], data[4]]);
+    let humidity = 100.0 * f64::from(rh_raw) / 65535.0;
+    let temperature = -45.0 + 175.0 * f64::from(t_raw) / 65535.0;
+    Ok((temperature, humidity))
+}
+
+/// 解析 AHT20 测量 6 字节帧（状态 + 20bit 湿度 + 20bit 温度）。
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+pub(crate) fn parse_aht20(data: &[u8]) -> Result<(f64, f64)> {
+    if data.len() < 6 {
+        return Err(Error::config(
+            "drive_i2c_sensor",
+            format!("aht20 expected 6 bytes, got {}", data.len()),
+        ));
+    }
+    if (data[0] & 0x80) != 0 {
+        return Err(Error::config(
+            "drive_i2c_sensor",
+            "aht20 sensor busy (status bit 7 set)",
+        ));
+    }
+    let h_raw: u32 =
+        ((u32::from(data[1]) << 12) | (u32::from(data[2]) << 4) | (u32::from(data[3]) >> 4))
+            & 0xFFFFF;
+    let t_raw: u32 =
+        (((u32::from(data[3]) & 0x0F) << 16) | (u32::from(data[4]) << 8) | u32::from(data[5]))
+            & 0xFFFFF;
+    let humidity = (h_raw as f64) * 100.0 / f64::from(1u32 << 20);
+    let temperature = (t_raw as f64) * 200.0 / f64::from(1u32 << 20) - 50.0;
+    Ok((temperature, humidity))
+}
+
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+impl Drop for I2cBusState {
+    fn drop(&mut self) {
+        use esp_idf_svc::sys::{i2c_del_master_bus, i2c_master_bus_rm_device};
+
+        for (_, h) in self.devices.drain() {
+            unsafe {
+                let _ = i2c_master_bus_rm_device(h);
+            }
+        }
+        if !self.bus.is_null() {
+            unsafe {
+                let _ = i2c_del_master_bus(self.bus);
+            }
+        }
+    }
 }
 
 /// I2C 读取：Host stub。
@@ -625,4 +1077,62 @@ pub fn drive_i2c_write(addr: u8, register: u8, data: &[u8]) -> Result<()> {
         data
     );
     Ok(())
+}
+
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+static I2C_SENSOR_LAST_READ: Mutex<Option<HashMap<i32, Instant>>> = Mutex::new(None);
+
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+fn i2c_sensor_stub_rate_limit_check(addr: u8) -> Result<()> {
+    use crate::constants::I2C_SENSOR_RATE_LIMIT_MS;
+    let pin_key = i32::from(addr);
+    let guard = I2C_SENSOR_LAST_READ
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    if let Some(map) = guard.as_ref() {
+        if let Some(prev) = map.get(&pin_key) {
+            let elapsed_ms = prev.elapsed().as_millis() as u64;
+            if elapsed_ms < I2C_SENSOR_RATE_LIMIT_MS {
+                return Err(Error::config(
+                    "drive_i2c_sensor",
+                    format!(
+                        "too frequent: wait {}ms (min interval {}ms)",
+                        I2C_SENSOR_RATE_LIMIT_MS.saturating_sub(elapsed_ms),
+                        I2C_SENSOR_RATE_LIMIT_MS
+                    ),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+fn i2c_sensor_stub_rate_limit_on_success(addr: u8) {
+    let pin_key = i32::from(addr);
+    let mut guard = I2C_SENSOR_LAST_READ
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let map = guard.get_or_insert_with(HashMap::new);
+    map.insert(pin_key, Instant::now());
+}
+
+/// Host：`drive_i2c_sensor` 模拟 JSON（含速率限制）。
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+pub fn drive_i2c_sensor_stub(addr: u8, model: &str) -> Result<String> {
+    i2c_sensor_stub_rate_limit_check(addr)?;
+    log::info!(
+        "[drive_i2c_sensor] stub: addr=0x{:02X} model={}",
+        addr,
+        model
+    );
+    i2c_sensor_stub_rate_limit_on_success(addr);
+    if model == "raw" {
+        Ok(r#"{"raw":"000000000000","model":"raw","stub":true}"#.to_string())
+    } else {
+        Ok(format!(
+            r#"{{"temperature":22.0,"humidity":55.0,"model":"{}","stub":true}}"#,
+            model
+        ))
+    }
 }

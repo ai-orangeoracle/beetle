@@ -1,9 +1,9 @@
-export type DisplayDriver = 'st7789' | 'ili9341'
+export type DisplayDriver = 'st7789' | 'ili9341' | 'st7735'
 export type DisplayBus = 'spi'
 export type DisplayColorOrder = 'rgb' | 'bgr'
 
 export interface DisplaySpiConfig {
-  host: 2 | 3
+  host: 1 | 2
   sclk: number
   mosi: number
   cs: number
@@ -43,7 +43,7 @@ export function defaultDisplayConfig(): DisplayConfig {
     offset_x: 0,
     offset_y: 0,
     spi: {
-      host: 2,
+      host: 1,
       sclk: 42,
       mosi: 41,
       cs: 21,

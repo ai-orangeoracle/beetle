@@ -6,6 +6,7 @@ use crate::channels::wss_gateway::connection::{WssConnection, WssEvent};
 use crate::channels::wss_gateway::driver::{WssGatewayDriver, WssRecvAction, WssSessionState};
 use crate::channels::ChannelHttpClient;
 use crate::error::Result;
+use crate::memory::PendingRetryStore;
 use std::time::{Duration, Instant};
 
 const BACKOFF_MAX_SECS: u64 = 120;
@@ -58,6 +59,7 @@ pub fn run_wss_gateway_loop<D, H, C, CreateHttp, Conn>(
     tag: &str,
     mut driver: D,
     inbound_tx: InboundTx,
+    pending_retry: &dyn PendingRetryStore,
     mut create_http: CreateHttp,
     mut connect: Conn,
 ) where
@@ -148,8 +150,13 @@ pub fn run_wss_gateway_loop<D, H, C, CreateHttp, Conn>(
 
         if let Some(ref payload) = state.identify_payload {
             log::debug!("[{}] send identify len={}", tag, payload.len());
-            if conn.send_binary(payload).is_err() {
-                log::warn!("[{}] send identify failed", tag);
+            if let Err(e) = conn.send_binary(payload) {
+                log::warn!(
+                    "[{}] send identify failed (len={}): {}",
+                    tag,
+                    payload.len(),
+                    e
+                );
                 drop(conn);
                 sleep_with_wdt(backoff_secs);
                 backoff_secs = (backoff_secs * 2).min(BACKOFF_MAX_SECS);
@@ -183,14 +190,37 @@ pub fn run_wss_gateway_loop<D, H, C, CreateHttp, Conn>(
                                     tag,
                                     chat_id
                                 );
-                            } else if inbound_tx.try_send(msg).is_err() {
-                                log::warn!(
-                                    "[{}] inbound queue full, dropping msg chat_id={}",
-                                    tag,
-                                    chat_id
-                                );
                             } else {
-                                log::info!("[{}] message enqueued, chat_id={}", tag, chat_id);
+                                let mut enqueued = false;
+                                for _ in 0..3 {
+                                    match inbound_tx.try_send(msg.clone()) {
+                                        Ok(()) => {
+                                            enqueued = true;
+                                            break;
+                                        }
+                                        Err(std::sync::mpsc::TrySendError::Full(_)) => {
+                                            std::thread::sleep(Duration::from_millis(200));
+                                        }
+                                        Err(std::sync::mpsc::TrySendError::Disconnected(_)) => {
+                                            log::warn!(
+                                                "[{}] inbound disconnected, dropping msg chat_id={}",
+                                                tag,
+                                                chat_id
+                                            );
+                                            break;
+                                        }
+                                    }
+                                }
+                                if enqueued {
+                                    log::info!("[{}] message enqueued, chat_id={}", tag, chat_id);
+                                } else {
+                                    log::warn!(
+                                        "[{}] inbound queue full, dropping msg chat_id={}",
+                                        tag,
+                                        chat_id
+                                    );
+                                    let _ = pending_retry.save_pending_retry(&msg);
+                                }
                             }
                         }
                         Ok(WssRecvAction::Dispatch(None)) => {

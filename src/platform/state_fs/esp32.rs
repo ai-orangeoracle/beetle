@@ -12,7 +12,7 @@ use std::path::PathBuf;
 pub struct Esp32StateFs;
 
 fn abs_path(rel_path: &str) -> Result<PathBuf> {
-    let rel = super::normalize_state_rel_path(rel_path)?;
+    let rel = crate::util::normalize_state_rel_path(rel_path)?;
     Ok(state_mount_path().join(rel))
 }
 

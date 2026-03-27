@@ -2,6 +2,7 @@
 //! Lightweight helpers; secret redaction for safe logging.
 
 use crate::constants::AGENT_MARKER_STOP;
+use std::path::Path;
 
 /// 按字符边界截断内容至最多 max 个字符；不截断时零分配返回借用。
 /// Truncate to at most `max` chars; returns `Cow::Borrowed` (zero alloc) when no truncation needed.
@@ -15,6 +16,19 @@ pub fn truncate_content_to_max(s: &str, max: usize) -> std::borrow::Cow<'_, str>
         Some((byte_offset, _)) => std::borrow::Cow::Owned(s[..byte_offset].to_string()),
         None => std::borrow::Cow::Borrowed(s), // fewer than max chars despite byte len > max
     }
+}
+
+/// 规范化状态根相对路径：trim、去前导 `/`、禁止 `..` 与绝对路径。
+/// Normalize state-root relative path: trim, strip leading `/`, reject `..` and absolute path.
+pub fn normalize_state_rel_path(path_arg: &str) -> crate::Result<String> {
+    let s = path_arg.trim().trim_start_matches('/');
+    if s.contains("..") {
+        return Err(crate::Error::config("state_rel_path", "invalid path"));
+    }
+    if Path::new(s).is_absolute() {
+        return Err(crate::Error::config("state_rel_path", "invalid path"));
+    }
+    Ok(s.to_string())
 }
 
 /// 移除 `s` 中所有非重叠的 `needle` 子串（`needle` 按字节匹配；模型标记为 ASCII）。
@@ -311,6 +325,74 @@ pub fn weekday_name(days_since_epoch: u64) -> &'static str {
 
 // ---------- 脱敏 ----------
 
+/// 脱敏工具输出中的凭证键值对。逐行扫描，对含敏感关键字的行将 value 部分替换为 `[REDACTED]` 前缀提示。
+/// 不引入 regex 依赖，适合嵌入式环境。
+/// Scrub credential-like key/value lines in tool output; no regex dependency for embedded builds.
+pub fn scrub_credentials(input: &str) -> String {
+    const SENSITIVE_KEYS: &[&str] = &[
+        "token",
+        "api_key",
+        "api-key",
+        "apikey",
+        "password",
+        "passwd",
+        "secret",
+        "bearer",
+        "credential",
+        "authorization",
+        "access_key",
+        "private_key",
+    ];
+    if input.is_empty() {
+        return String::new();
+    }
+    let mut out = String::with_capacity(input.len());
+    let mut first = true;
+    for line in input.split('\n') {
+        if !first {
+            out.push('\n');
+        }
+        first = false;
+        let lower = line.to_ascii_lowercase();
+        if SENSITIVE_KEYS.iter().any(|k| lower.contains(k)) {
+            out.push_str(&scrub_kv_line(line));
+        } else {
+            out.push_str(line);
+        }
+    }
+    out
+}
+
+fn scrub_kv_line(line: &str) -> String {
+    let bytes = line.as_bytes();
+    let mut sep = None;
+    for (i, &b) in bytes.iter().enumerate() {
+        if b == b':' && bytes.get(i + 1) == Some(&b'/') {
+            continue; // skip "://" (URL scheme)
+        }
+        if b == b'=' || b == b':' {
+            sep = Some(i);
+            break;
+        }
+    }
+    match sep {
+        Some(pos) => {
+            let (key_part, val_part) = line.split_at(pos + 1);
+            let val = val_part.trim().trim_matches('"').trim_matches('\'');
+            if val.len() >= 8 {
+                let mut prefix_end = val.len().min(4);
+                while prefix_end > 0 && !val.is_char_boundary(prefix_end) {
+                    prefix_end -= 1;
+                }
+                format!("{} {}…[REDACTED]", key_part, &val[..prefix_end])
+            } else {
+                line.to_string()
+            }
+        }
+        None => line.to_string(),
+    }
+}
+
 /// 常量时间比较，避免 token 时序侧信道。
 /// Constant-time string comparison to prevent timing side-channel attacks.
 pub fn constant_time_eq(a: &str, b: &str) -> bool {
@@ -333,12 +415,12 @@ pub fn usize_to_decimal_buf(buf: &mut [u8], n: usize) -> &str {
     let max = buf.len().min(20);
     if max == 0 {
         // SAFETY: empty slice is trivially valid UTF-8.
-        return std::str::from_utf8(&[]).unwrap();
+        return unsafe { std::str::from_utf8_unchecked(&[]) };
     }
     if n == 0 {
         buf[0] = b'0';
         // SAFETY: single ASCII digit byte is valid UTF-8.
-        return std::str::from_utf8(&buf[..1]).unwrap();
+        return unsafe { std::str::from_utf8_unchecked(&buf[..1]) };
     }
     let mut i = max;
     let mut n = n as u64;
@@ -348,7 +430,7 @@ pub fn usize_to_decimal_buf(buf: &mut [u8], n: usize) -> &str {
         n /= 10;
     }
     // SAFETY: all bytes in buf[i..max] are ASCII digits (0x30..0x39), which is valid UTF-8.
-    std::str::from_utf8(&buf[i..max]).unwrap()
+    unsafe { std::str::from_utf8_unchecked(&buf[i..max]) }
 }
 
 // ---------- SHA-1（企微验签用，纯 Rust，无外部依赖） ----------
@@ -463,6 +545,17 @@ pub fn is_private_url(url: &str) -> bool {
     false
 }
 
+/// Default stack for `spawn_guarded` on ESP: TLS runs in IDF tasks; keep stacks small.
+/// ESP 上 TLS 在 IDF 任务栈执行，后台线程保持较小栈。
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+const DEFAULT_GUARD_STACK_SIZE: usize = 8192;
+
+/// Default stack for `spawn_guarded` on host/Linux: `rustls` + tungstenite TLS handshake
+/// needs far more than 8KB; 128KB is a safe default without matching OS default (multi-MB).
+/// Linux/host：`rustls` + tungstenite 握手在进程内执行，8KB 会栈溢出；128KB 足够且仍远小于系统默认线程栈。
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+const DEFAULT_GUARD_STACK_SIZE: usize = 128 * 1024;
+
 /// Spawn a named thread with panic protection. If the closure panics, the panic is caught
 /// and logged. This prevents silent thread death in long-running background loops.
 /// 带 panic 保护的线程启动：闭包 panic 时捕获并记日志，避免后台线程静默消亡。
@@ -470,7 +563,7 @@ pub fn spawn_guarded<F>(name: &str, f: F)
 where
     F: FnOnce() + Send + 'static,
 {
-    spawn_guarded_with_stack(name, 8192, f);
+    spawn_guarded_with_stack(name, DEFAULT_GUARD_STACK_SIZE, f);
 }
 
 /// Spawn a named thread with custom stack size and panic protection.
@@ -497,6 +590,61 @@ where
             }
         })
         .ok();
+}
+
+#[cfg(test)]
+mod scrub_credentials_tests {
+    use super::*;
+
+    #[test]
+    fn scrub_api_key() {
+        let s = scrub_credentials("api_key: sk-1234abcdef");
+        assert!(s.contains("[REDACTED]") && s.contains("sk-1"));
+    }
+
+    #[test]
+    fn scrub_json_token() {
+        let s = scrub_credentials(r#"{"token": "eyJhbGciOiJ..."}"#);
+        assert!(s.contains("[REDACTED]"));
+    }
+
+    #[test]
+    fn no_scrub_normal() {
+        let s = scrub_credentials("result: 42 items found");
+        assert_eq!(s, "result: 42 items found");
+    }
+
+    #[test]
+    fn scrub_multibyte_val_no_panic() {
+        // Chinese chars (3 bytes each) as token value — must not panic on char boundary
+        let s = scrub_credentials("token: 你好世界长密钥abc");
+        assert!(s.contains("[REDACTED]"));
+    }
+
+    #[test]
+    fn scrub_multiline() {
+        let input = "result: ok\napi_key: sk-secret1234\nother: data";
+        let s = scrub_credentials(input);
+        assert!(s.contains("result: ok"));
+        assert!(s.contains("[REDACTED]"));
+        assert!(s.contains("other: data"));
+        let lines: Vec<&str> = s.lines().collect();
+        assert_eq!(lines.len(), 3);
+    }
+
+    #[test]
+    fn no_scrub_url_scheme() {
+        // "authorization" is a sensitive key, but ensure function doesn't crash on URL values
+        let s = scrub_credentials("authorization: Bearer eyJhbGci0iJIUzI1NiJ9");
+        assert!(s.contains("[REDACTED]"));
+    }
+
+    #[test]
+    fn no_scrub_short_value() {
+        // value shorter than 8 bytes: should NOT redact (likely not a real secret)
+        let s = scrub_credentials("token: abc");
+        assert!(!s.contains("[REDACTED]"));
+    }
 }
 
 #[cfg(test)]

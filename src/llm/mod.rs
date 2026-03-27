@@ -22,10 +22,15 @@ pub use types::{
 
 use crate::config::AppConfig;
 use crate::error::Result;
+use crate::i18n::Locale;
+use std::sync::Arc;
 
-/// 从配置构建 (router, worker) LLM 客户端对。
-/// router 用于分发判断（可选），worker 用于实际 LLM 请求。空列表返回 (None, NoopLlmClient)。
-pub fn build_llm_clients(config: &AppConfig) -> (Option<Box<dyn LlmClient>>, Box<dyn LlmClient>) {
+/// 从配置构建单一 worker LLM 客户端。
+/// worker 内部使用 Fallback 链。空列表返回 NoopLlmClient。
+pub fn build_llm_clients(
+    config: &AppConfig,
+    resolve_locale: Arc<dyn Fn() -> Locale + Send + Sync>,
+) -> Box<dyn LlmClient> {
     const TAG: &str = "beetle";
 
     let global_stream = config.llm_stream;
@@ -68,31 +73,10 @@ pub fn build_llm_clients(config: &AppConfig) -> (Option<Box<dyn LlmClient>>, Box
             "[{}] LLM is in no-op mode: local tools and message processing remain available",
             TAG
         );
-        return (None, Box::new(NoopLlmClient::new()));
+        return Box::new(NoopLlmClient::new(Arc::clone(&resolve_locale)));
     }
 
-    let n_sources = config.llm_sources.len();
-    let router_mode = config
-        .llm_router_source_index
-        .zip(config.llm_worker_source_index)
-        .is_some_and(|(r, w)| (r as usize) < n_sources && (w as usize) < n_sources);
-
-    let router_client: Option<Box<dyn LlmClient>> = if router_mode {
-        // Safety: router_mode is true only when both indices are Some and in bounds (checked at line 72-73).
-        let idx = config.llm_router_source_index.unwrap_or(0) as usize;
-        let s = &config.llm_sources[idx];
-        Some(match s.provider.as_str() {
-            "openai" | "openai_compatible" | "gemini" | "glm" | "qwen" | "deepseek"
-            | "moonshot" | "ollama" => {
-                Box::new(OpenAiCompatibleClient::from_source(s, global_stream))
-            }
-            _ => Box::new(AnthropicClient::from_source(s, global_stream)),
-        })
-    } else {
-        None
-    };
-
-    (router_client, Box::new(FallbackLlmClient::new(llm_clients)))
+    Box::new(FallbackLlmClient::new(llm_clients))
 }
 
 /// 供 main 注入的 HTTP 客户端抽象；platform::EspHttpClient 在 lib 中实现此 trait。

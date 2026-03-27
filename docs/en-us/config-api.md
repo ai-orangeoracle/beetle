@@ -124,20 +124,19 @@ Includes: `POST /api/config/wifi`, `/api/config/llm`, `/api/config/channels`, `/
 - **Purpose**: Get the current full config (real values for all fields, including secrets).
 - **Auth**: Activated; GET does **not** need a pairing code in the request.
 - **Response**: 200, JSON is `AppConfig` serialization; all fields are stored values.
-- **Multi-LLM**: `llm_sources` is an array; each item has `provider`, `api_key`, `model`, `api_url`, optional `stream` (bool, default false; true uses SSE streaming to reduce peak memory), optional `max_tokens` (u32; null means clients use built-in default 1024). When empty, load builds a single source from legacy fields. `llm_router_source_index` and `llm_worker_source_index` are optional 0–255; when both set and &lt; `llm_sources.len()`, router mode is enabled.
+- **Multi-LLM**: `llm_sources` is an array; each item has `provider`, `api_key`, `model`, `api_url`, optional `max_tokens` (u32; null means clients use built-in default 1024). When empty, load builds a single source from legacy fields. Runtime behavior is fixed to **single-stage worker path + ordered multi-source fallback**. Global streaming is controlled by top-level `llm_stream` in the LLM segment.
 
 ### POST /api/config/llm
 
-- **Purpose**: Write only the LLM segment (multi-source and router/worker indices) to SPIFFS (`config/llm.json`); request body is the full segment; backend validates and writes.
+- **Purpose**: Write only the LLM segment (multi-source + global streaming flag) to SPIFFS (`config/llm.json`); request body is the full segment; backend validates and writes.
 - **Auth**: Activated + pairing code + CSRF (same rules as **Writes: pairing code + CSRF** in this doc).
-- **Request**: `Content-Type: application/json`, Body `{ "llm_sources": [...], "llm_router_source_index": 0, "llm_worker_source_index": 0 }` (last two optional). `llm_sources` must be non-empty; each item must have `api_key`. Each item may include:
+- **Request**: `Content-Type: application/json`, Body `{ "llm_sources": [...], "llm_stream": false }`. `llm_sources` must be non-empty; each item must have `api_key`. Each item may include:
   - `provider` (required non-empty string; length checks in `config`. Runtime client selection: [`llm/mod.rs`](../../src/llm/mod.rs)—common values include `anthropic`, `openai`, `openai_compatible`, `gemini`, `glm`, `qwen`, `deepseek`, `moonshot`, `ollama`; see [LLM providers](llm-providers.md))
   - `api_key` (required)
   - `model` (required)
   - `api_url` (field required; if empty for OpenAI-compatible providers, clients use vendor default base URLs per `build_llm_clients`)
-  - `stream` (optional bool, default false; true uses SSE streaming to reduce peak memory)
   - `max_tokens` (optional u32, default null; null means clients use built-in default 1024)
-- **Validation**: This segment only—`llm_sources` non-empty; field lengths (provider/api_key/model ≤ 64, api_url ≤ 256); router/worker indices must be &lt; `llm_sources.len()`.
+- **Validation**: This segment only—`llm_sources` non-empty; field lengths (provider/api_key/model ≤ 64, api_url ≤ 256); `llm_stream` must be a boolean.
 - **Response**: Success 200 `{"ok": true}`; validation failure 400.
 
 ### POST /api/config/channels

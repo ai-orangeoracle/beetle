@@ -22,6 +22,7 @@ import { SIDEBAR_WIDTH_EXPANDED } from "../config/layout";
 import { useDevice } from "../hooks/useDevice";
 import { useDeviceApi, type DeviceHintReason } from "../hooks/useDeviceApi";
 import { useToast } from "../hooks/useToast";
+import { sidebarNavSelectedPcbOverlaySx } from "../theme/pcbSurface";
 
 function getNavBlockedMessageKey(reason: DeviceHintReason): string {
   switch (reason) {
@@ -103,7 +104,7 @@ export function Sidebar({ drawer }: SidebarProps) {
         height: "100vh",
         display: "flex",
         flexDirection: "column",
-        backgroundColor: "var(--card)",
+        backgroundColor: "var(--surface)",
         transition:
           "width var(--transition-duration-emphasized) var(--ease-emphasized)",
       }}
@@ -196,9 +197,9 @@ export function Sidebar({ drawer }: SidebarProps) {
         >
           <Box
             sx={{
-              width: 8,
-              height: 8,
-              borderRadius: "50%",
+              width: 6,
+              height: 6,
+              borderRadius: "2px",
               backgroundColor: baseUrl
                 ? "var(--semantic-success)"
                 : "var(--semantic-danger)",
@@ -234,7 +235,7 @@ export function Sidebar({ drawer }: SidebarProps) {
                 component="span"
                 sx={{
                   fontFamily: "var(--font-mono)",
-                  fontSize: 11,
+                  fontSize: "var(--font-size-data-value)",
                   color: "var(--muted)",
                   lineHeight: 1.2,
                   overflow: "hidden",
@@ -255,31 +256,69 @@ export function Sidebar({ drawer }: SidebarProps) {
             path === "/device-config"
               ? pathname === "/device-config" ||
                 pathname.startsWith("/device-config/")
-              : pathname === path;
+              : path === "/soul-user"
+                ? pathname === "/soul-user" ||
+                  pathname.startsWith("/soul-user/")
+                : pathname === path;
           const allowNav = canNavigate(path);
+          const navSelectedBaseGrad =
+            "linear-gradient(165deg, color-mix(in srgb, var(--primary) 9%, var(--surface)) 0%, color-mix(in srgb, var(--primary) 16%, var(--card)) 100%)";
+          const navSelectedHoverGrad =
+            "linear-gradient(165deg, color-mix(in srgb, var(--primary) 12%, var(--surface)) 0%, color-mix(in srgb, var(--primary) 22%, var(--card)) 100%)";
+          const navSelectedPcbShared = {
+            borderRadius: 2,
+            color: "var(--primary)",
+            position: "relative" as const,
+            overflow: "hidden" as const,
+            minHeight: 56,
+            backgroundColor: "transparent",
+            border: "1px solid color-mix(in srgb, var(--primary) 26%, transparent)",
+            boxShadow: [
+              "inset 0 1px 0 color-mix(in srgb, var(--foreground) 10%, transparent)",
+              "inset 0 -1px 0 color-mix(in srgb, var(--foreground) 7%, transparent)",
+            ].join(", "),
+            "& .MuiListItemIcon-root": {
+              color: "var(--primary)",
+              position: "relative",
+              zIndex: 1,
+            },
+            "& .MuiListItemText-root": { position: "relative", zIndex: 1 },
+          };
+          const navSelectedHardware = {
+            ...navSelectedPcbShared,
+            backgroundImage: navSelectedBaseGrad,
+            backgroundSize: "100% 100%",
+            backgroundRepeat: "no-repeat",
+          };
+          const navSelectedHardwareHover = {
+            ...navSelectedPcbShared,
+            backgroundImage: navSelectedHoverGrad,
+            backgroundSize: "100% 100%",
+            backgroundRepeat: "no-repeat",
+            borderColor: "color-mix(in srgb, var(--primary) 36%, transparent)",
+          };
           const listItemSx = {
             borderRadius: "var(--radius-control)",
             mx: drawer ? 0.5 : 1,
             mb: 0.5,
-            ...(active &&
-              allowNav && {
-                backgroundColor: "var(--primary-soft)",
-                color: "var(--primary)",
-                "& .MuiListItemIcon-root": { color: "var(--primary)" },
-              }),
+            ...(active && allowNav
+              ? {
+                  "&.Mui-selected": navSelectedHardware,
+                  "&.Mui-selected:hover": navSelectedHardwareHover,
+                }
+              : {}),
             ...(!allowNav && {
               opacity: 0.75,
               cursor: "default",
             }),
             transition:
-              "background-color var(--transition-duration) ease, color var(--transition-duration) ease",
-            "&:hover": allowNav
-              ? {
-                  backgroundColor: active
-                    ? "var(--primary-soft)"
-                    : "var(--card)",
-                }
-              : { backgroundColor: "transparent" },
+              "background var(--transition-duration) ease, background-color var(--transition-duration) ease, background-image var(--transition-duration) ease, color var(--transition-duration) ease, box-shadow var(--transition-duration) ease, border-color var(--transition-duration) ease",
+            "&:hover":
+              allowNav && !(active && allowNav)
+                ? { backgroundColor: "var(--card)" }
+                : !allowNav
+                  ? { backgroundColor: "transparent" }
+                  : {},
           };
           const handleNavClick = (e: MouseEvent<HTMLElement>) => {
             if (!allowNav) {
@@ -309,6 +348,20 @@ export function Sidebar({ drawer }: SidebarProps) {
               onClick={handleNavClick}
               sx={listItemSx}
             >
+              {active && allowNav ? (
+                <Box
+                  aria-hidden
+                  sx={{
+                    position: "absolute",
+                    inset: 0,
+                    borderRadius: "inherit",
+                    zIndex: 0,
+                    pointerEvents: "none",
+                    overflow: "hidden",
+                    ...sidebarNavSelectedPcbOverlaySx(),
+                  }}
+                />
+              ) : null}
               <ListItemIcon
                 sx={{
                   minWidth: 40,

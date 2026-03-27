@@ -10,17 +10,24 @@ use rtnetlink::packet_route::{
 use rtnetlink::{new_connection, Handle, LinkUnspec};
 use std::net::{IpAddr, Ipv4Addr};
 use std::sync::OnceLock;
+use std::time::Duration;
 use tokio::runtime::Runtime;
 
-static RTNETLINK_RUNTIME: OnceLock<Runtime> = OnceLock::new();
+static RTNETLINK_RUNTIME: OnceLock<std::result::Result<Runtime, String>> = OnceLock::new();
 
-fn rtnetlink_runtime() -> &'static Runtime {
-    RTNETLINK_RUNTIME.get_or_init(|| {
+fn rtnetlink_runtime() -> Result<&'static Runtime> {
+    match RTNETLINK_RUNTIME.get_or_init(|| {
         tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
-            .expect("rtnetlink: tokio runtime init")
-    })
+            .map_err(|e| e.to_string())
+    }) {
+        Ok(rt) => Ok(rt),
+        Err(e) => Err(Error::config(
+            "rtnetlink_runtime",
+            format!("tokio runtime init failed: {}", e),
+        )),
+    }
 }
 
 fn map_rt_stage(e: rtnetlink::Error, stage: &'static str) -> Error {
@@ -33,7 +40,8 @@ fn map_rt_stage(e: rtnetlink::Error, stage: &'static str) -> Error {
 /// 与 `ip -4 -o addr show dev <iface>` 首条 IPv4 语义对齐：按 netlink 返回顺序取首个可用 IPv4。
 /// Aligns with the first IPv4 line from `ip -4 -o addr show dev <iface>`.
 pub fn read_sta_ip(iface: &str) -> Result<Option<String>> {
-    rtnetlink_runtime().block_on(read_sta_ip_async(iface))
+    let rt = rtnetlink_runtime()?;
+    rt.block_on(read_sta_ip_async(iface))
 }
 
 async fn read_sta_ip_async(iface: &str) -> Result<Option<String>> {
@@ -41,7 +49,11 @@ async fn read_sta_ip_async(iface: &str) -> Result<Option<String>> {
     tokio::spawn(connection);
 
     let mut links = handle.link().get().match_name(iface.to_string()).execute();
-    let Some(link) = links.try_next().await.map_err(|e| map_rt_stage(e, "wifi_sta_ip"))? else {
+    let Some(link) = links
+        .try_next()
+        .await
+        .map_err(|e| map_rt_stage(e, "wifi_sta_ip"))?
+    else {
         return Ok(None);
     };
 
@@ -69,11 +81,90 @@ async fn read_sta_ip_async(iface: &str) -> Result<Option<String>> {
 /// 等价于 `ip addr flush dev` + `ip addr add CIDR dev` + `ip link set dev up`（IPv4 AP 段）。
 /// Equivalent to `ip addr flush dev` + `ip addr add CIDR dev` + `ip link set dev up` for IPv4 AP.
 pub fn setup_ap_address(iface: &str, cidr: &str) -> Result<()> {
-    rtnetlink_runtime().block_on(setup_ap_address_async(iface, cidr))
+    let rt = rtnetlink_runtime()?;
+    rt.block_on(setup_ap_address_async(iface, cidr))
+}
+
+/// 等价 `ip -4 addr flush dev <iface>`；用于清理物理 STA 口上残留的旧 SoftAP 地址。
+pub fn clear_ipv4_addresses(iface: &str) -> Result<()> {
+    let rt = rtnetlink_runtime()?;
+    rt.block_on(clear_ipv4_addresses_async(iface))
+}
+
+async fn clear_ipv4_addresses_async(iface: &str) -> Result<()> {
+    let (connection, handle, _) =
+        new_connection().map_err(|e| Error::io("wifi_sta_ip_flush", e))?;
+    tokio::spawn(connection);
+
+    let mut links = handle.link().get().match_name(iface.to_string()).execute();
+    let Some(link) = links
+        .try_next()
+        .await
+        .map_err(|e| map_rt_stage(e, "wifi_sta_ip_flush"))?
+    else {
+        return Err(Error::config("wifi_sta_ip_flush", "interface not found"));
+    };
+
+    flush_iface_addresses(&handle, link.header.index).await
 }
 
 async fn setup_ap_address_async(iface: &str, cidr: &str) -> Result<()> {
     let (ipv4, prefix) = parse_ipv4_cidr(cidr)?;
+    const MAX_ATTEMPTS: u32 = 50;
+    const GAP_MS: u64 = 50;
+    for attempt in 0..MAX_ATTEMPTS {
+        if attempt > 0 {
+            tokio::time::sleep(Duration::from_millis(GAP_MS)).await;
+        }
+        match setup_ap_address_try(iface, ipv4, prefix).await {
+            Ok(()) => return Ok(()),
+            Err(e) if ap_ip_setup_transient(&e) && attempt + 1 < MAX_ATTEMPTS => {
+                log::debug!(
+                    "[net_rt] setup_ap_address retry {}/{} on '{}': {}",
+                    attempt + 1,
+                    MAX_ATTEMPTS,
+                    iface,
+                    e
+                );
+                continue;
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    Err(Error::config(
+        "wifi_ap_ip_flush",
+        "setup_ap_address: exhausted retries",
+    ))
+}
+
+/// True when rtnetlink may succeed on retry (new virtual iface not ready yet).
+fn ap_ip_setup_transient(e: &Error) -> bool {
+    match e {
+        Error::Config { stage, message } => {
+            *stage == "wifi_ap_ip_flush" && message == "interface not found"
+        }
+        Error::Other { stage, source } => {
+            if !matches!(
+                *stage,
+                "wifi_ap_ip_flush" | "wifi_ap_ip_add" | "wifi_ap_link_up"
+            ) {
+                return false;
+            }
+            let mut cur: Option<&dyn std::error::Error> = Some(source.as_ref());
+            while let Some(c) = cur {
+                let s = c.to_string();
+                if s.contains("No such device") || s.contains("os error 19") {
+                    return true;
+                }
+                cur = c.source();
+            }
+            false
+        }
+        _ => false,
+    }
+}
+
+async fn setup_ap_address_try(iface: &str, ipv4: Ipv4Addr, prefix: u8) -> Result<()> {
     let (connection, handle, _) = new_connection().map_err(|e| Error::io("wifi_ap_ip_flush", e))?;
     tokio::spawn(connection);
 
@@ -86,6 +177,13 @@ async fn setup_ap_address_async(iface: &str, cidr: &str) -> Result<()> {
         return Err(Error::config("wifi_ap_ip_flush", "interface not found"));
     };
     let index = link.header.index;
+
+    // Virtual `type __ap` ifaces: bring link up before address dump/add avoids ENODEV on some drivers.
+    let _ = handle
+        .link()
+        .set(LinkUnspec::new_with_index(index).up().build())
+        .execute()
+        .await;
 
     flush_iface_addresses(&handle, index).await?;
 
@@ -153,7 +251,8 @@ fn parse_ipv4_cidr(s: &str) -> Result<(Ipv4Addr, u8)> {
 /// 与 `ip link show` 等价权限探测：能打开 rtnetlink 并 dump 一条链路即视为具备网络配置能力。
 /// Permission probe equivalent to `ip link show`: open rtnetlink and dump one link.
 pub fn ensure_netlink_access() -> Result<()> {
-    rtnetlink_runtime().block_on(ensure_netlink_access_async())
+    let rt = rtnetlink_runtime()?;
+    rt.block_on(ensure_netlink_access_async())
 }
 
 async fn ensure_netlink_access_async() -> Result<()> {

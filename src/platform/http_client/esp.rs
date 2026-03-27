@@ -17,30 +17,12 @@ const REQUEST_TIMEOUT_MS: i32 = 30_000;
 /// 读响应体时的块大小；放栈上，不宜过大以免在 httpd 等小栈任务中溢出（如 GET /api/channel_connectivity 会多次 HTTP）。
 const RESPONSE_READ_CHUNK: usize = 1024;
 
-/// 喂任务看门狗（仅 ESP 目标）；长时间 HTTP/LLM 请求前调用，避免 TWDT 复位。若任务未订阅 TWDT 则 no-op。
-/// IDF 4.x 使用 esp_task_wdt_feed，IDF 5.x 使用 esp_task_wdt_reset（由 build.rs 根据 IDF_PATH/version.txt 设置 esp_idf_version_major）。
-#[cfg(all(
-    any(target_arch = "xtensa", target_arch = "riscv32"),
-    esp_idf_version_major = "4"
-))]
+/// 喂任务看门狗；长时间 HTTP/LLM 请求前调用，避免 TWDT 复位。
+/// 统一使用 `task_wdt::feed_current_task()`，不再维护重复实现。
+#[inline]
 fn feed_task_watchdog() {
-    unsafe {
-        let _ = esp_idf_svc::sys::esp_task_wdt_feed();
-    }
+    crate::platform::task_wdt::feed_current_task();
 }
-
-#[cfg(all(
-    any(target_arch = "xtensa", target_arch = "riscv32"),
-    not(esp_idf_version_major = "4")
-))]
-fn feed_task_watchdog() {
-    unsafe {
-        let _ = esp_idf_svc::sys::esp_task_wdt_reset();
-    }
-}
-
-#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
-fn feed_task_watchdog() {}
 
 /// ESP 上单次 TLS 准入等待最长时间（与请求超时同量级，避免长时间占锁）。
 const TLS_ADMISSION_TIMEOUT_SECS: u64 = 30;
@@ -121,7 +103,7 @@ impl EspHttpClient {
 
     fn prepare_connection(&mut self) -> Result<()> {
         if self.conn.is_request_initiated() || self.conn.is_response_initiated() {
-            log::warn!("[{}] connection is not in initial phase, recreating", TAG);
+            log::debug!("[{}] connection is not in initial phase, recreating", TAG);
             self.replace_connection()?;
         }
         Ok(())

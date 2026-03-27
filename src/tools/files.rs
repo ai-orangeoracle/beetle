@@ -2,8 +2,8 @@
 //! files tool: list or read under state root; read-only, no `..' in path.
 
 use crate::error::{Error, Result};
-use crate::platform::state_fs::normalize_state_rel_path;
 use crate::tools::{parse_tool_args, Tool, ToolContext, MAX_TOOL_RESULT_LEN};
+use crate::util::normalize_state_rel_path;
 use serde_json::json;
 use std::sync::Arc;
 
@@ -12,11 +12,11 @@ const MAX_LIST_ENTRIES: usize = 256;
 const MAX_READ_RAW_BYTES: usize = MAX_TOOL_RESULT_LEN * 2;
 
 pub struct FilesTool {
-    state_fs: Arc<dyn crate::platform::StateFs + Send + Sync>,
+    state_fs: Arc<dyn crate::StateFs + Send + Sync>,
 }
 
 impl FilesTool {
-    pub(crate) fn new(state_fs: Arc<dyn crate::platform::StateFs + Send + Sync>) -> Self {
+    pub(crate) fn new(state_fs: Arc<dyn crate::StateFs + Send + Sync>) -> Self {
         Self { state_fs }
     }
 }

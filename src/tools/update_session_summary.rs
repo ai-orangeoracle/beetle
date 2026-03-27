@@ -1,6 +1,7 @@
 //! update_session_summary 工具：由模型在认为需要时调用，将当前会话摘要落盘；build_context 将已有摘要注入 messages 首条。
 
 use crate::error::{Error, Result};
+use crate::i18n::{tr, Message as UiMessage};
 use crate::memory::{SessionStore, SessionSummaryStore};
 use crate::tools::{parse_tool_args, Tool, ToolContext};
 
@@ -54,6 +55,6 @@ impl Tool for UpdateSessionSummaryTool {
             .map(|msgs| msgs.len())
             .unwrap_or(0);
         self.store.set_with_count(chat_id, summary, message_count)?;
-        Ok("已更新会话摘要。".to_string())
+        Ok(tr(UiMessage::SessionSummaryUpdated, ctx.user_locale()))
     }
 }

@@ -1,8 +1,8 @@
-//! board_info 工具：委托 `Platform::board_info_json`，逻辑在 `platform/board_info`。
-//! board_info tool: delegates to `Platform::board_info_json`; payload built in `platform/board_info`.
+//! board_info 工具：委托 `Platform::board_info_json`，载荷由 `platform/board_info` 按目标（ESP32 / Linux / 其它 OS 名）组装。
+//! board_info tool: delegates to `Platform::board_info_json`; payload per target (ESP32 / Linux / other OS per `std::env::consts::OS`).
 
 use crate::error::Result;
-use crate::platform::Platform;
+use crate::Platform;
 use crate::tools::{Tool, ToolContext};
 use serde_json::json;
 use std::sync::Arc;
@@ -22,7 +22,7 @@ impl Tool for BoardInfoTool {
         "board_info"
     }
     fn description(&self) -> &str {
-        "Return device status: chip, heap, uptime, IDF version, resource pressure, WiFi STA connection, SPIFFS storage (total/used/free). Use when user asks about device status, memory, network, or storage."
+        "Return device/system status JSON. ESP: chip, heap, IDF, SPIFFS. Linux: platform \"linux\" plus cpu_model, cpu_cores, mem_*, distro_pretty/distro_id, kernel_release, hostname, arch, storage, os (/proc/version), uptime, pressure, WiFi STA. Non-Linux: platform is the OS name (e.g. macos, windows) with fewer fields. Use for device status, distro, CPU/RAM, disk."
     }
     fn schema(&self) -> serde_json::Value {
         json!({ "type": "object", "properties": {} })

@@ -28,10 +28,22 @@ export interface I2cDeviceEntry {
   options?: Record<string, unknown>
 }
 
+/** 与固件 `I2cSensorEntry` 对齐 */
+export interface I2cSensorEntry {
+  id: string
+  addr: number
+  model: string
+  watch_field: string
+  what: string
+  how: string
+  options?: Record<string, unknown>
+}
+
 export interface HardwareSegment {
   hardware_devices: DeviceEntry[]
   i2c_bus?: I2cBusConfig | null
   i2c_devices?: I2cDeviceEntry[]
+  i2c_sensors?: I2cSensorEntry[]
 }
 
 export const HARDWARE_DEVICE_TYPES = [
@@ -40,6 +52,7 @@ export const HARDWARE_DEVICE_TYPES = [
   'pwm_out',
   'adc_in',
   'buzzer',
+  'dht',
 ] as const
 
 export type HardwareDeviceType = (typeof HARDWARE_DEVICE_TYPES)[number]
@@ -53,8 +66,19 @@ export const HARDWARE_ADC1_MAX_PIN = 10
 export const HARDWARE_PWM_FREQ_MIN = 1
 export const HARDWARE_PWM_FREQ_MAX = 40_000
 
+export const MAX_I2C_SENSORS = 8
+export const I2C_SENSOR_ID_MAX_LEN = 64
+export const I2C_SENSOR_ADDR_MIN = 0x08
+export const I2C_SENSOR_ADDR_MAX = 0x77
+export const I2C_SENSOR_MAX_CMD_LEN = 4
+export const I2C_MAX_READ_LEN_UI = 32
+
+export const I2C_SENSOR_MODELS = ['sht3x', 'aht20', 'raw'] as const
+export type I2cSensorModel = (typeof I2C_SENSOR_MODELS)[number]
+
 export function defaultHardwareSegment(): HardwareSegment {
   return {
     hardware_devices: [],
+    i2c_sensors: [],
   }
 }

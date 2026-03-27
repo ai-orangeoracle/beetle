@@ -31,16 +31,28 @@ const TAG: &str = "beetle";
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// 从 orchestrator snapshot 的 internal 堆空闲字节数估算已用百分比。
-/// ESP32-S3 internal DRAM 约 390KB；取 400KB 作为近似总量。非 ESP 返回 0。
+/// 以运行时观测到的峰值空闲作为动态基线，减少固定常量带来的观测失真。非 ESP 返回 0。
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 fn heap_used_percent(snapshot: &beetle::orchestrator::ResourceSnapshot) -> u8 {
+    use std::sync::atomic::{AtomicU32, Ordering};
     const INTERNAL_TOTAL_APPROX: u32 = 400 * 1024;
+    const INTERNAL_TOTAL_MIN: u32 = 256 * 1024;
+    const INTERNAL_TOTAL_MAX: u32 = 1024 * 1024;
+    static INTERNAL_TOTAL_ESTIMATE: AtomicU32 = AtomicU32::new(INTERNAL_TOTAL_APPROX);
+
     let free = snapshot.heap_free_internal;
-    if free >= INTERNAL_TOTAL_APPROX {
-        return 0;
+    let mut total = INTERNAL_TOTAL_ESTIMATE.load(Ordering::Relaxed);
+    if free > total {
+        let candidate = free.clamp(INTERNAL_TOTAL_MIN, INTERNAL_TOTAL_MAX);
+        INTERNAL_TOTAL_ESTIMATE.store(candidate, Ordering::Relaxed);
+        total = candidate;
     }
-    let used = INTERNAL_TOTAL_APPROX.saturating_sub(free);
-    ((used as u64 * 100) / INTERNAL_TOTAL_APPROX as u64).min(100) as u8
+    if total == 0 || free >= total {
+        0
+    } else {
+        let used = total.saturating_sub(free);
+        ((used as u64 * 100) / total as u64).min(100) as u8
+    }
 }
 
 /// 启动自检：存储可读（memory 或 soul 至少其一成功）。失败返回 false，调用方应 log 并 return。
@@ -102,13 +114,10 @@ fn bootstrap_config_and_wifi(platform: &Arc<dyn Platform>) -> (Arc<AppConfig>, b
                 "[{}] WiFi stack ready (SoftAP + scan; STA may still be negotiating)",
                 TAG
             );
+            platform.init_sntp();
             #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
-            {
-                platform.init_sntp();
-                if platform.display_available() {
-                    let _ =
-                        platform.display_command(DisplayCommand::UpdateBootProgress { stage: 2 });
-                }
+            if platform.display_available() {
+                let _ = platform.display_command(DisplayCommand::UpdateBootProgress { stage: 2 });
             }
             true
         }
@@ -119,7 +128,10 @@ fn bootstrap_config_and_wifi(platform: &Arc<dyn Platform>) -> (Arc<AppConfig>, b
     };
 
     // HTTP config API (all targets): CSRF must be initialized regardless of WiFi outcome.
-    beetle::platform::csrf::init();
+    if let Err(e) = beetle::platform::csrf::init() {
+        log::error!("[{}] csrf init failed: {}", TAG, e);
+        std::process::exit(1);
+    }
 
     #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
     esp_boot_display_after_wifi(platform, &config, wifi_init_ok);
@@ -193,12 +205,25 @@ fn esp_boot_display_after_wifi(
         let ip = platform
             .wifi_sta_ip()
             .unwrap_or_else(|| SOFTAP_DEFAULT_IPV4.to_string());
-        let _ = platform.display_command(DisplayCommand::UpdateIp { ip });
+        let uptime_secs = beetle::platform::time::uptime_secs();
+        let _ = platform.display_command(DisplayCommand::UpdateIp { ip, uptime_secs });
     }
 }
 
 /// HTTP 工厂：与 `Platform::create_http_client` 一致（含代理），供流式编辑等独立连接使用。
 type HttpFactory = Box<dyn Fn() -> beetle::Result<Box<dyn PlatformHttpClient>> + Send + Sync>;
+
+fn ensure_http_slot<'a>(
+    slot: &'a mut Option<Box<dyn PlatformHttpClient>>,
+    create_http: &HttpFactory,
+    stage: &'static str,
+) -> beetle::Result<&'a mut Box<dyn PlatformHttpClient>> {
+    if slot.is_none() {
+        *slot = Some(create_http()?);
+    }
+    slot.as_mut()
+        .ok_or_else(|| beetle::Error::config(stage, "http client missing after init"))
+}
 
 /// Telegram 流式编辑器：复用同一 TLS 连接，避免每次 edit 重新握手。
 struct TelegramStreamEditor {
@@ -210,10 +235,7 @@ struct TelegramStreamEditor {
 impl beetle::StreamEditor for TelegramStreamEditor {
     fn send_initial(&self, chat_id: &str, content: &str) -> beetle::Result<Option<String>> {
         let mut g = self.http.lock().unwrap_or_else(|e| e.into_inner());
-        if g.is_none() {
-            *g = Some((self.create_http)()?);
-        }
-        let http = g.as_mut().unwrap();
+        let http = ensure_http_slot(&mut g, &self.create_http, "stream_editor")?;
         let r = beetle::tg_send_and_get_id(http, &self.token, chat_id, content);
         if r.is_err() {
             *g = None;
@@ -222,10 +244,7 @@ impl beetle::StreamEditor for TelegramStreamEditor {
     }
     fn edit(&self, chat_id: &str, message_id: &str, content: &str) -> beetle::Result<()> {
         let mut g = self.http.lock().unwrap_or_else(|e| e.into_inner());
-        if g.is_none() {
-            *g = Some((self.create_http)()?);
-        }
-        let http = g.as_mut().unwrap();
+        let http = ensure_http_slot(&mut g, &self.create_http, "stream_editor")?;
         let r = beetle::tg_edit_message_text(http, &self.token, chat_id, message_id, content);
         if r.is_err() {
             *g = None;
@@ -261,14 +280,17 @@ impl FeishuStreamEditor {
             None => true,
         };
         if need_refresh {
-            let t = beetle::feishu_acquire_token(http, &self.app_id, &self.app_secret)
-                .ok_or_else(|| {
-                    beetle::Error::config("feishu_stream", "failed to acquire tenant_token")
-                })?;
+            let t = beetle::feishu_acquire_token(http, &self.app_id, &self.app_secret).ok_or_else(
+                || beetle::Error::config("feishu_stream", "failed to acquire tenant_token"),
+            )?;
             state.token = Some((t.clone(), Instant::now()));
             Ok(t)
         } else {
-            Ok(state.token.as_ref().unwrap().0.clone())
+            state
+                .token
+                .as_ref()
+                .map(|(t, _)| t.clone())
+                .ok_or_else(|| beetle::Error::config("feishu_stream", "token missing after refresh"))
         }
     }
 }
@@ -276,11 +298,12 @@ impl FeishuStreamEditor {
 impl beetle::StreamEditor for FeishuStreamEditor {
     fn send_initial(&self, chat_id: &str, content: &str) -> beetle::Result<Option<String>> {
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
-        if state.http.is_none() {
-            state.http = Some((self.create_http)()?);
-        }
+        let _ = ensure_http_slot(&mut state.http, &self.create_http, "feishu_stream")?;
         let token = self.ensure_token(&mut state)?;
-        let http = state.http.as_mut().unwrap();
+        let http = state
+            .http
+            .as_mut()
+            .ok_or_else(|| beetle::Error::config("feishu_stream", "http not initialized"))?;
         let r = beetle::feishu_send_and_get_id(http, &token, chat_id, content);
         if r.is_err() {
             state.http = None;
@@ -291,11 +314,12 @@ impl beetle::StreamEditor for FeishuStreamEditor {
 
     fn edit(&self, _chat_id: &str, message_id: &str, content: &str) -> beetle::Result<()> {
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
-        if state.http.is_none() {
-            state.http = Some((self.create_http)()?);
-        }
+        let _ = ensure_http_slot(&mut state.http, &self.create_http, "feishu_stream")?;
         let token = self.ensure_token(&mut state)?;
-        let http = state.http.as_mut().unwrap();
+        let http = state
+            .http
+            .as_mut()
+            .ok_or_else(|| beetle::Error::config("feishu_stream", "http not initialized"))?;
         let r = beetle::feishu_edit_message(http, &token, message_id, content);
         if r.is_err() {
             state.http = None;
@@ -373,6 +397,10 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
         move || p.memory_snapshot()
     }));
     let config_store = platform.config_store();
+    let resolve_locale_ui: Arc<dyn Fn() -> beetle::i18n::Locale + Send + Sync> = Arc::new({
+        let cs = Arc::clone(&config_store);
+        move || beetle::i18n::Locale::from_storage(&beetle::config::get_locale(cs.as_ref()))
+    });
     let skill_storage = platform.skill_storage();
     let skill_meta_store = platform.skill_meta_store();
     let memory_store: Arc<dyn MemoryStore + Send + Sync> = platform.memory_store();
@@ -406,15 +434,17 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
         platform.session_summary_store();
     let emotion_signal_store = Arc::new(beetle::memory::MemoryEmotionSignalStore::new());
 
-    let (bus, inbound_rx, outbound_rx) = MessageBus::new(DEFAULT_CAPACITY);
+    let (bus, user_inbound_rx, outbound_rx) = MessageBus::new(DEFAULT_CAPACITY);
+    let (system_inbound_tx, system_inbound_rx, system_inbound_depth) =
+        beetle::bus::new_inbound_channel(DEFAULT_CAPACITY);
     log::info!(
         "[{}] MessageBus created (capacity {})",
         TAG,
         DEFAULT_CAPACITY
     );
-    let inbound_depth = Arc::clone(&bus.inbound_depth);
+    let user_inbound_depth = Arc::clone(&bus.inbound_depth);
     let outbound_depth = Arc::clone(&bus.outbound_depth);
-    let inbound_tx = bus.inbound_tx;
+    let user_inbound_tx = bus.inbound_tx;
     let outbound_tx = bus.outbound_tx;
     let qq_msg_id_cache: beetle::channels::QqMsgIdCache = Arc::new(Mutex::new(HashMap::new()));
 
@@ -444,11 +474,11 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
     #[cfg(feature = "config_api")]
     {
         let platform_http = Arc::clone(&platform);
-        let inc = Arc::clone(&inbound_depth);
+        let inc = Arc::clone(&user_inbound_depth);
         let out = Arc::clone(&outbound_depth);
         let memory_http = Arc::clone(&memory_store);
         let session_http = Arc::clone(&session_store);
-        let http_inbound_tx = inbound_tx.clone();
+        let http_inbound_tx = user_inbound_tx.clone();
         let http_qq_cache = Arc::clone(&qq_msg_id_cache);
         beetle::util::spawn_guarded("http_server", move || {
             if let Err(e) = beetle::platform::http_server::run(
@@ -477,20 +507,27 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
     }
 
     beetle::cron::run_cron_loop(
-        inbound_tx.clone(),
+        system_inbound_tx.clone(),
         beetle::cron::DEFAULT_CRON_INTERVAL_SECS,
         Some(Arc::clone(&memory_store)),
-        Some((Arc::clone(&platform), config.hardware_devices.clone())),
+        Some(beetle::cron::SensorWatchContext {
+            platform: Arc::clone(&platform),
+            devices: config.hardware_devices.clone(),
+            i2c_sensors: config.i2c_sensors.clone(),
+        }),
+        Arc::clone(&resolve_locale_ui),
     );
     beetle::heartbeat::run_heartbeat_loop_with_tasks(
         VERSION,
         30,
-        inbound_tx.clone(),
+        system_inbound_tx.clone(),
         || beetle::platform::read_heartbeat_file().unwrap_or_default(),
-        Arc::clone(&inbound_depth),
+        Arc::clone(&user_inbound_depth),
+        Arc::clone(&system_inbound_depth),
         Arc::clone(&outbound_depth),
         Arc::clone(&session_store),
         Arc::clone(&platform),
+        Arc::clone(&resolve_locale_ui),
     );
 
     // 出站前等待 STA + 编排器初始化：须在 `create_http_client` 成功判定之前，以便 Linux 在 HTTP 桩返回 Err 时仍能 init orchestrator。
@@ -551,9 +588,10 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
                         }
                     };
                     let sta_connected = beetle::platform::is_wifi_sta_connected();
-                    let busy = snapshot.inbound_depth > 0
-                        || snapshot.outbound_depth > 0
-                        || snapshot.active_http_count > 0;
+                    let busy = snapshot.active_agent_tasks > 0
+                        || snapshot.active_http_count > 0
+                        || snapshot.inbound_depth > 0
+                        || snapshot.outbound_depth > 0;
                     let state =
                         if snapshot.pressure == beetle::orchestrator::PressureLevel::Critical {
                             DisplaySystemState::Fault
@@ -621,8 +659,7 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
                     }
 
                     // F7: 错误闪烁 — 检测新错误
-                    let current_error_total = m_snap.errors_agent_router
-                        + m_snap.errors_agent_chat
+                    let current_error_total = m_snap.errors_agent_chat
                         + m_snap.errors_agent_context
                         + m_snap.errors_tool_execute
                         + m_snap.errors_llm_request
@@ -738,8 +775,10 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
 
                     // State unchanged → partial updates per dirty region
                     if ip_changed {
-                        let _ = display_platform
-                            .display_command(DisplayCommand::UpdateIp { ip: ip.clone() });
+                        let _ = display_platform.display_command(DisplayCommand::UpdateIp {
+                            ip: ip.clone(),
+                            uptime_secs,
+                        });
                         last_ip.clear();
                         last_ip.push_str(&ip);
                     }
@@ -777,7 +816,12 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
             .ok();
     }
 
-    beetle::memory::run_remind_loop(Arc::clone(&remind_at_store), inbound_tx.clone(), 60);
+    beetle::memory::run_remind_loop(
+        Arc::clone(&remind_at_store),
+        system_inbound_tx.clone(),
+        60,
+        Arc::clone(&resolve_locale_ui),
+    );
 
     let (sinks, mut channel_rx_set) =
         beetle::channels::build_channel_sinks(config.as_ref(), &qq_msg_id_cache);
@@ -801,10 +845,11 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
 
     #[cfg(feature = "feishu")]
     if let Some(ref c) = channel_rx_set.feishu {
-        let tx = inbound_tx.clone();
+        let tx = user_inbound_tx.clone();
         let id = c.app_id.clone();
         let sec = c.app_secret.clone();
         let allowed = parse_allowed_chat_ids(&config.feishu_allowed_chat_ids);
+        let pending = Arc::clone(&pending_retry_store);
         let pf = Arc::clone(&platform);
         let cfg = Arc::clone(&config);
         beetle::util::spawn_guarded("feishu_ws", move || {
@@ -813,6 +858,7 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
                 sec,
                 allowed,
                 tx,
+                pending.as_ref(),
                 move || pf.create_http_client(cfg.as_ref()),
                 connect_wss,
             )
@@ -829,10 +875,11 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
     if enabled_channel == "qq_channel" {
         if let Some(ref c) = channel_rx_set.qq_channel {
             if !c.app_id.trim().is_empty() && !c.app_secret.trim().is_empty() {
-                let qq_tx = inbound_tx.clone();
+                let qq_tx = user_inbound_tx.clone();
                 let qq_id = c.app_id.clone();
                 let qq_sec = c.app_secret.clone();
                 let qq_cache_ws = std::sync::Arc::clone(&qq_msg_id_cache);
+                let qq_pending = Arc::clone(&pending_retry_store);
                 let pf = Arc::clone(&platform);
                 let cfg = Arc::clone(&config);
                 beetle::util::spawn_guarded("qq_ws", move || {
@@ -841,6 +888,7 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
                         qq_sec,
                         qq_tx,
                         qq_cache_ws,
+                        qq_pending.as_ref(),
                         move || pf.create_http_client(cfg.as_ref()),
                         connect_wss,
                     )
@@ -864,12 +912,14 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
             let tg_token = config.tg_token.clone();
             let tg_allowed = parse_allowed_chat_ids(&config.tg_allowed_chat_ids);
             let tg_group_activation = config.tg_group_activation.clone();
-            let tg_inbound_tx = inbound_tx.clone();
+            let tg_inbound_tx = user_inbound_tx.clone();
             let tg_outbound_tx = outbound_tx.clone();
             let tg_session_store = Arc::clone(&session_store);
-            let tg_inbound_depth = Arc::clone(&inbound_depth);
+            let tg_pending = Arc::clone(&pending_retry_store);
+            let tg_inbound_depth = Arc::clone(&user_inbound_depth);
             let tg_outbound_depth = Arc::clone(&outbound_depth);
             let tg_config_store = Arc::clone(&config_store);
+            let tg_resolve_locale = Arc::clone(&resolve_locale_ui);
             let pf = Arc::clone(&platform);
             let cfg = Arc::clone(&config);
             beetle::util::spawn_guarded("tg_poll", move || {
@@ -878,18 +928,30 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
                     tg_allowed,
                     tg_group_activation,
                     tg_inbound_tx,
+                    tg_pending,
                     tg_outbound_tx,
                     tg_session_store,
                     tg_inbound_depth,
                     tg_outbound_depth,
                     tg_config_store,
+                    tg_resolve_locale,
                     move || pf.create_http_client(cfg.as_ref()),
                 )
             });
             log::info!("[{}] Telegram poll loop started", TAG);
         }
 
-        let (router_client, worker_llm_box) = beetle::build_llm_clients(&config);
+        if let Some(ref bus_cfg) = config.i2c_bus {
+            if let Err(e) = platform.init_i2c(bus_cfg) {
+                log::warn!(
+                    "[{}] I2C bus init failed (devices will be unavailable): {}",
+                    TAG,
+                    e
+                );
+            }
+        }
+
+        let worker_llm_box = beetle::build_llm_clients(&config, Arc::clone(&resolve_locale_ui));
         let registry = beetle::build_default_registry(
             &config,
             Arc::clone(&platform),
@@ -910,7 +972,8 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
             )
         });
         let session_max = config.session_max_messages.clamp(1, 128) as usize;
-        let agent_inbound_tx = inbound_tx;
+        let agent_user_inbound_tx = user_inbound_tx;
+        let agent_system_inbound_tx = system_inbound_tx;
         let mut on_typing = |ch: &str, cid: &str, http: &mut _| {
             if ch == "telegram" {
                 let _ = send_chat_action(http, &config.tg_token, cid, "typing");
@@ -969,6 +1032,7 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
             pending_retry: pending_retry_store.as_ref(),
             llm_stream: config.llm_stream,
             stream_editor: stream_editor_ref,
+            resolve_locale: std::sync::Arc::clone(&resolve_locale_ui),
         };
         #[cfg(feature = "cli")]
         {
@@ -978,7 +1042,7 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
                 Arc::clone(&memory_store),
                 Arc::clone(&session_store),
                 Arc::clone(&platform),
-                Some(Arc::clone(&inbound_depth)),
+                Some(Arc::clone(&user_inbound_depth)),
                 Some(Arc::clone(&outbound_depth)),
             );
             beetle::util::spawn_guarded("cli_repl", move || {
@@ -1005,12 +1069,13 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
 
         if let Err(e) = run_agent_loop(
             &mut http_client,
-            router_client.as_deref(),
             &*worker_llm_box,
             &registry,
             &agent_config,
-            agent_inbound_tx,
-            inbound_rx,
+            agent_user_inbound_tx,
+            user_inbound_rx,
+            agent_system_inbound_tx,
+            system_inbound_rx,
             outbound_tx,
             Some(&mut on_typing),
         ) {

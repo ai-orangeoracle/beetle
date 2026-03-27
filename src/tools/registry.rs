@@ -105,7 +105,7 @@ impl ToolRegistry {
 /// 构建包含所有内置工具的注册表。`platform` 用于 `board_info` 等依赖平台能力的工具。
 pub fn build_default_registry(
     config: &AppConfig,
-    platform: Arc<dyn crate::platform::Platform>,
+    platform: Arc<dyn crate::Platform>,
     remind_at_store: Arc<dyn crate::memory::RemindAtStore + Send + Sync>,
     session_summary_store: Arc<dyn crate::memory::SessionSummaryStore + Send + Sync>,
     session_store: Arc<dyn crate::memory::SessionStore + Send + Sync>,
@@ -150,16 +150,23 @@ pub fn build_default_registry(
     registry.register(Box::new(super::ProxyConfigTool::new(config_store)));
     registry.register(Box::new(super::ModelConfigTool::new(Arc::clone(&platform))));
     registry.register(Box::new(super::NetworkScanTool::new(Arc::clone(&platform))));
-    if !config.hardware_devices.is_empty() {
+    if !config.hardware_devices.is_empty() || !config.i2c_sensors.is_empty() {
         registry.register(Box::new(super::SensorWatchTool::new(
             Arc::clone(&memory_store),
             config.hardware_devices.clone(),
+            config.i2c_sensors.clone(),
         )));
     }
     if config.i2c_bus.is_some() && !config.i2c_devices.is_empty() {
         registry.register(Box::new(super::I2cDeviceTool::new(
             Arc::clone(&platform),
             config.i2c_devices.clone(),
+        )));
+    }
+    if config.i2c_bus.is_some() && !config.i2c_sensors.is_empty() {
+        registry.register(Box::new(super::I2cSensorTool::new(
+            Arc::clone(&platform),
+            config.i2c_sensors.clone(),
         )));
     }
     registry

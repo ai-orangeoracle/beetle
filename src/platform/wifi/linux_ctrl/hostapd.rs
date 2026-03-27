@@ -4,12 +4,60 @@ use crate::error::Result;
 use crate::platform::state_mount_path;
 use crate::platform::wifi::linux_ctrl::hostapd_ctrl;
 use crate::platform::wifi::linux_ctrl::net;
-use crate::platform::wifi::linux_ctrl::process::{run_checked, write_secure_atomic};
+use crate::platform::wifi::linux_ctrl::process::{is_pid_alive, run_checked, write_secure_atomic};
 use crate::platform::wifi::linux_ctrl::HOSTAPD_CTRL_INTERFACE_DIR;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 const CMD_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// 发 TERM，等待进程退出（最多 2s），超时后发 KILL。
+fn kill_and_wait(pid: u32) {
+    let pid_s = pid.to_string();
+    let _ = run_checked(
+        "kill",
+        &["-TERM", pid_s.as_str()],
+        Duration::from_secs(3),
+        "wifi_ap_stop",
+    );
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < deadline {
+        if !is_pid_alive(pid) {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    // 超时后强杀
+    let _ = run_checked(
+        "kill",
+        &["-KILL", pid_s.as_str()],
+        Duration::from_secs(1),
+        "wifi_ap_stop",
+    );
+    // 给内核最多 500ms 回收 socket
+    std::thread::sleep(Duration::from_millis(500));
+}
+
+/// 通过 /proc/*/comm 扫描所有名为 `comm` 的进程 PID。
+/// 用于清理无 PID 文件的残留进程（如系统 dnsmasq 或崩溃遗留）。
+fn find_pids_by_comm(comm: &str) -> Vec<u32> {
+    let mut pids = Vec::new();
+    let Ok(entries) = std::fs::read_dir("/proc") else {
+        return pids;
+    };
+    for entry in entries.flatten() {
+        let Ok(pid) = entry.file_name().to_string_lossy().parse::<u32>() else {
+            continue;
+        };
+        let comm_path = entry.path().join("comm");
+        if let Ok(c) = std::fs::read_to_string(comm_path) {
+            if c.trim() == comm {
+                pids.push(pid);
+            }
+        }
+    }
+    pids
+}
 
 fn config_dir() -> PathBuf {
     state_mount_path().join("wifi/linux")
@@ -75,33 +123,50 @@ pub fn start_ap(iface: &str, ssid: &str, ip: &str) -> Result<()> {
     // Single-token `--opt=path` avoids any ambiguity with multi-arg parsing on embedded dnsmasq.
     let dnsmasq_cf = format!("--conf-file={}", dnsmasq_conf_file.display());
     let dnsmasq_pf = format!("--pid-file={}", dnsmasq_pid.display());
-    run_checked(
+    if let Err(e) = run_checked(
         "dnsmasq",
         &[dnsmasq_cf.as_str(), dnsmasq_pf.as_str()],
         CMD_TIMEOUT,
         "wifi_dnsmasq_start",
-    )?;
+    ) {
+        // Without DHCP, clients often associate (L2) but never get a routable IPv4 — provisioning URL appears "down".
+        stop_ap(iface);
+        return Err(e);
+    }
     Ok(())
 }
 
 /// 停止 AP 相关进程并清理 PID；`iface` 用于尝试删除 hostapd 控制 socket。
+///
+/// Stop strategy:
+/// 1. Graceful terminate via hostapd ctrl socket.
+/// 2. TERM → wait-for-exit (≤2 s) → KILL for each PID-file-tracked process.
+/// 3. Scan /proc for any remaining dnsmasq not covered by PID files
+///    (system dnsmasq, prior crash without cleanup) and kill them so port 67 is free.
 pub fn stop_ap(iface: &str) {
     hostapd_ctrl::try_terminate(iface, Duration::from_secs(3));
+
+    // Kill PID-file-tracked processes; wait for each to release its sockets.
     for name in ["dnsmasq", "hostapd"] {
-        let pid = pidfile(name);
-        if let Ok(raw) = std::fs::read_to_string(&pid) {
-            let p = raw.trim();
-            if !p.is_empty() {
-                let _ = run_checked(
-                    "kill",
-                    &["-TERM", p],
-                    Duration::from_secs(3),
-                    "wifi_ap_stop",
-                );
+        let pid_path = pidfile(name);
+        if let Ok(raw) = std::fs::read_to_string(&pid_path) {
+            if let Ok(pid) = raw.trim().parse::<u32>() {
+                if pid > 0 {
+                    kill_and_wait(pid);
+                }
             }
         }
-        let _ = std::fs::remove_file(pid);
+        let _ = std::fs::remove_file(&pid_path);
     }
+
+    // Kill any remaining dnsmasq not tracked by our PID file (e.g. system service,
+    // or previous instance that crashed before writing the file).
+    // Port 67/udp must be free before we start our own dnsmasq.
+    for pid in find_pids_by_comm("dnsmasq") {
+        log::debug!("[hostapd] killing untracked dnsmasq pid={}", pid);
+        kill_and_wait(pid);
+    }
+
     let sock = Path::new(HOSTAPD_CTRL_INTERFACE_DIR).join(iface);
     let _ = std::fs::remove_file(sock);
 }

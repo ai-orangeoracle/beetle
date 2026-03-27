@@ -1,14 +1,18 @@
 //! Agent ReAct 循环：入站一条 → context → chat（含 tool_use 多轮）→ 会话持久化 → 出站一条。
 //! 仅依赖 trait；HTTP/Tool 由 main 注入同一实现（如 EspHttpClient）。
-
 use crate::agent::context::build_context;
-use crate::bus::{InboundTx, OutboundTx, PcMsg, MAX_CONTENT_LEN};
+use crate::bus::{
+    IngressKind, OutboundTx, PcMsg, SystemInboundRx, SystemInboundTx, UserInboundRx, UserInboundTx,
+    MAX_CONTENT_LEN,
+};
 use crate::constants::{
     AGENT_MARKER_MARK_IMPORTANT, AGENT_MARKER_SIGNAL_COMFORT, AGENT_MARKER_STOP,
     AGENT_RETRY_BASE_MS, AGENT_RETRY_MAX_MS, INBOUND_RECV_TIMEOUT_SECS, MAX_DEFER_RETRIES,
-    MAX_TOOL_RESULTS_USER_MESSAGE_LEN, TASK_CONTINUATION_CONTINUE_THRESHOLD_LEN,
+    MAX_TOOL_RESULTS_USER_MESSAGE_LEN, SESSION_SUMMARY_MAX_LEN,
+    TASK_CONTINUATION_CONTINUE_THRESHOLD_LEN,
 };
 use crate::error::Result;
+use crate::i18n::{tr, Locale as UiLocale, Message as UiMessage};
 use crate::llm::{LlmClient, LlmHttpClient, Message, StopReason, ToolSpec};
 use crate::memory::{
     EmotionSignalStore, ImportantMessageStore, MemoryStore, PendingRetryStore, SessionStore,
@@ -25,6 +29,7 @@ use crate::PlatformHttpClient;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc::RecvTimeoutError;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -38,14 +43,100 @@ const TOOL_RESULTS_PREFIX: &str = "Tool results:\n";
 const REACT_FULL_ROUNDS_KEPT: usize = 2;
 const REACT_FULL_MSGS_KEPT: usize = REACT_FULL_ROUNDS_KEPT * 2;
 
-/// 路由用短 system；回复约定：REPLY: <内容> 或 WORKER。
-const ROUTER_SYSTEM: &str =
-    "You are a router. Reply with exactly one line: either 'REPLY: <your direct reply>' or 'WORKER'.";
+/// 早期轮次工具结果摘要：每条结果保留的首行预览字符数（UTF-8 安全截断）。
+const TOOL_RESULT_PREVIEW_CHARS: usize = 80;
 
-/// 低内存时发给用户的固定人话（出站），并重新入队当前消息。
-const LOW_MEMORY_USER_MESSAGE: &str = "设备内存紧张，请稍后再试。";
+/// 程序性会话摘要：单次轻量 LLM 调用的 system 提示。
+const SUMMARY_SYSTEM: &str = "You are a conversation summarizer. Compress the following conversation into a concise summary (max 800 chars) preserving key facts, user preferences and pending tasks. Reply with the summary only.";
+
 /// 同一 chat_id 的 "low memory, defer" 日志最少间隔，避免刷屏。
 const LOW_MEM_DEFER_LOG_INTERVAL: Duration = Duration::from_secs(60);
+static REQ_SEQ: AtomicU32 = AtomicU32::new(1);
+const USER_QUEUE_WEIGHT: usize = 3;
+
+fn next_req_id(channel: &str, chat_id: &str) -> String {
+    let seq = REQ_SEQ.fetch_add(1, Ordering::Relaxed);
+    let ts_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    let mut hasher = DefaultHasher::new();
+    channel.hash(&mut hasher);
+    chat_id.hash(&mut hasher);
+    let short = (hasher.finish() & 0xffff) as u16;
+    format!("r{}-{}-{:04x}", ts_ms, seq, short)
+}
+
+fn now_unix_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis().min(u64::MAX as u128) as u64)
+        .unwrap_or(0)
+}
+
+fn choose_inbound_tx<'a>(
+    ingress: IngressKind,
+    user_inbound_tx: &'a UserInboundTx,
+    system_inbound_tx: &'a SystemInboundTx,
+) -> &'a crate::bus::InboundTx {
+    match ingress {
+        IngressKind::User => user_inbound_tx,
+        IngressKind::System => system_inbound_tx,
+    }
+}
+
+fn recv_weighted(
+    user_inbound_rx: &UserInboundRx,
+    system_inbound_rx: &SystemInboundRx,
+    slot: &mut usize,
+    timeout: Duration,
+) -> std::result::Result<PcMsg, RecvTimeoutError> {
+    let prefer_user = *slot < USER_QUEUE_WEIGHT;
+    let (primary, secondary) = if prefer_user {
+        (user_inbound_rx, system_inbound_rx)
+    } else {
+        (system_inbound_rx, user_inbound_rx)
+    };
+    if let Ok(m) = primary.try_recv() {
+        *slot = (*slot + 1) % (USER_QUEUE_WEIGHT + 1);
+        return Ok(m);
+    }
+    if let Ok(m) = secondary.try_recv() {
+        *slot = (*slot + 1) % (USER_QUEUE_WEIGHT + 1);
+        return Ok(m);
+    }
+    match primary.recv_timeout(timeout) {
+        Ok(m) => {
+            *slot = (*slot + 1) % (USER_QUEUE_WEIGHT + 1);
+            Ok(m)
+        }
+        Err(RecvTimeoutError::Timeout) => match secondary.try_recv() {
+            Ok(m) => {
+                *slot = (*slot + 1) % (USER_QUEUE_WEIGHT + 1);
+                Ok(m)
+            }
+            Err(_) => Err(RecvTimeoutError::Timeout),
+        },
+        Err(RecvTimeoutError::Disconnected) => match secondary.recv_timeout(timeout) {
+            Ok(m) => {
+                *slot = (*slot + 1) % (USER_QUEUE_WEIGHT + 1);
+                Ok(m)
+            }
+            Err(e) => Err(e),
+        },
+    }
+}
+
+#[derive(Default)]
+struct WorkerLatency {
+    context_ms: u128,
+    llm_round_total_ms: u128,
+    tool_exec_ms: u128,
+    session_write_ms: u128,
+    ttft_ms: Option<u128>,
+    react_rounds: u32,
+    tool_calls: u32,
+}
 
 /// 将文本按 UTF-8 边界追加到 dst，确保总字节不超过 max_bytes。
 /// 返回 true 表示本次发生截断（达到上限）。
@@ -81,13 +172,13 @@ fn hash_tool_call(name: &str, args: &str) -> u64 {
     h.finish()
 }
 
-/// 将早期轮次的工具结果压缩为「每调用一行字节数」摘要，保留语义锚点、不丢轮次结构。
+/// 将早期轮次的工具结果压缩为「预览 + 总字节数」摘要，保留语义锚点、不丢轮次结构。
 fn summarize_tool_results(content: &str) -> String {
     use std::fmt::Write;
 
     let body = content.strip_prefix(TOOL_RESULTS_PREFIX).unwrap_or(content);
     let lines: Vec<&str> = body.lines().collect();
-    let mut out = String::with_capacity(256);
+    let mut out = String::with_capacity(512);
     out.push_str("Tool results (prior round):\n");
     let mut i = 0usize;
     let mut wrote_any = false;
@@ -95,17 +186,30 @@ fn summarize_tool_results(content: &str) -> String {
         let line = lines[i];
         if let Some(idx) = line.find("]: ") {
             let id_part = &line[..idx + 3];
-            let mut val_len = line[idx + 3..].len();
+            let first_val = &line[idx + 3..];
+            let mut extra_bytes = 0usize;
             i += 1;
             while i < lines.len() {
                 let next = lines[i];
                 if next.contains("]: ") && next.starts_with('[') {
                     break;
                 }
-                val_len = val_len.saturating_add(1).saturating_add(next.len());
+                extra_bytes = extra_bytes.saturating_add(1).saturating_add(next.len());
                 i += 1;
             }
-            let _ = writeln!(out, "{}[{} bytes]", id_part, val_len);
+            let total_bytes = first_val.len().saturating_add(extra_bytes);
+            let preview = if first_val.len() > TOOL_RESULT_PREVIEW_CHARS {
+                let mut end = TOOL_RESULT_PREVIEW_CHARS;
+                while end > 0 && !first_val.is_char_boundary(end) {
+                    end -= 1;
+                }
+                format!("{}…[{} bytes]", &first_val[..end], total_bytes)
+            } else if extra_bytes > 0 {
+                format!("{}…[{} bytes]", first_val, total_bytes)
+            } else {
+                first_val.to_string()
+            };
+            let _ = writeln!(out, "{}{}", id_part, preview);
             wrote_any = true;
         } else {
             i += 1;
@@ -146,6 +250,21 @@ struct AgentToolCtx<'a, H: PlatformHttpClient> {
     http: &'a mut H,
     chat_id: Arc<str>,
     channel: Arc<str>,
+    locale: UiLocale,
+}
+
+fn try_send_outbound(outbound_tx: &OutboundTx, msg: PcMsg, log_prefix: &str) -> bool {
+    match outbound_tx.try_send(msg) {
+        Ok(()) => {
+            metrics::record_message_out();
+            true
+        }
+        Err(e) => {
+            metrics::record_outbound_enqueue_fail();
+            log::error!("[agent] {} outbound enqueue failed: {}", log_prefix, e);
+            false
+        }
+    }
 }
 
 impl<H: PlatformHttpClient> LlmHttpClient for AgentToolCtx<'_, H> {
@@ -156,6 +275,20 @@ impl<H: PlatformHttpClient> LlmHttpClient for AgentToolCtx<'_, H> {
         body: &[u8],
     ) -> Result<(u16, crate::platform::ResponseBody)> {
         crate::platform::PlatformHttpClient::post(self.http, url, headers, body)
+    }
+
+    fn do_post_streaming(
+        &mut self,
+        url: &str,
+        headers: &[(&str, &str)],
+        body: &[u8],
+        on_chunk: &mut dyn FnMut(&[u8]) -> Result<()>,
+    ) -> Result<u16> {
+        crate::platform::PlatformHttpClient::post_streaming(self.http, url, headers, body, on_chunk)
+    }
+
+    fn reset_connection_for_retry(&mut self) {
+        crate::platform::PlatformHttpClient::reset_connection_for_retry(self.http);
     }
 }
 
@@ -175,11 +308,101 @@ impl<H: PlatformHttpClient> ToolContext for AgentToolCtx<'_, H> {
     ) -> Result<(u16, crate::platform::ResponseBody)> {
         crate::platform::PlatformHttpClient::post(self.http, url, headers, body)
     }
+    fn patch_with_headers(
+        &mut self,
+        url: &str,
+        headers: &[(&str, &str)],
+        body: &[u8],
+    ) -> Result<(u16, crate::platform::ResponseBody)> {
+        crate::platform::PlatformHttpClient::patch(self.http, url, headers, body)
+    }
+    fn put_with_headers(
+        &mut self,
+        url: &str,
+        headers: &[(&str, &str)],
+        body: &[u8],
+    ) -> Result<(u16, crate::platform::ResponseBody)> {
+        crate::platform::PlatformHttpClient::put(self.http, url, headers, body)
+    }
+    fn delete_with_headers(
+        &mut self,
+        url: &str,
+        headers: &[(&str, &str)],
+    ) -> Result<(u16, crate::platform::ResponseBody)> {
+        crate::platform::PlatformHttpClient::delete(self.http, url, headers)
+    }
     fn current_chat_id(&self) -> Option<&str> {
         Some(&self.chat_id)
     }
     fn current_channel(&self) -> Option<&str> {
         Some(&self.channel)
+    }
+    fn user_locale(&self) -> UiLocale {
+        self.locale
+    }
+}
+
+/// 程序性触发：用最近会话生成摘要并 `set_with_count`。LLM 失败时确定性回退，仍落盘。
+fn generate_session_summary<H: PlatformHttpClient>(
+    http: &mut H,
+    llm: &dyn LlmClient,
+    config: &AgentLoopConfig<'_>,
+    chat_id: &str,
+    current_count: usize,
+) -> Result<()> {
+    use std::fmt::Write;
+
+    let recent = config.session_store.load_recent(chat_id, 20)?;
+    let mut transcript = String::with_capacity(2048);
+    for m in &recent {
+        let preview = truncate_content_to_max(&m.content, 200);
+        let _ = writeln!(
+            transcript,
+            "{}: {}",
+            m.role.to_uppercase(),
+            preview.as_ref()
+        );
+    }
+    let user_msg = Message {
+        role: "user".to_string(),
+        content: transcript,
+    };
+    let messages = [user_msg];
+    let loc = (config.resolve_locale)();
+    let mut ctx = AgentToolCtx {
+        http,
+        chat_id: Arc::from(chat_id),
+        channel: Arc::from("system"),
+        locale: loc,
+    };
+    match llm.chat(&mut ctx, SUMMARY_SYSTEM, &messages, None) {
+        Ok(resp) => {
+            let summary =
+                truncate_content_to_max(&resp.content, SESSION_SUMMARY_MAX_LEN).into_owned();
+            config
+                .session_summary_store
+                .set_with_count(chat_id, &summary, current_count)?;
+            Ok(())
+        }
+        Err(e) => {
+            log::warn!(
+                "[agent_summary] LLM summary failed for chat_id={}: {}",
+                chat_id,
+                e
+            );
+            let fallback: String = recent
+                .iter()
+                .rev()
+                .take(5)
+                .map(|m| truncate_content_to_max(&m.content, 100).into_owned())
+                .collect::<Vec<_>>()
+                .join(" | ");
+            let summary = truncate_content_to_max(&fallback, SESSION_SUMMARY_MAX_LEN).into_owned();
+            config
+                .session_summary_store
+                .set_with_count(chat_id, &summary, current_count)?;
+            Ok(())
+        }
     }
 }
 
@@ -216,20 +439,22 @@ pub struct AgentLoopConfig<'a> {
     pub llm_stream: bool,
     /// 流式编辑器；llm_stream 开且通道支持编辑时由 main 传入。
     pub stream_editor: Option<&'a dyn StreamEditor>,
+    /// 当前 NVS 语言；工具与降级文案按此本地化。
+    pub resolve_locale: std::sync::Arc<dyn Fn() -> UiLocale + Send + Sync>,
 }
 
 /// 从 inbound_rx 取一条 PcMsg，构建 context，多轮 chat（含 tool 执行），写会话并发送一条出站。
-/// router_llm：若为 Some 则先调路由，解析 REPLY/WORKER 再决定是否调 worker_llm；None 则仅用 worker_llm。
 /// worker_llm：执行完整 context + tools 的客户端（可为 FallbackLlmClient）。
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub fn run_agent_loop<H: PlatformHttpClient>(
     http: &mut H,
-    router_llm: Option<&dyn LlmClient>,
     worker_llm: &dyn LlmClient,
     registry: &crate::tools::ToolRegistry,
     config: &AgentLoopConfig<'_>,
-    inbound_tx: InboundTx,
-    inbound_rx: crate::bus::InboundRx,
+    user_inbound_tx: UserInboundTx,
+    user_inbound_rx: UserInboundRx,
+    system_inbound_tx: SystemInboundTx,
+    system_inbound_rx: SystemInboundRx,
     outbound_tx: OutboundTx,
     mut typing_notifier: Option<&mut dyn FnMut(&str, &str, &mut H)>,
 ) -> Result<()> {
@@ -248,15 +473,23 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
     const GC_INTERVAL_MSGS: u16 = 50;
     const FAILURE_EXPIRY: Duration = Duration::from_secs(300);
     const DEFER_EXPIRY: Duration = Duration::from_secs(300);
+    const LATENCY_WARN_MS: u128 = 3000;
 
     if let Ok(Some(m)) = config.pending_retry.load_pending_retry() {
         let _ = config.pending_retry.clear_pending_retry();
+        let inbound_tx = choose_inbound_tx(m.ingress, &user_inbound_tx, &system_inbound_tx);
         let _ = inbound_tx.send(m);
     }
 
     let recv_timeout = Duration::from_secs(INBOUND_RECV_TIMEOUT_SECS);
+    let mut sched_slot = 0usize;
     loop {
-        let msg = match inbound_rx.recv_timeout(recv_timeout) {
+        let mut msg = match recv_weighted(
+            &user_inbound_rx,
+            &system_inbound_rx,
+            &mut sched_slot,
+            recv_timeout,
+        ) {
             Ok(m) => m,
             Err(RecvTimeoutError::Timeout) => {
                 crate::platform::task_wdt::feed_current_task();
@@ -267,6 +500,18 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
         };
         metrics::record_message_in();
         crate::platform::task_wdt::feed_current_task();
+        let loc = (config.resolve_locale)();
+        let msg_start = Instant::now();
+        if msg.req_id.is_none() {
+            msg.req_id = Some(next_req_id(&msg.channel, &msg.chat_id));
+        }
+        let req_id = msg.req_id.clone().unwrap_or_default();
+        let queue_wait_ms = now_unix_ms().saturating_sub(msg.enqueue_ts_ms) as u128;
+        if msg.ingress == IngressKind::System {
+            metrics::record_system_queue_wait_ms(queue_wait_ms);
+        } else {
+            metrics::record_user_queue_wait_ms(queue_wait_ms);
+        }
 
         // Periodic GC: evict expired failure/defer entries to prevent unbounded growth.
         msg_since_gc += 1;
@@ -296,11 +541,13 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
             let out = PcMsg {
                 channel: msg.channel.clone(),
                 chat_id: msg.chat_id.clone(),
-                content: "节点正在维护，请稍后...".to_string(),
+                content: tr(UiMessage::NodeMaintenance, loc),
+                req_id: Some(req_id.clone()),
+                ingress: IngressKind::User,
+                enqueue_ts_ms: now_unix_ms(),
                 is_group: false,
             };
-            metrics::record_message_out();
-            let _ = outbound_tx.try_send(out);
+            let _ = try_send_outbound(&outbound_tx, out, "maintenance");
             continue;
         }
 
@@ -322,26 +569,37 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
                         msg.chat_id
                     );
                     defer_tracker.remove(&msg_key);
-                    let defer_out = PcMsg {
-                        channel: msg.channel.clone(),
-                        chat_id: msg.chat_id.clone(),
-                        content: LOW_MEMORY_USER_MESSAGE.to_string(),
-                        is_group: false,
-                    };
-                    metrics::record_message_out();
-                    let _ = outbound_tx.try_send(defer_out);
+                    if msg.ingress == IngressKind::User {
+                        let defer_out = PcMsg {
+                            channel: msg.channel.clone(),
+                            chat_id: msg.chat_id.clone(),
+                            content: tr(UiMessage::LowMemoryUserDefer, loc),
+                            req_id: Some(req_id.clone()),
+                            ingress: IngressKind::User,
+                            enqueue_ts_ms: now_unix_ms(),
+                            is_group: false,
+                        };
+                        let _ = try_send_outbound(&outbound_tx, defer_out, "defer-limit");
+                    }
                     continue;
                 }
 
-                let defer_out = PcMsg {
-                    channel: msg.channel.clone(),
-                    chat_id: msg.chat_id.clone(),
-                    content: LOW_MEMORY_USER_MESSAGE.to_string(),
-                    is_group: false,
-                };
-                metrics::record_message_out();
-                let _ = outbound_tx.try_send(defer_out);
+                if msg.ingress == IngressKind::User {
+                    let defer_out = PcMsg {
+                        channel: msg.channel.clone(),
+                        chat_id: msg.chat_id.clone(),
+                        content: tr(UiMessage::LowMemoryUserDefer, loc),
+                        req_id: Some(req_id.clone()),
+                        ingress: IngressKind::User,
+                        enqueue_ts_ms: now_unix_ms(),
+                        is_group: false,
+                    };
+                    let _ = try_send_outbound(&outbound_tx, defer_out, "defer");
+                }
                 let chat_id = msg.chat_id.clone();
+                msg.enqueue_ts_ms = now_unix_ms();
+                let inbound_tx =
+                    choose_inbound_tx(msg.ingress, &user_inbound_tx, &system_inbound_tx);
                 match inbound_tx.try_send(msg) {
                     Ok(()) => {
                         let now = Instant::now();
@@ -388,90 +646,151 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
                 continue;
             }
         }
+        // 准入通过：标记 agent 任务开始。Guard Drop 时自动递减，覆盖整个任务生命周期（含工具调用、会话写入、回复发送）。
+        // Admission passed: mark agent task in-flight for the display busy indicator.
+        // The guard auto-decrements on drop, covering the full task lifetime.
+        let admission_ms = msg_start.elapsed().as_millis();
+        let _agent_task_guard = crate::orchestrator::begin_agent_task();
+
         if let Some(ref mut f) = typing_notifier {
             f(&msg.channel, &msg.chat_id, http);
         }
 
-        // LLM 门控：Critical 压力下降级，Cautious 堆不足时延迟重试
-        crate::orchestrator::refresh_heap_if_stale();
-        match crate::orchestrator::can_call_llm_pub() {
-            LlmDecision::Proceed => {}
-            LlmDecision::RetryLater { delay_ms } => {
-                let _ = inbound_tx.try_send(msg);
-                std::thread::sleep(Duration::from_millis(delay_ms));
-                crate::platform::task_wdt::feed_current_task();
-                continue;
-            }
-            LlmDecision::Degrade { reason } => {
-                log::info!("[agent] LLM degraded: {}", reason);
-                let out = PcMsg {
-                    channel: msg.channel.clone(),
-                    chat_id: msg.chat_id.clone(),
-                    content: LOW_MEMORY_USER_MESSAGE.to_string(),
-                    is_group: false,
-                };
-                metrics::record_message_out();
-                let _ = outbound_tx.try_send(out);
-                continue;
-            }
-        }
-
-        let final_content = match router_llm {
-            Some(router) => {
-                let router_messages = [Message {
-                    role: "user".to_string(),
-                    content: msg.content.clone(),
-                }];
-                let t0 = metrics::record_llm_call_start();
-                match router.chat(http, ROUTER_SYSTEM, &router_messages, None) {
-                    Ok(resp) => {
-                        metrics::record_llm_call_end(t0);
-                        crate::platform::task_wdt::feed_current_task();
-                        let line = resp.content.trim();
-                        if let Some(reply) = line.strip_prefix("REPLY: ") {
-                            Ok((
-                                WorkerOutcome::Content(reply.trim().to_string()),
-                                None,
-                                false,
-                            ))
-                        } else {
-                            run_worker_path(
-                                http,
-                                worker_llm,
-                                &msg,
-                                registry,
-                                config,
-                                &tool_descriptions,
-                            )
+        let final_content = if msg.ingress == IngressKind::System {
+            crate::orchestrator::refresh_heap_if_stale();
+            match crate::orchestrator::can_call_llm_pub() {
+                LlmDecision::Proceed => {}
+                LlmDecision::RetryLater { delay_ms } => {
+                    let mut retry_msg = msg.clone();
+                    retry_msg.enqueue_ts_ms = now_unix_ms();
+                    let inbound_tx =
+                        choose_inbound_tx(retry_msg.ingress, &user_inbound_tx, &system_inbound_tx);
+                    match inbound_tx.try_send(retry_msg) {
+                        Ok(()) => {}
+                        Err(std::sync::mpsc::TrySendError::Full(m)) => {
+                            let _ = config.pending_retry.save_pending_retry(&m);
+                            log::warn!(
+                                "[agent] llm retry-later(system): inbound full, pending_retry saved chat_id={}",
+                                m.chat_id
+                            );
+                        }
+                        Err(std::sync::mpsc::TrySendError::Disconnected(_)) => {
+                            log::error!(
+                                "[agent] inbound_tx disconnected during retry-later(system)"
+                            );
                         }
                     }
-                    Err(e) => {
-                        metrics::record_llm_call_end(t0);
-                        crate::platform::task_wdt::feed_current_task();
-                        metrics::record_llm_error();
-                        metrics::record_error_by_stage("agent_router");
-                        Err(e.with_stage("agent_router"))
+                    std::thread::sleep(Duration::from_millis(delay_ms));
+                    crate::platform::task_wdt::feed_current_task();
+                    continue;
+                }
+                LlmDecision::Degrade { reason } => {
+                    log::info!("[agent] system task degraded, retry later: {}", reason);
+                    let mut retry_msg = msg.clone();
+                    retry_msg.enqueue_ts_ms = now_unix_ms();
+                    let inbound_tx =
+                        choose_inbound_tx(retry_msg.ingress, &user_inbound_tx, &system_inbound_tx);
+                    if let Err(std::sync::mpsc::TrySendError::Full(m)) =
+                        inbound_tx.try_send(retry_msg)
+                    {
+                        let _ = config.pending_retry.save_pending_retry(&m);
                     }
+                    continue;
                 }
             }
-            None => run_worker_path(http, worker_llm, &msg, registry, config, &tool_descriptions),
+            run_worker_path(
+                http,
+                worker_llm,
+                &msg,
+                registry,
+                config,
+                &tool_descriptions,
+                loc,
+            )
+        } else {
+            // LLM 门控：Critical 压力下降级，Cautious 堆不足时延迟重试
+            crate::orchestrator::refresh_heap_if_stale();
+            match crate::orchestrator::can_call_llm_pub() {
+                LlmDecision::Proceed => {}
+                LlmDecision::RetryLater { delay_ms } => {
+                    let mut retry_msg = msg.clone();
+                    retry_msg.enqueue_ts_ms = now_unix_ms();
+                    let inbound_tx =
+                        choose_inbound_tx(retry_msg.ingress, &user_inbound_tx, &system_inbound_tx);
+                    match inbound_tx.try_send(retry_msg) {
+                        Ok(()) => {}
+                        Err(std::sync::mpsc::TrySendError::Full(m)) => {
+                            let _ = config.pending_retry.save_pending_retry(&m);
+                            log::warn!(
+                                "[agent] llm retry-later: inbound full, pending_retry saved chat_id={}",
+                                m.chat_id
+                            );
+                        }
+                        Err(std::sync::mpsc::TrySendError::Disconnected(_)) => {
+                            log::error!("[agent] inbound_tx disconnected during retry-later");
+                        }
+                    }
+                    std::thread::sleep(Duration::from_millis(delay_ms));
+                    crate::platform::task_wdt::feed_current_task();
+                    continue;
+                }
+                LlmDecision::Degrade { reason } => {
+                    log::info!("[agent] LLM degraded: {}", reason);
+                    let out = PcMsg {
+                        channel: msg.channel.clone(),
+                        chat_id: msg.chat_id.clone(),
+                        content: tr(UiMessage::LowMemoryUserDefer, loc),
+                        req_id: Some(req_id.clone()),
+                        ingress: IngressKind::User,
+                        enqueue_ts_ms: now_unix_ms(),
+                        is_group: false,
+                    };
+                    let _ = try_send_outbound(&outbound_tx, out, "llm-degrade");
+                    continue;
+                }
+            }
+            run_worker_path(
+                http,
+                worker_llm,
+                &msg,
+                registry,
+                config,
+                &tool_descriptions,
+                loc,
+            )
         };
 
-        let (outcome, consumed_round, streamed) = match final_content {
+        let (outcome, consumed_round, streamed, mut worker_latency) = match final_content {
             Ok(ok) => ok,
             Err(e) => {
+                let llm_ms = msg_start.elapsed().as_millis().saturating_sub(admission_ms);
+                let total_ms = msg_start.elapsed().as_millis();
                 crate::platform::task_wdt::feed_current_task();
                 metrics::record_error_by_stage(e.stage());
                 log::warn!("[agent] chat loop failed: {}", e);
+                log::warn!(
+                    "[latency][agent] req_id={} channel={} chat_id={} admission_ms={} llm_ms={} total_ms={} status=llm_error",
+                    req_id,
+                    msg.channel,
+                    msg.chat_id,
+                    admission_ms,
+                    llm_ms,
+                    total_ms
+                );
                 state::set_last_error(&e);
 
+                let is_conn = e.is_connect_error();
                 let (counter, _) = llm_failure_count
                     .entry(msg_key)
                     .or_insert((0, Instant::now()));
                 *counter = counter.saturating_add(1);
 
-                if *counter < 3 {
-                    match inbound_tx.try_send(msg.clone()) {
+                if *counter < 3 && !is_conn {
+                    let mut retry_msg = msg.clone();
+                    retry_msg.enqueue_ts_ms = now_unix_ms();
+                    let inbound_tx =
+                        choose_inbound_tx(retry_msg.ingress, &user_inbound_tx, &system_inbound_tx);
+                    match inbound_tx.try_send(retry_msg) {
                         Ok(()) => {}
                         Err(std::sync::mpsc::TrySendError::Full(_)) => {
                             let _ = config.pending_retry.save_pending_retry(&msg);
@@ -493,11 +812,13 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
                 let reply = PcMsg {
                     channel: msg.channel.clone(),
                     chat_id: msg.chat_id.clone(),
-                    content: "节点正在维护，请稍后...".to_string(),
+                    content: tr(UiMessage::NodeMaintenance, loc),
+                    req_id: Some(req_id.clone()),
+                    ingress: IngressKind::User,
+                    enqueue_ts_ms: now_unix_ms(),
                     is_group: false,
                 };
-                metrics::record_message_out();
-                let _ = outbound_tx.try_send(reply);
+                let _ = try_send_outbound(&outbound_tx, reply, "chat-failure");
                 continue;
             }
         };
@@ -566,9 +887,22 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
         {
             llm_failure_count.remove(&msg_key);
             defer_tracker.remove(&msg_key);
+            let total_ms = msg_start.elapsed().as_millis();
+            metrics::record_e2e_ms(total_ms);
+            if msg.ingress == IngressKind::System {
+                let is_cron = msg.channel.as_ref() == "cron";
+                metrics::record_system_message_done(is_cron);
+                if is_cron {
+                    let cron_e2e = now_unix_ms().saturating_sub(msg.enqueue_ts_ms) as u128;
+                    metrics::record_cron_e2e_ms(cron_e2e);
+                }
+            } else {
+                metrics::record_user_message_done();
+            }
             continue;
         }
 
+        let session_start = Instant::now();
         if let Err(e) = config
             .session_store
             .append(&msg.chat_id, "user", &msg.content)
@@ -576,43 +910,140 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
             log::warn!("[agent_session] append user failed: {}", e);
             metrics::record_error_by_stage("session_append");
         }
-        if let Err(e) = config
-            .session_store
-            .append(&msg.chat_id, "assistant", &reply_content)
-        {
-            log::warn!("[agent_session] append assistant failed: {}", e);
-            metrics::record_error_by_stage("session_append");
-        }
-        if mark_important {
-            let _ = config
-                .important_message_store
-                .set_important_offset_from_end(&msg.chat_id, 1);
-        }
+        worker_latency.session_write_ms = worker_latency
+            .session_write_ms
+            .saturating_add(session_start.elapsed().as_millis());
         llm_failure_count.remove(&msg_key);
         defer_tracker.remove(&msg_key);
 
         // 流式编辑已发送到通道时，跳过 outbound_tx 避免重复发送。
-        if !streamed {
+        let llm_ms = worker_latency
+            .context_ms
+            .saturating_add(worker_latency.llm_round_total_ms)
+            .saturating_add(worker_latency.tool_exec_ms)
+            .saturating_add(worker_latency.session_write_ms);
+        let outbound_start = Instant::now();
+        let delivered = if !streamed {
             let out = PcMsg {
                 channel: msg.channel.clone(),
                 chat_id: msg.chat_id.clone(),
-                content: reply_content,
+                content: reply_content.clone(),
+                req_id: Some(req_id.clone()),
+                ingress: IngressKind::User,
+                enqueue_ts_ms: now_unix_ms(),
                 is_group: false,
             };
-            metrics::record_message_out();
             crate::platform::task_wdt::feed_current_task();
-            if let Err(e) = outbound_tx.try_send(out) {
-                log::warn!("[agent] outbound queue full or disconnected: {}", e);
-            }
+            try_send_outbound(&outbound_tx, out, "reply")
         } else {
             metrics::record_message_out();
             crate::platform::task_wdt::feed_current_task();
+            true
+        };
+        let outbound_enqueue_ms = outbound_start.elapsed().as_millis();
+
+        if delivered {
+            let session_assistant_start = Instant::now();
+            if let Err(e) = config
+                .session_store
+                .append(&msg.chat_id, "assistant", &reply_content)
+            {
+                log::warn!("[agent_session] append assistant failed: {}", e);
+                metrics::record_error_by_stage("session_append");
+            }
+            worker_latency.session_write_ms = worker_latency
+                .session_write_ms
+                .saturating_add(session_assistant_start.elapsed().as_millis());
+            if mark_important {
+                let _ = config
+                    .important_message_store
+                    .set_important_offset_from_end(&msg.chat_id, 1);
+            }
+        }
+
+        // Programmatic session summary — only after the reply is visible to user or streamed successfully.
+        if delivered {
+            let after_count = config
+                .session_store
+                .load_recent(&msg.chat_id, 128)
+                .map(|v| v.len())
+                .unwrap_or(0);
+            let last_summary_count = config
+                .session_summary_store
+                .get_with_count(&msg.chat_id)
+                .ok()
+                .flatten()
+                .map(|(_, c)| c)
+                .unwrap_or(0);
+            if after_count >= 20 && after_count.saturating_sub(last_summary_count) >= 10 {
+                match generate_session_summary(http, worker_llm, config, &msg.chat_id, after_count)
+                {
+                    Ok(()) => log::info!("[agent_summary] updated for {}", msg.chat_id),
+                    Err(e) => log::warn!("[agent_summary] failed: {}", e),
+                }
+            }
+        }
+        let total_ms = msg_start.elapsed().as_millis();
+        metrics::record_react_rounds(worker_latency.react_rounds);
+        metrics::record_tool_calls_last(worker_latency.tool_calls);
+        metrics::record_ttft_ms(worker_latency.ttft_ms.unwrap_or(0));
+        metrics::record_e2e_ms(total_ms);
+        if msg.ingress == IngressKind::System {
+            let is_cron = msg.channel.as_ref() == "cron";
+            metrics::record_system_message_done(is_cron);
+            if is_cron {
+                let cron_e2e = now_unix_ms().saturating_sub(msg.enqueue_ts_ms) as u128;
+                metrics::record_cron_e2e_ms(cron_e2e);
+            }
+        } else {
+            metrics::record_user_message_done();
+        }
+        if total_ms >= LATENCY_WARN_MS {
+            log::warn!(
+                "[latency][agent] req_id={} channel={} chat_id={} admission_ms={} context_ms={} llm_round_total_ms={} tool_exec_ms={} session_write_ms={} llm_ms={} outbound_enqueue_ms={} total_ms={} react_rounds={} tool_calls={} ttft_ms={} streamed={} delivered={} level=slow",
+                req_id,
+                msg.channel,
+                msg.chat_id,
+                admission_ms,
+                worker_latency.context_ms,
+                worker_latency.llm_round_total_ms,
+                worker_latency.tool_exec_ms,
+                worker_latency.session_write_ms,
+                llm_ms,
+                outbound_enqueue_ms,
+                total_ms,
+                worker_latency.react_rounds,
+                worker_latency.tool_calls,
+                worker_latency.ttft_ms.unwrap_or(0),
+                streamed,
+                delivered
+            );
+        } else {
+            log::info!(
+                "[latency][agent] req_id={} channel={} chat_id={} admission_ms={} context_ms={} llm_round_total_ms={} tool_exec_ms={} session_write_ms={} llm_ms={} outbound_enqueue_ms={} total_ms={} react_rounds={} tool_calls={} ttft_ms={} streamed={} delivered={}",
+                req_id,
+                msg.channel,
+                msg.chat_id,
+                admission_ms,
+                worker_latency.context_ms,
+                worker_latency.llm_round_total_ms,
+                worker_latency.tool_exec_ms,
+                worker_latency.session_write_ms,
+                llm_ms,
+                outbound_enqueue_ms,
+                total_ms,
+                worker_latency.react_rounds,
+                worker_latency.tool_calls,
+                worker_latency.ttft_ms.unwrap_or(0),
+                streamed,
+                delivered
+            );
         }
     }
     Ok(())
 }
 
-/// 完整 context + worker LLM + ReAct 循环，返回 (WorkerOutcome, consumed_round, streamed)。不写 session，由调用方写。
+/// 完整 context + worker LLM + ReAct 循环，返回 (WorkerOutcome, consumed_round, streamed, latency)。不写 session，由调用方写。
 /// streamed=true 表示已通过流式编辑发送到通道，调用方应跳过 outbound_tx。
 fn run_worker_path<H: PlatformHttpClient>(
     http: &mut H,
@@ -621,11 +1052,14 @@ fn run_worker_path<H: PlatformHttpClient>(
     registry: &crate::tools::ToolRegistry,
     config: &AgentLoopConfig<'_>,
     tool_descriptions: &str,
-) -> Result<(WorkerOutcome, Option<u32>, bool)> {
+    loc: UiLocale,
+) -> Result<(WorkerOutcome, Option<u32>, bool, WorkerLatency)> {
+    let mut latency = WorkerLatency::default();
     let mut tool_ctx = AgentToolCtx {
         http,
         chat_id: msg.chat_id.clone(),
         channel: msg.channel.clone(),
+        locale: loc,
     };
     let (suffix, consumed_round) =
         match config.task_continuation.get_task_continuation(&msg.chat_id) {
@@ -660,8 +1094,8 @@ fn run_worker_path<H: PlatformHttpClient>(
         .ok()
         .flatten();
     let summary_text = summary_with_count.as_ref().map(|(s, _)| s.as_str());
-    let summary_last_count = summary_with_count.as_ref().map(|(_, c)| *c).unwrap_or(0);
     let budget = crate::orchestrator::current_budget();
+    let context_start = Instant::now();
     let (system, mut messages) = build_context(&super::ContextParams {
         msg,
         memory: config.memory_store,
@@ -676,9 +1110,9 @@ fn run_worker_path<H: PlatformHttpClient>(
         system_continuation_suffix: suffix.as_deref(),
         emotion_signal_suffix,
         summary_text,
-        summary_last_count,
     })
     .map_err(|e| e.with_stage("agent_context"))?;
+    latency.context_ms = context_start.elapsed().as_millis();
 
     // ReAct 追加消息起始下标；用于滑动窗口压缩早期轮次。
     let initial_msg_count = messages.len();
@@ -699,30 +1133,39 @@ fn run_worker_path<H: PlatformHttpClient>(
     const EDIT_THROTTLE_MS: u64 = 500;
     const MAX_EDIT_FAILURES: u8 = 3;
 
-    for _round in 0..MAX_REACT_ROUNDS {
+    for round in 0..MAX_REACT_ROUNDS {
+        latency.react_rounds = round as u32 + 1;
         // Inter-round pressure check: skip first round (already gated by caller).
-        if _round > 0 {
+        if round > 0 {
             crate::orchestrator::update_heap_state();
             match crate::orchestrator::can_call_llm_pub() {
                 LlmDecision::Proceed => {}
                 LlmDecision::RetryLater { .. } | LlmDecision::Degrade { .. } => {
                     if final_content.is_empty() {
-                        final_content = LOW_MEMORY_USER_MESSAGE.to_string();
+                        final_content = tr(UiMessage::LowMemoryUserDefer, loc);
                     } else {
-                        final_content.push_str("\n\n（因设备内存不足，后续步骤已省略）");
+                        final_content.push_str("\n\n");
+                        final_content.push_str(&tr(UiMessage::StreamLowMemoryOmitted, loc));
                     }
                     break;
                 }
             }
         }
-        if _round >= 2 {
+        if round >= 2 {
             compact_early_tool_rounds(&mut messages, initial_msg_count);
         }
         let t0 = metrics::record_llm_call_start();
+        let llm_round_start = Instant::now();
+        let mut first_token_marked = latency.ttft_ms.is_some();
         let response = if config.llm_stream {
             let chat_id_for_cb = msg.chat_id.clone();
+            let progress_base = llm_round_start;
             let mut progress_cb = |_delta: &str, accumulated: &str| {
                 crate::platform::task_wdt::feed_current_task();
+                if !first_token_marked && !accumulated.is_empty() {
+                    latency.ttft_ms = Some(progress_base.elapsed().as_millis());
+                    first_token_marked = true;
+                }
                 let Some(ed) = editor else { return };
                 // Critical 压力下跳过流式编辑，节省 HTTP 连接与堆开销。
                 if stream_edit_disabled
@@ -790,6 +1233,9 @@ fn run_worker_path<H: PlatformHttpClient>(
         let response = match response {
             Ok(r) => {
                 metrics::record_llm_call_end(t0);
+                latency.llm_round_total_ms = latency
+                    .llm_round_total_ms
+                    .saturating_add(llm_round_start.elapsed().as_millis());
                 r
             }
             Err(e) => {
@@ -805,7 +1251,8 @@ fn run_worker_path<H: PlatformHttpClient>(
         if response.stop_reason == StopReason::MaxTokens {
             let mut content = response.content;
             if !content.is_empty() {
-                content.push_str("\n\n（回复因长度限制被截断）");
+                content.push_str("\n\n");
+                content.push_str(&tr(UiMessage::ReplyTruncated, loc));
             }
             final_content = content;
             break;
@@ -828,6 +1275,7 @@ fn run_worker_path<H: PlatformHttpClient>(
                     WorkerOutcome::Interrupt(confirmation),
                     consumed_round,
                     streamed,
+                    latency,
                 ));
             }
             final_content = content;
@@ -849,23 +1297,32 @@ fn run_worker_path<H: PlatformHttpClient>(
                     response.content
                 },
             });
-            let mut cap = MAX_TOOL_RESULTS_USER_MESSAGE_LEN.min(tool_calls.len().saturating_mul(192));
+            let mut cap =
+                MAX_TOOL_RESULTS_USER_MESSAGE_LEN.min(tool_calls.len().saturating_mul(192));
             cap = cap.max(TOOL_RESULTS_PREFIX.len());
             let mut user_content_raw = String::with_capacity(cap);
             user_content_raw.push_str(TOOL_RESULTS_PREFIX);
             let mut truncated = false;
+            latency.tool_calls = latency.tool_calls.saturating_add(tool_calls.len() as u32);
             for (i, tc) in tool_calls.iter().enumerate() {
                 // 流式编辑：进入每个工具前更新进度（Telegram typing ~5s 过期；此处用 edit 续期可见活跃状态）。
                 if let (Some(ref mid), Some(ed)) = (&stream_msg_id, editor) {
                     if !stream_edit_disabled {
                         let progress = if tool_calls.len() == 1 {
-                            format!("正在执行 {}…", tc.name)
+                            tr(
+                                UiMessage::ToolProgressSingle {
+                                    name: tc.name.clone(),
+                                },
+                                loc,
+                            )
                         } else {
-                            format!(
-                                "正在执行 {} ({}/{})…",
-                                tc.name,
-                                i + 1,
-                                tool_calls.len()
+                            tr(
+                                UiMessage::ToolProgress {
+                                    name: tc.name.clone(),
+                                    index: i,
+                                    total: tool_calls.len(),
+                                },
+                                loc,
                             )
                         };
                         let _ = ed.edit(&msg.chat_id, mid, &progress);
@@ -873,32 +1330,40 @@ fn run_worker_path<H: PlatformHttpClient>(
                 }
                 // 工具执行门控
                 let needs_net = registry.is_network_tool(&tc.name);
-                let mut result = match crate::orchestrator::can_execute_tool_pub(&tc.name, needs_net) {
-                    ToolDecision::Deny { reason } => {
-                        log::info!("[agent_tool] {} denied: {}", tc.name, reason);
-                        serde_json::json!({ "error": reason }).to_string()
-                    }
-                    ToolDecision::Allow => {
-                        match registry.execute(&tc.name, &tc.input, &mut tool_ctx) {
-                            Ok(s) => {
-                                metrics::record_tool_call(true);
-                                s
-                            }
-                            Err(e) => {
-                                metrics::record_tool_call(false);
-                                metrics::record_error_by_stage(e.stage());
-                                log::error!(
-                                    "[agent_tool] {} execute failed: {} (stage: {})",
-                                    tc.name,
-                                    e,
-                                    e.stage()
-                                );
-                                state::set_last_error(&e);
-                                format!("[tool error] {} (stage: {})", e, e.stage())
+                let mut result =
+                    match crate::orchestrator::can_execute_tool_pub(&tc.name, needs_net) {
+                        ToolDecision::Deny { reason } => {
+                            log::info!("[agent_tool] {} denied: {}", tc.name, reason);
+                            serde_json::json!({ "error": reason }).to_string()
+                        }
+                        ToolDecision::Allow => {
+                            let tool_exec_start = Instant::now();
+                            match registry.execute(&tc.name, &tc.input, &mut tool_ctx) {
+                                Ok(s) => {
+                                    latency.tool_exec_ms = latency
+                                        .tool_exec_ms
+                                        .saturating_add(tool_exec_start.elapsed().as_millis());
+                                    metrics::record_tool_call(true);
+                                    crate::util::scrub_credentials(&s)
+                                }
+                                Err(e) => {
+                                    latency.tool_exec_ms = latency
+                                        .tool_exec_ms
+                                        .saturating_add(tool_exec_start.elapsed().as_millis());
+                                    metrics::record_tool_call(false);
+                                    metrics::record_error_by_stage(e.stage());
+                                    log::error!(
+                                        "[agent_tool] {} execute failed: {} (stage: {})",
+                                        tc.name,
+                                        e,
+                                        e.stage()
+                                    );
+                                    state::set_last_error(&e);
+                                    format!("[tool error] {} (stage: {})", e, e.stage())
+                                }
                             }
                         }
-                    }
-                };
+                    };
                 let call_key = hash_tool_call(&tc.name, &tc.input);
                 let n = tool_call_repeat.entry(call_key).or_insert(0);
                 *n = (*n).saturating_add(1);
@@ -967,9 +1432,18 @@ fn run_worker_path<H: PlatformHttpClient>(
             let confirmation = strip_agent_stop_confirmation(&content);
             let streamed = if let (Some(ref mid), Some(ed)) = (&stream_msg_id, editor) {
                 if !confirmation.is_empty() {
-                    let _ = ed.edit(&msg.chat_id, mid, &confirmation);
+                    if let Err(e) = ed.edit(&msg.chat_id, mid, &confirmation) {
+                        log::warn!(
+                            "[agent_stream] final interrupt edit failed, fallback outbound: {}",
+                            e
+                        );
+                        false
+                    } else {
+                        true
+                    }
+                } else {
+                    true
                 }
-                true
             } else {
                 false
             };
@@ -977,6 +1451,7 @@ fn run_worker_path<H: PlatformHttpClient>(
                 WorkerOutcome::Interrupt(confirmation),
                 consumed_round,
                 streamed,
+                latency,
             ));
         }
         final_content = content;
@@ -985,9 +1460,15 @@ fn run_worker_path<H: PlatformHttpClient>(
     // 流式编辑：最终确认发送完整内容（工具执行中已通过 per-tool 进度 edit 续期可见性）。
     let streamed = if let (Some(ref mid), Some(ed)) = (&stream_msg_id, editor) {
         if !final_content.is_empty() {
-            let _ = ed.edit(&msg.chat_id, mid, &final_content);
+            if let Err(e) = ed.edit(&msg.chat_id, mid, &final_content) {
+                log::warn!("[agent_stream] final edit failed, fallback outbound: {}", e);
+                false
+            } else {
+                true
+            }
+        } else {
+            true
         }
-        true
     } else {
         false
     };
@@ -995,5 +1476,6 @@ fn run_worker_path<H: PlatformHttpClient>(
         WorkerOutcome::Content(final_content),
         consumed_round,
         streamed,
+        latency,
     ))
 }

@@ -31,6 +31,7 @@ pub mod ota;
 
 pub mod cron;
 pub mod heartbeat;
+pub mod i18n;
 pub mod orchestrator;
 pub mod skills;
 
@@ -53,7 +54,7 @@ pub use channels::{
 };
 pub use config::{
     parse_allowed_chat_ids, save_hardware_segment, AppConfig, DeviceEntry, HardwareSegment,
-    I2cBusConfig, I2cDeviceEntry, LlmSource, PinConfig,
+    I2cBusConfig, I2cDeviceEntry, I2cSensorEntry, LlmSource, PinConfig,
 };
 pub use display::{
     default_disabled_display_config, validate_display_config_core, DisplayBus,
@@ -78,9 +79,10 @@ pub use platform::{
 pub use platform::{ConfigStore, MemorySnapshot, Platform, SkillStorage, StateFs};
 pub use tools::{
     build_default_registry, CronManageTool, DeviceControlTool, FileWriteTool, FilesTool,
-    GetTimeTool, HttpRequestTool, I2cDeviceTool, KvStoreTool, MemoryManageTool, ModelConfigTool,
-    NetworkScanTool, ProxyConfigTool, RemindAtTool, SensorWatchTool, SessionManageTool,
-    SystemControlTool, Tool, ToolContext, ToolRegistry, UpdateSessionSummaryTool, WebSearchTool,
+    GetTimeTool, HttpRequestTool, I2cDeviceTool, I2cSensorTool, KvStoreTool, MemoryManageTool,
+    ModelConfigTool, NetworkScanTool, ProxyConfigTool, RemindAtTool, SensorWatchTool,
+    SessionManageTool, SystemControlTool, Tool, ToolContext, ToolRegistry,
+    UpdateSessionSummaryTool, WebSearchTool,
 };
 
 /// 任何 PlatformHttpClient 均可作为 LlmHttpClient、ToolContext、ChannelHttpClient 使用。
@@ -108,6 +110,9 @@ impl<T: platform::PlatformHttpClient> llm::LlmHttpClient for T {
 }
 
 impl<T: platform::PlatformHttpClient> tools::ToolContext for T {
+    fn user_locale(&self) -> crate::i18n::Locale {
+        crate::i18n::Locale::Zh
+    }
     fn get_with_headers(
         &mut self,
         url: &str,
@@ -122,6 +127,14 @@ impl<T: platform::PlatformHttpClient> tools::ToolContext for T {
         body: &[u8],
     ) -> Result<(u16, platform::ResponseBody)> {
         platform::PlatformHttpClient::post(self, url, headers, body)
+    }
+    fn patch_with_headers(
+        &mut self,
+        url: &str,
+        headers: &[(&str, &str)],
+        body: &[u8],
+    ) -> Result<(u16, platform::ResponseBody)> {
+        platform::PlatformHttpClient::patch(self, url, headers, body)
     }
     fn put_with_headers(
         &mut self,

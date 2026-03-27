@@ -29,7 +29,16 @@ where
             }
             Err(e) => {
                 crate::platform::task_wdt::feed_current_task();
+                let is_conn = e.is_connect_error();
                 last_err = Some(e);
+                if is_conn {
+                    log::warn!(
+                        "[{}] attempt {} failed (connect error), skipping retry",
+                        tag,
+                        attempt + 1,
+                    );
+                    break;
+                }
                 if attempt + 1 < retries {
                     let delay_ms = {
                         let d = base_ms * (1 << attempt.min(6));

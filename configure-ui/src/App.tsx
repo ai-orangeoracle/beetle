@@ -12,7 +12,11 @@ import { AIConfigPage } from './pages/AIConfigPage'
 import { ChannelsConfigPage } from './pages/ChannelsConfigPage'
 import { SystemConfigPage } from './pages/SystemConfigPage'
 import { SystemLogsPage } from './pages/SystemLogsPage'
-import { SoulUserPage } from './pages/SoulUserPage'
+import {
+  SoulUserLayout,
+  SoulUserSoulPanel,
+  SoulUserUserPanel,
+} from './pages/soul-user'
 import { SkillsPage } from './pages/SkillsPage'
 import { DeviceConfigLayout } from './pages/DeviceConfigLayout'
 import { DisplayConfigPanel } from './pages/DisplayConfigPanel'
@@ -49,7 +53,11 @@ function App() {
             element={<Navigate to="/device-config/display" replace />}
           />
           <Route path="/system-logs" element={<SystemLogsPage />} />
-          <Route path="/soul-user" element={<SoulUserPage />} />
+          <Route path="/soul-user" element={<SoulUserLayout />}>
+            <Route index element={<Navigate to="soul" replace />} />
+            <Route path="soul" element={<SoulUserSoulPanel />} />
+            <Route path="user" element={<SoulUserUserPanel />} />
+          </Route>
           <Route path="/skills" element={<SkillsPage />} />
           <Route path="*" element={<PlaceholderPage />} />
         </Route>

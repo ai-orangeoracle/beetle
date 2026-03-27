@@ -282,6 +282,12 @@ pub trait Platform: Send + Sync {
         Ok(())
     }
 
+    /// 按 `I2cBusConfig` 初始化 I2C master 总线（ESP-IDF `i2c_master.h`）。默认 no-op（Linux / 未用 I2C）。
+    /// Initialize I2C master bus from config. Default no-op.
+    fn init_i2c(&self, _config: &crate::config::I2cBusConfig) -> Result<()> {
+        Ok(())
+    }
+
     /// I2C 读取：从指定地址的寄存器读取数据。默认返回不支持错误。
     /// I2C read: read data from register at given address. Default returns unsupported error.
     fn i2c_read(&self, _addr: u8, _register: u8, _len: usize) -> Result<Vec<u8>> {
@@ -349,6 +355,30 @@ pub trait Platform: Send + Sync {
         Err(crate::error::Error::config(
             "drive_buzzer",
             "Buzzer not supported on this platform",
+        ))
+    }
+
+    /// DHT 系列温湿度传感器读取。`params` 为 unused placeholder，传空 JSON 即可。
+    /// Read DHT series sensor. `params` is an unused placeholder; pass empty JSON object.
+    fn drive_dht(&self, _pins: &PinConfig, _params: &Value, _options: &Value) -> Result<String> {
+        Err(crate::error::Error::config(
+            "drive_dht",
+            "DHT sensor not supported on this platform",
+        ))
+    }
+
+    /// 通用 I2C 传感器读取（SHT3x / AHT20 / raw）；内部完成测量命令、等待、读回与解析，返回 JSON。
+    /// Generic I2C sensor read; returns JSON with temperature/humidity or raw hex for `raw` model.
+    fn drive_i2c_sensor(
+        &self,
+        _addr: u8,
+        _model: &str,
+        _watch_field: &str,
+        _options: &Value,
+    ) -> Result<String> {
+        Err(crate::error::Error::config(
+            "drive_i2c_sensor",
+            "I2C sensor not supported on this platform",
         ))
     }
 }

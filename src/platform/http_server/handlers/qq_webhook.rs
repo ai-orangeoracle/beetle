@@ -1,8 +1,8 @@
 //! POST /api/webhook/qq：QQ 频道机器人回调。URL 校验、事件验签与入队；body 读取与长度校验由 mod 完成。
 
 use crate::channels::QQ_WEBHOOK_BODY_MAX;
+use crate::i18n::{locale_from_store, tr, Message};
 use crate::platform::http_server::common::ApiResponse;
-use crate::platform::http_server::user_message;
 
 /// QQ webhook 成功时的响应：URL 校验返回 token+signature；事件已处理返回 200 空 body。
 pub enum QqWebhookOutcome {
@@ -25,9 +25,9 @@ pub fn post(
     inbound_tx: &crate::bus::InboundTx,
     cache: crate::channels::QqMsgIdCache,
 ) -> Result<QqWebhookOutcome, ApiResponse> {
+    let loc = locale_from_store(store);
     if body.len() > QQ_WEBHOOK_BODY_MAX {
-        let locale = crate::config::get_locale(store);
-        let msg = user_message::from_api_key("body_too_large", &locale);
+        let msg = tr(Message::BodyTooLarge, loc);
         return Err(ApiResponse::err_413(&msg));
     }
 
@@ -43,14 +43,13 @@ pub fn post(
         }),
         Ok(crate::channels::QqHandlerResult::EventHandled) => Ok(QqWebhookOutcome::EventHandled),
         Err(e) => {
-            let locale = crate::config::get_locale(store);
             let msg_str = e.to_string();
             let msg = if msg_str.contains("verify") || msg_str.contains("signature") {
-                user_message::from_api_key("invalid_token", &locale)
+                tr(Message::InvalidToken, loc)
             } else if msg_str.contains("too large") {
-                user_message::from_api_key("body_too_large", &locale)
+                tr(Message::BodyTooLarge, loc)
             } else {
-                user_message::from_api_key("operation_failed", &locale)
+                tr(Message::OperationFailed, loc)
             };
             let r = if msg_str.contains("verify") || msg_str.contains("signature") {
                 ApiResponse::err_401(&msg)

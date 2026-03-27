@@ -11,12 +11,17 @@ pub const DISPLAY_OFFSET_MIN: i16 = -480;
 pub const DISPLAY_OFFSET_MAX: i16 = 480;
 pub const DISPLAY_SPI_FREQ_MIN: u32 = 1_000_000;
 pub const DISPLAY_SPI_FREQ_MAX: u32 = 80_000_000;
+/// 参考布局坐标基准（240x240 设计网格）。
+/// Layout reference grid baseline (240x240 design space).
+pub const DISPLAY_LAYOUT_REF_PX: u32 = 240;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum DisplayDriver {
     St7789,
     Ili9341,
+    /// ST7735 / ST7735R / ST7735S 家族（寄存器兼容）。
+    St7735,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -110,6 +115,9 @@ pub struct DisplayLayout {
     pub subtitle_top: u16,
     pub middle_top: u16,
     pub footer_top: u16,
+    /// 水平边距（参考坐标 240，结合宽高比分档后的布局）。
+    /// Horizontal margin scaled from reference 240 grid with aspect-bucket layout.
+    pub margin_x: u16,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -133,8 +141,10 @@ pub enum DisplayCommand {
         /// F7: 错误闪烁标志（本轮有新错误时为 true）。
         error_flash: bool,
     },
+    /// 仅副标题 IP 行局部刷新；`uptime_secs` 与宽屏双行 `Up:` 对齐。
     UpdateIp {
         ip: String,
+        uptime_secs: u64,
     },
     UpdatePressure {
         level: DisplayPressureLevel,
@@ -157,16 +167,59 @@ pub enum DisplayCommand {
     Clear,
 }
 
-pub fn default_display_layout() -> DisplayLayout {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AspectClass {
+    Square,
+    PortraitTall,
+    LandscapeWide,
+}
+
+#[inline]
+fn layout_aspect_class(w: u32, h: u32) -> AspectClass {
+    if h.saturating_mul(100) > w.saturating_mul(115) {
+        AspectClass::PortraitTall
+    } else if w.saturating_mul(100) > h.saturating_mul(115) {
+        AspectClass::LandscapeWide
+    } else {
+        AspectClass::Square
+    }
+}
+
+#[inline]
+fn layout_vertical_markers(aspect: AspectClass) -> (u32, u32, u32, u32, u32) {
+    match aspect {
+        // Keep 240x240 legacy layout unchanged.
+        AspectClass::Square => (16, 18, 44, 104, 168),
+        // Increase the middle information band on tall portrait panels.
+        AspectClass::PortraitTall => (16, 18, 42, 96, 178),
+        // Compress vertical occupancy on wide landscape panels.
+        AspectClass::LandscapeWide => (14, 16, 36, 72, 132),
+    }
+}
+
+/// 按 `width`×`height` 计算仪表盘布局：以 240 参考网格并按宽高比分三档（方屏/竖长/横宽）。
+/// Computes dashboard layout on a 240-grid with 3 aspect buckets: square/portrait-tall/landscape-wide.
+pub fn compute_layout(width: u16, height: u16) -> DisplayLayout {
+    let w = width as u32;
+    let h = height as u32;
+    let dim_min = w.min(h);
+    let aspect = layout_aspect_class(w, h);
+    let (header_n, title_n, subtitle_n, middle_n, footer_n) = layout_vertical_markers(aspect);
+
+    let icon_left = (w * 12 / DISPLAY_LAYOUT_REF_PX) as u16;
+    let icon_size = (dim_min * 64 / DISPLAY_LAYOUT_REF_PX).max(16) as u16;
+    let gap = icon_left;
+
     DisplayLayout {
-        header_top: 16,
-        icon_left: 12,
-        icon_size: 64,
-        title_left: 88,
-        title_top: 18,
-        subtitle_top: 44,
-        middle_top: 104,
-        footer_top: 168,
+        header_top: (h * header_n / DISPLAY_LAYOUT_REF_PX) as u16,
+        icon_left,
+        icon_size,
+        title_left: icon_left.saturating_add(icon_size).saturating_add(gap),
+        title_top: (h * title_n / DISPLAY_LAYOUT_REF_PX) as u16,
+        subtitle_top: (h * subtitle_n / DISPLAY_LAYOUT_REF_PX) as u16,
+        middle_top: (h * middle_n / DISPLAY_LAYOUT_REF_PX) as u16,
+        footer_top: (h * footer_n / DISPLAY_LAYOUT_REF_PX) as u16,
+        margin_x: ((w * 8 / DISPLAY_LAYOUT_REF_PX).max(2)) as u16,
     }
 }
 
@@ -183,7 +236,7 @@ fn default_color_order() -> DisplayColorOrder {
 }
 
 fn default_spi_host() -> u8 {
-    2
+    1
 }
 
 fn default_spi_freq_hz() -> u32 {
@@ -252,10 +305,10 @@ pub fn validate_display_config_core(cfg: &DisplayConfig) -> Result<()> {
             "DISPLAY_CONFIG_INVALID_OFFSET: offset must be -480..=480",
         ));
     }
-    if cfg.spi.host != 2 && cfg.spi.host != 3 {
+    if cfg.spi.host != 1 && cfg.spi.host != 2 {
         return Err(Error::config(
             "display",
-            "DISPLAY_CONFIG_INVALID_SPI_HOST: host must be 2 or 3",
+            "DISPLAY_CONFIG_INVALID_SPI_HOST: host must be 1 or 2",
         ));
     }
     if !(DISPLAY_SPI_FREQ_MIN..=DISPLAY_SPI_FREQ_MAX).contains(&cfg.spi.freq_hz) {
@@ -265,4 +318,51 @@ pub fn validate_display_config_core(cfg: &DisplayConfig) -> Result<()> {
         ));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn compute_layout_square_240_legacy_markers() {
+        let layout = compute_layout(240, 240);
+        assert_eq!(layout.header_top, 16);
+        assert_eq!(layout.title_top, 18);
+        assert_eq!(layout.subtitle_top, 44);
+        assert_eq!(layout.middle_top, 104);
+        assert_eq!(layout.footer_top, 168);
+        assert!(layout.title_top < layout.subtitle_top);
+        assert!(layout.subtitle_top < layout.middle_top);
+        assert!(layout.middle_top < layout.footer_top);
+    }
+
+    #[test]
+    fn compute_layout_portrait_tall_bucket() {
+        let square = compute_layout(240, 240);
+        let portrait = compute_layout(240, 280);
+        assert!(portrait.title_top < portrait.subtitle_top);
+        assert!(portrait.subtitle_top < portrait.middle_top);
+        assert!(portrait.middle_top < portrait.footer_top);
+        assert_ne!(portrait.middle_top, square.middle_top);
+        assert_ne!(portrait.footer_top, square.footer_top);
+    }
+
+    #[test]
+    fn compute_layout_landscape_wide_bucket() {
+        let square = compute_layout(240, 240);
+        let landscape = compute_layout(280, 240);
+        assert!(landscape.title_top < landscape.subtitle_top);
+        assert!(landscape.subtitle_top < landscape.middle_top);
+        assert!(landscape.middle_top < landscape.footer_top);
+        assert_ne!(landscape.middle_top, square.middle_top);
+        assert_ne!(landscape.footer_top, square.footer_top);
+    }
+
+    #[test]
+    fn compute_layout_small_dims_no_panic() {
+        let layout = compute_layout(120, 120);
+        assert!(layout.icon_size >= 16);
+        assert!(layout.footer_top >= layout.middle_top);
+    }
 }

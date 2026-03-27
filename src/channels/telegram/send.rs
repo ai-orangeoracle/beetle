@@ -12,18 +12,36 @@ const TELEGRAM_MAX_MESSAGE_LEN: usize = 4096;
 pub fn check_connectivity<H: ChannelHttpClient + ?Sized>(
     config: &AppConfig,
     http: &mut H,
+    loc: crate::i18n::Locale,
 ) -> super::super::connectivity::ChannelConnectivityItem {
+    use crate::i18n::{tr, Message};
     let configured = !config.tg_token.trim().is_empty();
-    let (ok, message) = if !configured {
-        (false, None)
-    } else {
-        match get_bot_username(http, config.tg_token.trim()) {
-            Ok(Some(_)) => (true, None),
-            Ok(None) => (false, Some("getMe failed or invalid token".into())),
-            Err(e) => (false, Some(e.to_string())),
+    if !configured {
+        return connectivity::item(
+            "telegram",
+            false,
+            false,
+            Some(tr(Message::ConnectivityNotConfigured, loc)),
+        );
+    }
+    match get_bot_username(http, config.tg_token.trim()) {
+        Ok(Some(_)) => connectivity::item("telegram", true, true, None),
+        Ok(None) => connectivity::item(
+            "telegram",
+            true,
+            false,
+            Some(tr(Message::ConnectivityTokenInvalid, loc)),
+        ),
+        Err(e) => {
+            log::warn!("[telegram_connectivity] getMe: {}", e);
+            connectivity::item(
+                "telegram",
+                true,
+                false,
+                Some(tr(Message::ConnectivityCheckFailed, loc)),
+            )
         }
-    };
-    connectivity::item("telegram", configured, ok, message)
+    }
 }
 
 fn send_one_telegram<H: ChannelHttpClient>(
@@ -77,18 +95,18 @@ fn send_one_telegram<H: ChannelHttpClient>(
 
 /// 从 rx 取出所有待发送（一次性 drain）。
 pub fn flush_telegram_sends<H: ChannelHttpClient>(
-    rx: &std::sync::mpsc::Receiver<(String, String)>,
+    rx: &std::sync::mpsc::Receiver<(String, String, Option<String>)>,
     token: &str,
     http: &mut H,
 ) {
-    while let Ok((chat_id, content)) = rx.try_recv() {
+    while let Ok((chat_id, content, _req_id)) = rx.try_recv() {
         send_one_telegram(http, token, &chat_id, &content);
     }
 }
 
 /// 持续运行的 Telegram 发送循环：sender 线程内**复用**同一 HTTP 客户端，减轻 lwIP socket / TLS 压力。
 pub fn run_telegram_sender_loop<H, F>(
-    rx: std::sync::mpsc::Receiver<(String, String)>,
+    rx: std::sync::mpsc::Receiver<(String, String, Option<String>)>,
     token: &str,
     mut create_http: F,
 ) where
@@ -103,7 +121,7 @@ pub fn run_telegram_sender_loop<H, F>(
     let mut http: Option<H> = None;
     let recv_timeout = std::time::Duration::from_secs(30);
     loop {
-        let (chat_id, content) = match rx.recv_timeout(recv_timeout) {
+        let (chat_id, content, req_id) = match rx.recv_timeout(recv_timeout) {
             Ok(item) => item,
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
                 crate::platform::task_wdt::feed_current_task();
@@ -139,7 +157,7 @@ pub fn run_telegram_sender_loop<H, F>(
                 continue;
             };
             send_one_telegram(h, token, &chat_id, &content);
-            while let Ok((cid, cnt)) = rx.try_recv() {
+            while let Ok((cid, cnt, _)) = rx.try_recv() {
                 send_one_telegram(h, token, &cid, &cnt);
             }
             sent = true;
@@ -150,6 +168,11 @@ pub fn run_telegram_sender_loop<H, F>(
                 "[{}] message dropped after 3 retries, chat_id={}",
                 TAG,
                 chat_id
+            );
+            log::error!(
+                "[{}] req_id={} message dropped after retries",
+                TAG,
+                req_id.as_deref().unwrap_or("-")
             );
         }
     }

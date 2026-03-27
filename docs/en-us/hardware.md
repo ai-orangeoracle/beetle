@@ -15,7 +15,7 @@ For **board selection and troubleshooting**: supported boards, memory and build 
 | `esp32-s3-32mb` | 32MB | 16MB Octal | 240MHz | N32R16; use `BOARD=esp32-s3-32mb ./build.sh` |
 
 - Board is selected via `BOARD=esp32-s3-8mb` | `esp32-s3-16mb` | `esp32-s3-32mb` (optional; default `esp32-s3-16mb`); `board_presets.toml` defines target and partition table.
-- **Only ESP32-S3 with PSRAM is supported**; C3/S2 are no longer supported.
+- **Only ESP32-S3 with PSRAM is supported**.
 
 ---
 

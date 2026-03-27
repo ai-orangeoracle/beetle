@@ -137,7 +137,7 @@ function StatRow({
         component="span"
         sx={{
           fontFamily: mono ? "var(--font-mono)" : "inherit",
-          fontSize: "var(--font-size-body-sm)",
+          fontSize: mono ? "var(--font-size-data-value)" : "var(--font-size-body-sm)",
           color:
             valueColor === "var(--text-primary)"
               ? valueColor
@@ -233,11 +233,10 @@ function SummaryCard({
         alignContent: "stretch",
         boxShadow: "var(--shadow-subtle)",
         transition:
-          "box-shadow var(--transition-duration-emphasized) var(--ease-out-smooth), border-color var(--transition-duration) ease, transform var(--transition-duration) var(--ease-emphasized)",
+          "border-color var(--transition-duration) ease, box-shadow var(--transition-duration) var(--ease-out-smooth)",
         "&:hover": {
-          boxShadow: "var(--shadow-card-hover)",
           borderColor: "color-mix(in srgb, var(--primary) 12%, var(--border-subtle))",
-          transform: "translateY(var(--hover-lift-y, -1px))",
+          boxShadow: "var(--shadow-subtle)",
         },
       }}
     >
@@ -284,7 +283,7 @@ function SummaryCard({
                 : "var(--foreground)",
             fontFamily: "var(--font-mono)",
             lineHeight: 1.4,
-            fontSize: "var(--font-size-body-sm)",
+            fontSize: "var(--font-size-data-value)",
             textAlign: "right",
             width: "100%",
             fontVariantNumeric: "tabular-nums",
@@ -345,7 +344,7 @@ function SystemStatusLastError({
           pt: 1.25,
           borderTop: "1px solid color-mix(in srgb, var(--border-subtle) 55%, transparent)",
           fontFamily: "var(--font-mono)",
-          fontSize: "var(--font-size-body-sm)",
+          fontSize: "var(--font-size-data-value)",
           color: isEmpty
             ? "var(--muted)"
             : "color-mix(in srgb, var(--semantic-danger) 88%, var(--foreground))",

@@ -187,7 +187,10 @@ export function createAppTheme(mode: ThemeMode, brand: ThemeBrand) {
             '--letter-spacing-tight': LAYOUT_TOKENS.letterSpacingTight,
             '--letter-spacing-label': LAYOUT_TOKENS.letterSpacingLabel,
             '--shadow-subtle': tokens.shadowSubtle,
+            '--shadow-card': tokens.shadowSubtle,
             '--shadow-card-hover': tokens.shadowCardHover,
+            '--font-mono': LAYOUT_TOKENS.fontMono,
+            '--font-size-data-value': LAYOUT_TOKENS.fontSizeDataValue,
             '--badge-new': tokens.badgeNew,
             '--semantic-success': SEMANTIC_COLORS.success,
             '--semantic-danger': SEMANTIC_COLORS.danger,
@@ -242,8 +245,8 @@ export function createAppTheme(mode: ThemeMode, brand: ThemeBrand) {
             color: 'var(--primary-fg)',
             borderTop: '1px solid color-mix(in srgb, var(--primary-fg) 12%, transparent)',
             '&:hover': {
-              backgroundColor: 'color-mix(in srgb, var(--primary) 90%, white)',
-              boxShadow: '0 0 12px color-mix(in srgb, var(--primary) 14%, transparent)',
+              backgroundColor: 'color-mix(in srgb, var(--primary) 92%, white)',
+              boxShadow: 'none',
             },
             '&:active': {
               backgroundColor: 'color-mix(in srgb, var(--primary) 85%, white)',
@@ -258,7 +261,7 @@ export function createAppTheme(mode: ThemeMode, brand: ThemeBrand) {
             borderTop: '1px solid color-mix(in srgb, var(--primary-fg) 12%, transparent)',
             '&:hover': {
               backgroundColor: 'color-mix(in srgb, var(--semantic-danger) 88%, black)',
-              boxShadow: '0 0 12px color-mix(in srgb, var(--semantic-danger) 28%, transparent)',
+              boxShadow: 'none',
             },
             '&:active': {
               backgroundColor: 'color-mix(in srgb, var(--semantic-danger) 80%, black)',
@@ -308,7 +311,7 @@ export function createAppTheme(mode: ThemeMode, brand: ThemeBrand) {
         styleOverrides: {
           root: {
             boxShadow: 'none',
-            border: '1px solid color-mix(in srgb, var(--border) 40%, transparent)',
+            border: '1px solid color-mix(in srgb, var(--border) 18%, transparent)',
             backgroundImage: 'none',
             transition: 'border-color var(--transition-duration) ease',
           },
@@ -318,17 +321,17 @@ export function createAppTheme(mode: ThemeMode, brand: ThemeBrand) {
         styleOverrides: {
           root: {
             borderRadius: R_CARD,
-            border: '1px solid color-mix(in srgb, var(--border) 40%, transparent)',
-            borderTop: 'var(--card-accent-line-width) solid color-mix(in srgb, var(--primary) 5%, transparent)',
+            border: '1px solid color-mix(in srgb, var(--border) 18%, transparent)',
             boxShadow: 'none',
             backgroundColor: 'var(--card)',
-            transition: 'border-color var(--transition-duration) ease, transform var(--transition-duration-emphasized) var(--ease-emphasized), box-shadow var(--transition-duration-emphasized) var(--ease-out-smooth)',
-            '&:hover': {
-              borderColor: 'color-mix(in srgb, var(--primary) 18%, var(--border))',
-              borderTopColor: 'color-mix(in srgb, var(--primary) 8%, transparent)',
-              transform: 'translateY(var(--hover-lift-y))',
-              boxShadow: 'var(--shadow-card-hover)',
-            },
+            transition: 'border-color var(--transition-duration) ease',
+          },
+        },
+      },
+      MuiTabs: {
+        styleOverrides: {
+          indicator: {
+            height: 2,
           },
         },
       },
@@ -347,7 +350,7 @@ export function createAppTheme(mode: ThemeMode, brand: ThemeBrand) {
             backgroundColor: 'color-mix(in srgb, var(--border) 5%, var(--card))',
             transition: 'background-color var(--transition-duration) ease, box-shadow var(--transition-duration) var(--ease-out-smooth)',
             '& .MuiOutlinedInput-notchedOutline': {
-              borderColor: 'color-mix(in srgb, var(--border) 55%, transparent)',
+              borderColor: 'color-mix(in srgb, var(--border) 28%, transparent)',
               transition: 'border-color var(--transition-duration-emphasized) var(--ease-emphasized), border-width var(--transition-duration) ease',
             },
             '& .MuiInputBase-input::placeholder': {
@@ -355,13 +358,13 @@ export function createAppTheme(mode: ThemeMode, brand: ThemeBrand) {
               color: 'var(--muted)',
             },
             '&:hover .MuiOutlinedInput-notchedOutline': {
-              borderColor: 'color-mix(in srgb, var(--primary) 20%, var(--border))',
+              borderColor: 'color-mix(in srgb, var(--border) 42%, transparent)',
             },
             '&.Mui-focused': {
               backgroundColor: 'var(--card)',
               '& .MuiOutlinedInput-notchedOutline': {
-                borderColor: 'color-mix(in srgb, var(--primary) 45%, var(--border))',
-                borderWidth: 1.5,
+                borderColor: 'color-mix(in srgb, var(--primary) 38%, var(--border))',
+                borderWidth: 1,
               },
             },
           },
@@ -376,10 +379,10 @@ export function createAppTheme(mode: ThemeMode, brand: ThemeBrand) {
             transition: 'background-color var(--transition-duration) ease, border-color var(--transition-duration) ease, color var(--transition-duration) ease',
           },
           outlined: {
-            borderColor: 'color-mix(in srgb, var(--border) 60%, transparent)',
+            borderColor: 'color-mix(in srgb, var(--border) 28%, transparent)',
             '&:hover': {
-              backgroundColor: 'color-mix(in srgb, var(--primary) 5%, transparent)',
-              borderColor: 'color-mix(in srgb, var(--primary) 30%, var(--border))',
+              backgroundColor: 'color-mix(in srgb, var(--primary) 4%, transparent)',
+              borderColor: 'color-mix(in srgb, var(--border) 40%, transparent)',
               color: 'var(--primary)',
             },
           },
@@ -401,7 +404,7 @@ export function createAppTheme(mode: ThemeMode, brand: ThemeBrand) {
       MuiDivider: {
         styleOverrides: {
           root: {
-            borderColor: 'color-mix(in srgb, var(--border) 40%, transparent)',
+            borderColor: 'color-mix(in srgb, var(--border) 20%, transparent)',
           },
         },
       },
@@ -423,7 +426,7 @@ export function createAppTheme(mode: ThemeMode, brand: ThemeBrand) {
         styleOverrides: {
           root: { gap: LAYOUT_TOKENS.toggleGroupGap },
           grouped: {
-            border: '1px solid color-mix(in srgb, var(--border) 45%, transparent)',
+            border: '1px solid color-mix(in srgb, var(--border) 22%, transparent)',
             borderRadius: 'var(--radius-control) !important',
             textTransform: 'none',
             fontWeight: 600,
@@ -437,13 +440,13 @@ export function createAppTheme(mode: ThemeMode, brand: ThemeBrand) {
             '&.Mui-selected': {
               backgroundColor: 'var(--primary-soft)',
               color: 'var(--primary)',
-              borderColor: 'color-mix(in srgb, var(--primary) 30%, var(--border))',
+              borderColor: 'color-mix(in srgb, var(--primary) 35%, var(--border))',
               '&:hover': {
-                backgroundColor: 'color-mix(in srgb, var(--primary) 8%, var(--primary-soft))',
+                backgroundColor: 'color-mix(in srgb, var(--primary) 6%, var(--primary-soft))',
               },
             },
             '&:hover': {
-              backgroundColor: 'color-mix(in srgb, var(--primary) 5%, transparent)',
+              backgroundColor: 'color-mix(in srgb, var(--foreground) 3%, transparent)',
               color: 'var(--foreground)',
             },
           },

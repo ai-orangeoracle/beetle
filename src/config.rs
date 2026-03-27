@@ -161,13 +161,6 @@ pub struct AppConfig {
     #[serde(default)]
     pub llm_sources: Vec<LlmSource>,
 
-    /// 路由模式：路由用源下标；None 表示不启用路由，仅用 worker 回退链。
-    #[serde(default)]
-    pub llm_router_source_index: Option<u8>,
-    /// 路由模式：worker 用源下标；与 router 同时为 Some 且均在 llm_sources 范围内时启用路由。
-    #[serde(default)]
-    pub llm_worker_source_index: Option<u8>,
-
     /// 界面语言 "zh" | "en"；存 NVS 键 locale，GET /api/config 与前端一致。
     #[serde(default)]
     pub locale: Option<String>,
@@ -186,6 +179,9 @@ pub struct AppConfig {
     /// I2C 设备列表（从 SPIFFS config/hardware.json 加载），不序列化到 NVS。
     #[serde(skip, default)]
     pub i2c_devices: Vec<I2cDeviceEntry>,
+    /// I2C 温湿度等传感器条目（从 SPIFFS config/hardware.json 加载），不序列化到 NVS。
+    #[serde(skip, default)]
+    pub i2c_sensors: Vec<I2cSensorEntry>,
 
     /// 显示配置（从 SPIFFS config/display.json 加载），不序列化到 NVS。
     #[serde(skip, default)]
@@ -263,8 +259,6 @@ impl AppConfig {
             qq_channel_app_id: option_env!("BEETLE_QQ_CHANNEL_APP_ID").unwrap_or("").into(),
             qq_channel_secret: option_env!("BEETLE_QQ_CHANNEL_SECRET").unwrap_or("").into(),
             llm_sources: vec![],
-            llm_router_source_index: None,
-            llm_worker_source_index: None,
             locale: option_env!("BEETLE_LOCALE")
                 .filter(|s| *s == "zh" || *s == "en")
                 .map(String::from),
@@ -274,6 +268,7 @@ impl AppConfig {
             hardware_devices: vec![],
             i2c_bus: None,
             i2c_devices: vec![],
+            i2c_sensors: vec![],
             display: None,
             load_errors: None,
         }
@@ -400,8 +395,6 @@ impl AppConfig {
                 self.llm_stream = seg.llm_stream;
                 if !seg.llm_sources.is_empty() {
                     self.llm_sources = seg.llm_sources.clone();
-                    self.llm_router_source_index = seg.llm_router_source_index;
-                    self.llm_worker_source_index = seg.llm_worker_source_index;
                     let first = &self.llm_sources[0];
                     self.api_key = first.api_key.clone();
                     self.model = first.model.clone();
@@ -461,6 +454,7 @@ impl AppConfig {
                 self.hardware_devices = seg.hardware_devices;
                 self.i2c_bus = seg.i2c_bus;
                 self.i2c_devices = seg.i2c_devices;
+                self.i2c_sensors = seg.i2c_sensors;
             }
             Err(e) => {
                 log::warn!("[config] merge_hardware_from_json parse failed: {}", e);
@@ -492,7 +486,7 @@ impl AppConfig {
 }
 
 /// 将 Platform 转为 ConfigFileStore，供 load/save 使用。
-pub struct PlatformConfigFileStore(pub std::sync::Arc<dyn crate::platform::Platform>);
+pub struct PlatformConfigFileStore(pub std::sync::Arc<dyn crate::Platform>);
 
 impl ConfigFileStore for PlatformConfigFileStore {
     fn read_config_file(&self, rel_path: &str) -> Result<Option<Vec<u8>>> {
@@ -739,11 +733,7 @@ impl AppConfig {
                 max_tokens: None,
             }];
         }
-        validate_llm_sources(
-            &c.llm_sources,
-            c.llm_router_source_index,
-            c.llm_worker_source_index,
-        )?;
+        validate_llm_sources(&c.llm_sources)?;
         if c.tg_group_activation != "mention" && c.tg_group_activation != "always" {
             return Err(Error::config(
                 "config",
@@ -830,10 +820,6 @@ pub fn set_locale(store: &dyn ConfigStore, locale: &str) -> Result<()> {
 pub struct LlmSegment {
     pub llm_sources: Vec<LlmSource>,
     #[serde(default)]
-    pub llm_router_source_index: Option<u8>,
-    #[serde(default)]
-    pub llm_worker_source_index: Option<u8>,
-    #[serde(default)]
     pub llm_stream: bool,
 }
 
@@ -915,7 +901,7 @@ const HARDWARE_FORBIDDEN_PINS: [i32; 4] = [0, 3, 45, 46]; // ESP32-S3 strapping
 const HARDWARE_ADC1_PINS: std::ops::RangeInclusive<i32> = 1..=10;
 const HARDWARE_PWM_FREQ_MIN: u32 = 1;
 const HARDWARE_PWM_FREQ_MAX: u32 = 40_000;
-const KNOWN_DEVICE_TYPES: [&str; 5] = ["gpio_out", "gpio_in", "pwm_out", "adc_in", "buzzer"];
+const KNOWN_DEVICE_TYPES: [&str; 6] = ["gpio_out", "gpio_in", "pwm_out", "adc_in", "buzzer", "dht"];
 
 /// 引脚配置：键为引脚角色（如 "pin"），值为 GPIO 编号。
 pub type PinConfig = std::collections::HashMap<String, i32>;
@@ -956,6 +942,22 @@ pub struct I2cDeviceEntry {
     pub options: serde_json::Value,
 }
 
+/// I2C 传感器条目（SHT3x / AHT20 / raw）；与 `I2cDeviceEntry` 分离，供 `drive_i2c_sensor` 与 `sensor_watch` 使用。
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct I2cSensorEntry {
+    pub id: String,
+    /// 7-bit I2C 地址。
+    pub addr: u8,
+    /// `sht3x` | `aht20` | `raw`
+    pub model: String,
+    /// `temperature` | `humidity`（`sensor_watch` 监控字段）。
+    pub watch_field: String,
+    pub what: String,
+    pub how: String,
+    #[serde(default)]
+    pub options: serde_json::Value,
+}
+
 /// POST /api/config/hardware 请求体；硬件设备列表。
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct HardwareSegment {
@@ -965,14 +967,12 @@ pub struct HardwareSegment {
     pub i2c_bus: Option<I2cBusConfig>,
     #[serde(default)]
     pub i2c_devices: Vec<I2cDeviceEntry>,
+    #[serde(default)]
+    pub i2c_sensors: Vec<I2cSensorEntry>,
 }
 
-/// 私有：校验 llm_sources 非空、字段长度、router/worker 下标。供 from_json_and_validate 与 save_llm_segment 复用。
-fn validate_llm_sources(
-    sources: &[LlmSource],
-    router_index: Option<u8>,
-    worker_index: Option<u8>,
-) -> Result<()> {
+/// 私有：校验 llm_sources 非空、字段长度。供 from_json_and_validate 与 save_llm_segment 复用。
+fn validate_llm_sources(sources: &[LlmSource]) -> Result<()> {
     if sources.is_empty() {
         return Err(Error::config("config", "llm_sources must not be empty"));
     }
@@ -985,15 +985,6 @@ fn validate_llm_sources(
             return Err(Error::config(
                 "config",
                 format!("llm_sources[{}] field length over limit", i),
-            ));
-        }
-    }
-    let n = sources.len();
-    if let (Some(r), Some(w)) = (router_index, worker_index) {
-        if (r as usize) >= n || (w as usize) >= n {
-            return Err(Error::config(
-                "config",
-                "llm_router_source_index and llm_worker_source_index must be < llm_sources.len()",
             ));
         }
     }
@@ -1202,6 +1193,30 @@ fn validate_hardware_segment(seg: &HardwareSegment) -> Result<()> {
                 }
             }
         }
+        if dev.device_type == "dht" {
+            if let Some(model) = dev.options.get("model").and_then(|v| v.as_str()) {
+                if !["dht11", "dht22", "dht21"].contains(&model) {
+                    return Err(Error::config(
+                        "hardware",
+                        format!(
+                            "hardware_devices[{}] dht options.model '{}' must be dht11|dht22|dht21",
+                            i, model
+                        ),
+                    ));
+                }
+            }
+            if let Some(field) = dev.options.get("watch_field").and_then(|v| v.as_str()) {
+                if field != "temperature" && field != "humidity" {
+                    return Err(Error::config(
+                        "hardware",
+                        format!(
+                            "hardware_devices[{}] dht options.watch_field '{}' must be temperature|humidity",
+                            i, field
+                        ),
+                    ));
+                }
+            }
+        }
     }
     if pwm_count > MAX_PWM_DEVICES {
         return Err(Error::config(
@@ -1211,6 +1226,161 @@ fn validate_hardware_segment(seg: &HardwareSegment) -> Result<()> {
                 pwm_count, MAX_PWM_DEVICES
             ),
         ));
+    }
+
+    // i2c_sensors
+    use crate::constants::{
+        I2C_MAX_READ_LEN, I2C_SENSOR_ID_MAX_LEN, I2C_SENSOR_MAX_CMD_LEN, I2C_SENSOR_MAX_ENTRIES,
+    };
+    const I2C_SENSOR_MODELS: [&str; 3] = ["sht3x", "aht20", "raw"];
+    if seg.i2c_sensors.len() > I2C_SENSOR_MAX_ENTRIES {
+        return Err(Error::config(
+            "hardware",
+            format!("i2c_sensors count must be <= {}", I2C_SENSOR_MAX_ENTRIES),
+        ));
+    }
+    let mut seen_i2c_sensor_ids = std::collections::HashSet::new();
+    for (i, s) in seg.i2c_sensors.iter().enumerate() {
+        if seg.hardware_devices.iter().any(|d| d.id == s.id) {
+            return Err(Error::config(
+                "hardware",
+                format!(
+                    "i2c_sensors[{}].id '{}' conflicts with hardware_devices id",
+                    i, s.id
+                ),
+            ));
+        }
+        if s.id.is_empty() || s.id.len() > I2C_SENSOR_ID_MAX_LEN {
+            return Err(Error::config(
+                "hardware",
+                format!(
+                    "i2c_sensors[{}].id must be 1..={} chars",
+                    i, I2C_SENSOR_ID_MAX_LEN
+                ),
+            ));
+        }
+        if !seen_i2c_sensor_ids.insert(&s.id) {
+            return Err(Error::config(
+                "hardware",
+                format!("i2c_sensors[{}].id '{}' is duplicated", i, s.id),
+            ));
+        }
+        if !(0x08..=0x77).contains(&s.addr) {
+            return Err(Error::config(
+                "hardware",
+                format!(
+                    "i2c_sensors[{}].addr 0x{:02X} must be in 0x08..=0x77",
+                    i, s.addr
+                ),
+            ));
+        }
+        if !I2C_SENSOR_MODELS.contains(&s.model.as_str()) {
+            return Err(Error::config(
+                "hardware",
+                format!(
+                    "i2c_sensors[{}].model '{}' must be one of {:?}",
+                    i, s.model, I2C_SENSOR_MODELS
+                ),
+            ));
+        }
+        if s.watch_field != "temperature" && s.watch_field != "humidity" {
+            return Err(Error::config(
+                "hardware",
+                format!(
+                    "i2c_sensors[{}].watch_field '{}' must be temperature|humidity",
+                    i, s.watch_field
+                ),
+            ));
+        }
+        if s.what.len() > HARDWARE_WHAT_MAX_LEN {
+            return Err(Error::config(
+                "hardware",
+                format!(
+                    "i2c_sensors[{}].what length must be <= {}",
+                    i, HARDWARE_WHAT_MAX_LEN
+                ),
+            ));
+        }
+        if s.how.len() > HARDWARE_HOW_MAX_LEN {
+            return Err(Error::config(
+                "hardware",
+                format!(
+                    "i2c_sensors[{}].how length must be <= {}",
+                    i, HARDWARE_HOW_MAX_LEN
+                ),
+            ));
+        }
+        if s.model == "raw" {
+            let init = s
+                .options
+                .get("init_cmd")
+                .and_then(|v| v.as_array())
+                .ok_or_else(|| {
+                    Error::config(
+                        "hardware",
+                        format!(
+                            "i2c_sensors[{}] raw model requires options.init_cmd as array",
+                            i
+                        ),
+                    )
+                })?;
+            if init.is_empty() || init.len() > I2C_SENSOR_MAX_CMD_LEN {
+                return Err(Error::config(
+                    "hardware",
+                    format!(
+                        "i2c_sensors[{}] raw init_cmd length must be 1..={}",
+                        i, I2C_SENSOR_MAX_CMD_LEN
+                    ),
+                ));
+            }
+            for (j, el) in init.iter().enumerate() {
+                let b = el.as_u64().ok_or_else(|| {
+                    Error::config(
+                        "hardware",
+                        format!(
+                            "i2c_sensors[{}].options.init_cmd[{}] must be integer 0-255",
+                            i, j
+                        ),
+                    )
+                })?;
+                if b > 255 {
+                    return Err(Error::config(
+                        "hardware",
+                        format!("i2c_sensors[{}].options.init_cmd[{}] must be 0-255", i, j),
+                    ));
+                }
+            }
+            let read_len = s
+                .options
+                .get("read_len")
+                .and_then(|v| v.as_u64())
+                .ok_or_else(|| {
+                    Error::config(
+                        "hardware",
+                        format!(
+                            "i2c_sensors[{}] raw model requires options.read_len (1..={})",
+                            i, I2C_MAX_READ_LEN
+                        ),
+                    )
+                })? as usize;
+            if read_len == 0 || read_len > I2C_MAX_READ_LEN {
+                return Err(Error::config(
+                    "hardware",
+                    format!(
+                        "i2c_sensors[{}] raw read_len must be 1..={}",
+                        i, I2C_MAX_READ_LEN
+                    ),
+                ));
+            }
+            if let Some(ms) = s.options.get("conversion_wait_ms").and_then(|v| v.as_u64()) {
+                if ms > 2000 {
+                    return Err(Error::config(
+                        "hardware",
+                        format!("i2c_sensors[{}] conversion_wait_ms must be <= 2000", i),
+                    ));
+                }
+            }
+        }
     }
     Ok(())
 }
@@ -1306,11 +1476,7 @@ pub fn save_llm_segment(writer: &dyn ConfigFileStore, body: &str) -> Result<()> 
             ));
         }
     }
-    validate_llm_sources(
-        &seg.llm_sources,
-        seg.llm_router_source_index,
-        seg.llm_worker_source_index,
-    )?;
+    validate_llm_sources(&seg.llm_sources)?;
     let json =
         serde_json::to_string(&seg).map_err(|e| Error::config("serialize", e.to_string()))?;
     writer.write_config_file("config/llm.json", json.as_bytes())?;

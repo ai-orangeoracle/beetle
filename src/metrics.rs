@@ -6,7 +6,6 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 /// 已知 stage 的错误计数（与 Error::stage() 对齐）；其他 stage 归入 other。
-const STAGE_AGENT_ROUTER: &str = "agent_router";
 const STAGE_AGENT_CHAT: &str = "agent_chat";
 const STAGE_AGENT_CONTEXT: &str = "agent_context";
 const STAGE_TOOL_EXECUTE: &str = "tool_execute";
@@ -20,11 +19,24 @@ static MESSAGES_OUT: AtomicU32 = AtomicU32::new(0);
 static LLM_CALLS: AtomicU32 = AtomicU32::new(0);
 static LLM_ERRORS: AtomicU32 = AtomicU32::new(0);
 static LLM_LAST_MS: AtomicU32 = AtomicU32::new(0);
+static TTFT_LAST_MS: AtomicU32 = AtomicU32::new(0);
+static E2E_LAST_MS: AtomicU32 = AtomicU32::new(0);
+static USER_QUEUE_WAIT_LAST_MS: AtomicU32 = AtomicU32::new(0);
+static SYSTEM_QUEUE_WAIT_LAST_MS: AtomicU32 = AtomicU32::new(0);
+static CRON_E2E_LAST_MS: AtomicU32 = AtomicU32::new(0);
+static REACT_ROUNDS_LAST: AtomicU32 = AtomicU32::new(0);
+static TOOL_CALLS_LAST: AtomicU32 = AtomicU32::new(0);
+static USER_MESSAGES_DONE: AtomicU32 = AtomicU32::new(0);
+static SYSTEM_MESSAGES_DONE: AtomicU32 = AtomicU32::new(0);
+static CRON_MESSAGES_DONE: AtomicU32 = AtomicU32::new(0);
 static TOOL_CALLS: AtomicU32 = AtomicU32::new(0);
 static TOOL_ERRORS: AtomicU32 = AtomicU32::new(0);
 static WDT_FEEDS: AtomicU32 = AtomicU32::new(0);
 static DISPATCH_SEND_OK: AtomicU32 = AtomicU32::new(0);
 static DISPATCH_SEND_FAIL: AtomicU32 = AtomicU32::new(0);
+static OUTBOUND_ENQUEUE_FAIL: AtomicU32 = AtomicU32::new(0);
+static CHANNEL_HTTP_OK: AtomicU32 = AtomicU32::new(0);
+static CHANNEL_HTTP_FAIL: AtomicU32 = AtomicU32::new(0);
 static LAST_ACTIVE_EPOCH_SECS: AtomicU32 = AtomicU32::new(0);
 
 /// Linux 嵌入式 WiFi：wpa 守护恢复、AP 栈重启计数；失败 stage 摘要（脱敏，固定长度）。
@@ -32,7 +44,6 @@ static WIFI_RECONNECT_TOTAL: AtomicU32 = AtomicU32::new(0);
 static WIFI_AP_RESTART_TOTAL: AtomicU32 = AtomicU32::new(0);
 static WIFI_LAST_FAILURE_STAGE: OnceLock<Mutex<String>> = OnceLock::new();
 
-static ERRORS_AGENT_ROUTER: AtomicU32 = AtomicU32::new(0);
 static ERRORS_AGENT_CHAT: AtomicU32 = AtomicU32::new(0);
 static ERRORS_AGENT_CONTEXT: AtomicU32 = AtomicU32::new(0);
 static ERRORS_TOOL_EXECUTE: AtomicU32 = AtomicU32::new(0);
@@ -72,6 +83,53 @@ pub fn record_llm_call_end(start: std::time::Instant) {
 }
 
 #[inline]
+pub fn record_ttft_ms(ms: u128) {
+    TTFT_LAST_MS.store(ms.min(u32::MAX as u128) as u32, Ordering::Relaxed);
+}
+
+#[inline]
+pub fn record_e2e_ms(ms: u128) {
+    E2E_LAST_MS.store(ms.min(u32::MAX as u128) as u32, Ordering::Relaxed);
+}
+
+#[inline]
+pub fn record_user_queue_wait_ms(ms: u128) {
+    USER_QUEUE_WAIT_LAST_MS.store(ms.min(u32::MAX as u128) as u32, Ordering::Relaxed);
+}
+
+#[inline]
+pub fn record_system_queue_wait_ms(ms: u128) {
+    SYSTEM_QUEUE_WAIT_LAST_MS.store(ms.min(u32::MAX as u128) as u32, Ordering::Relaxed);
+}
+
+#[inline]
+pub fn record_cron_e2e_ms(ms: u128) {
+    CRON_E2E_LAST_MS.store(ms.min(u32::MAX as u128) as u32, Ordering::Relaxed);
+}
+
+#[inline]
+pub fn record_user_message_done() {
+    USER_MESSAGES_DONE.fetch_add(1, Ordering::Relaxed);
+}
+
+#[inline]
+pub fn record_system_message_done(is_cron: bool) {
+    SYSTEM_MESSAGES_DONE.fetch_add(1, Ordering::Relaxed);
+    if is_cron {
+        CRON_MESSAGES_DONE.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+pub fn record_react_rounds(rounds: u32) {
+    REACT_ROUNDS_LAST.store(rounds, Ordering::Relaxed);
+}
+
+#[inline]
+pub fn record_tool_calls_last(calls: u32) {
+    TOOL_CALLS_LAST.store(calls, Ordering::Relaxed);
+}
+
+#[inline]
 pub fn record_llm_error() {
     LLM_ERRORS.fetch_add(1, Ordering::Relaxed);
 }
@@ -95,6 +153,22 @@ pub fn record_dispatch_send(ok: bool) {
         DISPATCH_SEND_OK.fetch_add(1, Ordering::Relaxed);
     } else {
         DISPATCH_SEND_FAIL.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+/// agent 侧 outbound_tx.try_send 失败（队列满或断开）时调用。
+#[inline]
+pub fn record_outbound_enqueue_fail() {
+    OUTBOUND_ENQUEUE_FAIL.fetch_add(1, Ordering::Relaxed);
+}
+
+/// sender 线程在真实通道 HTTP 请求后上报（区别于 dispatch 入队成功）。
+#[inline]
+pub fn record_channel_http_result(ok: bool) {
+    if ok {
+        CHANNEL_HTTP_OK.fetch_add(1, Ordering::Relaxed);
+    } else {
+        CHANNEL_HTTP_FAIL.fetch_add(1, Ordering::Relaxed);
     }
 }
 
@@ -129,7 +203,6 @@ pub fn record_wifi_failure_stage(stage: &str) {
 
 pub fn record_error_by_stage(stage: &str) {
     let c = match stage {
-        STAGE_AGENT_ROUTER => &ERRORS_AGENT_ROUTER,
         STAGE_AGENT_CHAT => &ERRORS_AGENT_CHAT,
         STAGE_AGENT_CONTEXT => &ERRORS_AGENT_CONTEXT,
         STAGE_TOOL_EXECUTE => &ERRORS_TOOL_EXECUTE,
@@ -150,12 +223,24 @@ pub fn snapshot() -> MetricsSnapshot {
         llm_calls: LLM_CALLS.load(Ordering::Relaxed) as u64,
         llm_errors: LLM_ERRORS.load(Ordering::Relaxed) as u64,
         llm_last_ms: LLM_LAST_MS.load(Ordering::Relaxed) as u64,
+        ttft_last_ms: TTFT_LAST_MS.load(Ordering::Relaxed) as u64,
+        e2e_last_ms: E2E_LAST_MS.load(Ordering::Relaxed) as u64,
+        user_queue_wait_last_ms: USER_QUEUE_WAIT_LAST_MS.load(Ordering::Relaxed) as u64,
+        system_queue_wait_last_ms: SYSTEM_QUEUE_WAIT_LAST_MS.load(Ordering::Relaxed) as u64,
+        cron_e2e_last_ms: CRON_E2E_LAST_MS.load(Ordering::Relaxed) as u64,
+        react_rounds_last: REACT_ROUNDS_LAST.load(Ordering::Relaxed) as u64,
+        tool_calls_last: TOOL_CALLS_LAST.load(Ordering::Relaxed) as u64,
+        user_messages_done: USER_MESSAGES_DONE.load(Ordering::Relaxed) as u64,
+        system_messages_done: SYSTEM_MESSAGES_DONE.load(Ordering::Relaxed) as u64,
+        cron_messages_done: CRON_MESSAGES_DONE.load(Ordering::Relaxed) as u64,
         tool_calls: TOOL_CALLS.load(Ordering::Relaxed) as u64,
         tool_errors: TOOL_ERRORS.load(Ordering::Relaxed) as u64,
         wdt_feeds: WDT_FEEDS.load(Ordering::Relaxed) as u64,
         dispatch_send_ok: DISPATCH_SEND_OK.load(Ordering::Relaxed) as u64,
         dispatch_send_fail: DISPATCH_SEND_FAIL.load(Ordering::Relaxed) as u64,
-        errors_agent_router: ERRORS_AGENT_ROUTER.load(Ordering::Relaxed) as u64,
+        outbound_enqueue_fail: OUTBOUND_ENQUEUE_FAIL.load(Ordering::Relaxed) as u64,
+        channel_http_ok: CHANNEL_HTTP_OK.load(Ordering::Relaxed) as u64,
+        channel_http_fail: CHANNEL_HTTP_FAIL.load(Ordering::Relaxed) as u64,
         errors_agent_chat: ERRORS_AGENT_CHAT.load(Ordering::Relaxed) as u64,
         errors_agent_context: ERRORS_AGENT_CONTEXT.load(Ordering::Relaxed) as u64,
         errors_tool_execute: ERRORS_TOOL_EXECUTE.load(Ordering::Relaxed) as u64,
@@ -182,12 +267,24 @@ pub struct MetricsSnapshot {
     pub llm_calls: u64,
     pub llm_errors: u64,
     pub llm_last_ms: u64,
+    pub ttft_last_ms: u64,
+    pub e2e_last_ms: u64,
+    pub user_queue_wait_last_ms: u64,
+    pub system_queue_wait_last_ms: u64,
+    pub cron_e2e_last_ms: u64,
+    pub react_rounds_last: u64,
+    pub tool_calls_last: u64,
+    pub user_messages_done: u64,
+    pub system_messages_done: u64,
+    pub cron_messages_done: u64,
     pub tool_calls: u64,
     pub tool_errors: u64,
     pub wdt_feeds: u64,
     pub dispatch_send_ok: u64,
     pub dispatch_send_fail: u64,
-    pub errors_agent_router: u64,
+    pub outbound_enqueue_fail: u64,
+    pub channel_http_ok: u64,
+    pub channel_http_fail: u64,
     pub errors_agent_chat: u64,
     pub errors_agent_context: u64,
     pub errors_tool_execute: u64,
@@ -210,18 +307,30 @@ impl MetricsSnapshot {
         let mut buf = String::with_capacity(384);
         let _ = write!(
             buf,
-            "metrics msg_in={} msg_out={} llm_calls={} llm_err={} llm_last_ms={} tool_calls={} tool_err={} wdt_feeds={} dispatch_ok={} dispatch_fail={} err_router={} err_chat={} err_ctx={} err_tool={} err_llm_req={} err_llm_parse={} err_dispatch={} err_session={} err_other={} last_active_epoch={} wifi_reconn={} wifi_ap_restart={} wifi_last_fail_stage={}",
+            "metrics msg_in={} msg_out={} llm_calls={} llm_err={} llm_last_ms={} ttft_last_ms={} e2e_last_ms={} user_q_wait_ms={} sys_q_wait_ms={} cron_e2e_ms={} react_rounds_last={} tool_calls_last={} user_done={} sys_done={} cron_done={} tool_calls={} tool_err={} wdt_feeds={} dispatch_ok={} dispatch_fail={} outbound_enq_fail={} channel_http_ok={} channel_http_fail={} err_chat={} err_ctx={} err_tool={} err_llm_req={} err_llm_parse={} err_dispatch={} err_session={} err_other={} last_active_epoch={} wifi_reconn={} wifi_ap_restart={} wifi_last_fail_stage={}",
             self.messages_in,
             self.messages_out,
             self.llm_calls,
             self.llm_errors,
             self.llm_last_ms,
+            self.ttft_last_ms,
+            self.e2e_last_ms,
+            self.user_queue_wait_last_ms,
+            self.system_queue_wait_last_ms,
+            self.cron_e2e_last_ms,
+            self.react_rounds_last,
+            self.tool_calls_last,
+            self.user_messages_done,
+            self.system_messages_done,
+            self.cron_messages_done,
             self.tool_calls,
             self.tool_errors,
             self.wdt_feeds,
             self.dispatch_send_ok,
             self.dispatch_send_fail,
-            self.errors_agent_router,
+            self.outbound_enqueue_fail,
+            self.channel_http_ok,
+            self.channel_http_fail,
             self.errors_agent_chat,
             self.errors_agent_context,
             self.errors_tool_execute,

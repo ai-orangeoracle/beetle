@@ -2,6 +2,7 @@ import Box from '@mui/material/Box'
 import Stack from '@mui/material/Stack'
 import Typography from '@mui/material/Typography'
 import type { PropsWithChildren, ReactNode } from 'react'
+import { CONFIG_PANEL_SX } from '../theme/panelStyles'
 
 interface SettingsSectionProps {
   icon: ReactNode
@@ -30,15 +31,11 @@ export function SettingsSection({
   return (
     <Box
       sx={{
+        ...CONFIG_PANEL_SX,
         p: 2.5,
-        borderRadius: 'var(--radius-card)',
-        bgcolor: 'var(--card)',
-        boxShadow: 'var(--shadow-subtle)',
-        transition:
-          'box-shadow var(--transition-duration) ease, transform var(--transition-duration) var(--ease-emphasized)',
+        transition: 'border-color var(--transition-duration) ease',
         '&:hover': {
-          boxShadow: 'var(--shadow-card-hover)',
-          transform: 'translateY(var(--hover-lift-y, -2px))',
+          borderColor: 'color-mix(in srgb, var(--border) 32%, transparent)',
         },
       }}
     >
@@ -51,13 +48,21 @@ export function SettingsSection({
         sx={{ mb: titleRowMb }}
       >
         <Stack direction="row" alignItems="center" spacing={1.5}>
-          <Box sx={{ color: 'var(--muted)', display: 'flex', alignItems: 'center' }}>{icon}</Box>
+          <Box
+            sx={{
+              color: 'color-mix(in srgb, var(--primary) 55%, var(--muted))',
+              display: 'flex',
+              alignItems: 'center',
+            }}
+          >
+            {icon}
+          </Box>
           <Typography
             component="span"
             sx={{
               fontSize: 'var(--font-size-body-sm)',
               fontWeight: 700,
-              letterSpacing: '0.03em',
+              letterSpacing: 'var(--letter-spacing-label)',
               lineHeight: 'var(--line-height-tight)',
               color: 'var(--foreground)',
             }}
@@ -76,6 +81,7 @@ export function SettingsSection({
             mb: 2,
             fontSize: 'var(--font-size-caption)',
             lineHeight: 'var(--line-height-normal)',
+            maxWidth: '52ch',
           }}
         >
           {description}

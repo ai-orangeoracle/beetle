@@ -35,115 +35,167 @@ const CONNECTIVITY_MESSAGE: &str = "BOT, Hello";
 pub fn check_connectivity<H: ChannelHttpClient + ?Sized>(
     config: &AppConfig,
     http: &mut H,
+    loc: crate::i18n::Locale,
 ) -> super::super::connectivity::ChannelConnectivityItem {
     use super::super::connectivity;
+    use crate::i18n::{tr, Message};
     let configured = !config.wecom_corp_id.trim().is_empty()
         && !config.wecom_corp_secret.trim().is_empty()
         && config.wecom_agent_id.trim().parse::<u32>().is_ok();
-    let (ok, message) = if !configured {
-        (false, None)
-    } else {
-        let url = format!(
-            "{}?corpid={}&corpsecret={}",
-            WECOM_GETTOKEN_BASE,
-            config.wecom_corp_id.trim(),
-            config.wecom_corp_secret.trim()
+    if !configured {
+        return connectivity::item(
+            "wecom",
+            false,
+            false,
+            Some(tr(Message::ConnectivityNotConfigured, loc)),
         );
-        let (status, resp_body) = match http.http_get(&url) {
-            Ok(r) => r,
-            Err(e) => return connectivity::item("wecom", configured, false, Some(e.to_string())),
-        };
-        if status >= 400 {
+    }
+    let url = format!(
+        "{}?corpid={}&corpsecret={}",
+        WECOM_GETTOKEN_BASE,
+        config.wecom_corp_id.trim(),
+        config.wecom_corp_secret.trim()
+    );
+    let (status, resp_body) = match http.http_get(&url) {
+        Ok(r) => r,
+        Err(e) => {
+            log::warn!("[wecom_connectivity] gettoken http: {}", e);
             return connectivity::item(
                 "wecom",
                 configured,
                 false,
-                Some(format!("gettoken status {}", status)),
+                Some(tr(Message::ConnectivityCheckFailed, loc)),
             );
-        }
-        let r: WecomTokenResponse = match serde_json::from_slice(resp_body.as_ref()) {
-            Ok(x) => x,
-            Err(e) => return connectivity::item("wecom", configured, false, Some(e.to_string())),
-        };
-        if r.errcode != 0 {
-            return connectivity::item(
-                "wecom",
-                configured,
-                false,
-                Some(format!("{} {}", r.errcode, r.errmsg)),
-            );
-        }
-        let token = match r.access_token {
-            Some(t) if !t.is_empty() => t,
-            _ => {
-                return connectivity::item(
-                    "wecom",
-                    configured,
-                    false,
-                    Some("no access_token".into()),
-                )
-            }
-        };
-        let touser = config.wecom_default_touser.trim();
-        if touser.is_empty() {
-            (true, None)
-        } else {
-            let agent_id_u32: u32 = match config.wecom_agent_id.trim().parse() {
-                Ok(n) => n,
-                Err(_) => {
-                    return connectivity::item(
-                        "wecom",
-                        configured,
-                        false,
-                        Some("invalid agent_id".into()),
-                    )
-                }
-            };
-            let body = serde_json::json!({
-                "touser": touser,
-                "msgtype": "text",
-                "agentid": agent_id_u32,
-                "text": { "content": CONNECTIVITY_MESSAGE }
-            });
-            let body_bytes = match serde_json::to_vec(&body) {
-                Ok(b) => b,
-                Err(e) => {
-                    return connectivity::item("wecom", configured, false, Some(e.to_string()))
-                }
-            };
-            let send_url = format!("{}?access_token={}", WECOM_SEND_BASE, token);
-            let (status, resp_body) = match http.http_post(&send_url, &body_bytes) {
-                Ok(r) => r,
-                Err(e) => {
-                    return connectivity::item("wecom", configured, false, Some(e.to_string()))
-                }
-            };
-            if status >= 400 {
-                return connectivity::item(
-                    "wecom",
-                    configured,
-                    false,
-                    Some(format!("send status {}", status)),
-                );
-            }
-            let send_r: WecomSendResponse = match serde_json::from_slice(resp_body.as_ref()) {
-                Ok(x) => x,
-                Err(e) => {
-                    return connectivity::item("wecom", configured, false, Some(e.to_string()))
-                }
-            };
-            if send_r.errcode != 0 {
-                return connectivity::item(
-                    "wecom",
-                    configured,
-                    false,
-                    Some(format!("send {} {}", send_r.errcode, send_r.errmsg)),
-                );
-            }
-            (true, None)
         }
     };
-    connectivity::item("wecom", configured, ok, message)
+    if status >= 400 {
+        log::warn!("[wecom_connectivity] gettoken status {}", status);
+        return connectivity::item(
+            "wecom",
+            configured,
+            false,
+            Some(tr(Message::ConnectivityTokenInvalid, loc)),
+        );
+    }
+    let r: WecomTokenResponse = match serde_json::from_slice(resp_body.as_ref()) {
+        Ok(x) => x,
+        Err(e) => {
+            log::warn!("[wecom_connectivity] gettoken parse: {}", e);
+            return connectivity::item(
+                "wecom",
+                configured,
+                false,
+                Some(tr(Message::ConnectivityCheckFailed, loc)),
+            );
+        }
+    };
+    if r.errcode != 0 {
+        log::warn!(
+            "[wecom_connectivity] gettoken errcode {} {}",
+            r.errcode,
+            r.errmsg
+        );
+        return connectivity::item(
+            "wecom",
+            configured,
+            false,
+            Some(tr(Message::ConnectivityTokenInvalid, loc)),
+        );
+    }
+    let token = match r.access_token {
+        Some(t) if !t.is_empty() => t,
+        _ => {
+            log::warn!("[wecom_connectivity] no access_token in response");
+            return connectivity::item(
+                "wecom",
+                configured,
+                false,
+                Some(tr(Message::ConnectivityTokenInvalid, loc)),
+            );
+        }
+    };
+    let touser = config.wecom_default_touser.trim();
+    if touser.is_empty() {
+        return connectivity::item("wecom", configured, true, None);
+    }
+    let agent_id_u32: u32 = match config.wecom_agent_id.trim().parse() {
+        Ok(n) => n,
+        Err(_) => {
+            log::warn!("[wecom_connectivity] invalid agent_id parse");
+            return connectivity::item(
+                "wecom",
+                configured,
+                false,
+                Some(tr(Message::ConnectivityTokenInvalid, loc)),
+            );
+        }
+    };
+    let body = serde_json::json!({
+        "touser": touser,
+        "msgtype": "text",
+        "agentid": agent_id_u32,
+        "text": { "content": CONNECTIVITY_MESSAGE }
+    });
+    let body_bytes = match serde_json::to_vec(&body) {
+        Ok(b) => b,
+        Err(e) => {
+            log::warn!("[wecom_connectivity] send json: {}", e);
+            return connectivity::item(
+                "wecom",
+                configured,
+                false,
+                Some(tr(Message::ConnectivityCheckFailed, loc)),
+            );
+        }
+    };
+    let send_url = format!("{}?access_token={}", WECOM_SEND_BASE, token);
+    let (status, resp_body) = match http.http_post(&send_url, &body_bytes) {
+        Ok(r) => r,
+        Err(e) => {
+            log::warn!("[wecom_connectivity] send http: {}", e);
+            return connectivity::item(
+                "wecom",
+                configured,
+                false,
+                Some(tr(Message::ConnectivityCheckFailed, loc)),
+            );
+        }
+    };
+    if status >= 400 {
+        log::warn!("[wecom_connectivity] send status {}", status);
+        return connectivity::item(
+            "wecom",
+            configured,
+            false,
+            Some(tr(Message::ConnectivityCheckFailed, loc)),
+        );
+    }
+    let send_r: WecomSendResponse = match serde_json::from_slice(resp_body.as_ref()) {
+        Ok(x) => x,
+        Err(e) => {
+            log::warn!("[wecom_connectivity] send parse: {}", e);
+            return connectivity::item(
+                "wecom",
+                configured,
+                false,
+                Some(tr(Message::ConnectivityCheckFailed, loc)),
+            );
+        }
+    };
+    if send_r.errcode != 0 {
+        log::warn!(
+            "[wecom_connectivity] send errcode {} {}",
+            send_r.errcode,
+            send_r.errmsg
+        );
+        return connectivity::item(
+            "wecom",
+            configured,
+            false,
+            Some(tr(Message::ConnectivityCheckFailed, loc)),
+        );
+    }
+    connectivity::item("wecom", configured, true, None)
 }
 
 /// Returns `(access_token, expires_in_secs)` for sender-loop caching.
@@ -262,7 +314,7 @@ fn send_one_wecom<H: ChannelHttpClient>(
 
 /// 从 rx 取出待发送（一次性 drain）。
 pub fn flush_wecom_sends<H: ChannelHttpClient>(
-    rx: &std::sync::mpsc::Receiver<(String, String)>,
+    rx: &std::sync::mpsc::Receiver<(String, String, Option<String>)>,
     corp_id: &str,
     corp_secret: &str,
     agent_id: &str,
@@ -283,7 +335,7 @@ pub fn flush_wecom_sends<H: ChannelHttpClient>(
         Some(t) => t,
         None => return,
     };
-    while let Ok((chat_id, content)) = rx.try_recv() {
+    while let Ok((chat_id, content, _req_id)) = rx.try_recv() {
         send_one_wecom(
             http,
             &token,
@@ -300,7 +352,7 @@ const WECOM_TOKEN_CACHE_MARGIN_SECS: u64 = 120;
 
 /// 持续运行的企业微信发送循环：sender 线程内**复用** HTTP，并按 `expires_in` **缓存** token。
 pub fn run_wecom_sender_loop<H, F>(
-    rx: std::sync::mpsc::Receiver<(String, String)>,
+    rx: std::sync::mpsc::Receiver<(String, String, Option<String>)>,
     corp_id: &str,
     corp_secret: &str,
     agent_id: &str,
@@ -329,7 +381,7 @@ pub fn run_wecom_sender_loop<H, F>(
     let mut token_cache: Option<(String, std::time::Instant)> = None;
     let recv_timeout = std::time::Duration::from_secs(30);
     loop {
-        let (chat_id, content) = match rx.recv_timeout(recv_timeout) {
+        let (chat_id, content, req_id) = match rx.recv_timeout(recv_timeout) {
             Ok(item) => item,
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
                 crate::platform::task_wdt::feed_current_task();
@@ -410,7 +462,7 @@ pub fn run_wecom_sender_loop<H, F>(
                 continue;
             };
             send_one_wecom(h, &token, agent_id_u32, &chat_id, default_touser, &content);
-            while let Ok((cid, cnt)) = rx.try_recv() {
+            while let Ok((cid, cnt, _)) = rx.try_recv() {
                 send_one_wecom(h, &token, agent_id_u32, &cid, default_touser, &cnt);
             }
             sent = true;
@@ -421,6 +473,11 @@ pub fn run_wecom_sender_loop<H, F>(
                 "[{}] message dropped after 3 retries, chat_id={}",
                 TAG,
                 chat_id
+            );
+            log::error!(
+                "[{}] req_id={} message dropped after retries",
+                TAG,
+                req_id.as_deref().unwrap_or("-")
             );
         }
     }

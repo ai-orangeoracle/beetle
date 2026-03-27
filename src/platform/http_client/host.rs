@@ -10,12 +10,16 @@ use crate::orchestrator::Priority;
 use crate::platform::ResponseBody;
 
 const TAG: &str = "platform::http_client";
-/// 单次请求超时（毫秒），与 ESP `REQUEST_TIMEOUT_MS` 一致。
-const REQUEST_TIMEOUT_MS: u64 = 30_000;
+/// 连接超时（毫秒），与 ESP `REQUEST_TIMEOUT_MS` 一致。
+const CONNECT_TIMEOUT_MS: u64 = 15_000;
+/// 读超时（毫秒）。Linux 流式 LLM 响应可能较慢，给 60s per-read 窗口（ESP 30s 受限于 lwIP）。
+const READ_TIMEOUT_MS: u64 = 60_000;
+/// 写超时（毫秒）。请求体通常不大，30s 足够。
+const WRITE_TIMEOUT_MS: u64 = 30_000;
 /// 与 ESP `TLS_ADMISSION_TIMEOUT_SECS` 一致。
 const TLS_ADMISSION_TIMEOUT_SECS: u64 = 30;
-const RESPONSE_READ_CHUNK: usize = 1024;
-const INITIAL_RESPONSE_BODY_CAP: usize = 8 * 1024;
+const RESPONSE_READ_CHUNK: usize = 16 * 1024;
+const INITIAL_RESPONSE_BODY_CAP: usize = 64 * 1024;
 const MAX_DRAIN_BYTES: usize = 512 * 1024;
 
 /// `https://` 代理 URL 在 ureq 中按 HTTP CONNECT 使用（与常见企业代理一致）。
@@ -28,7 +32,10 @@ fn normalize_proxy_for_ureq(trimmed: &str) -> String {
 }
 
 fn build_agent(proxy_url: Option<&str>, stage: &'static str) -> Result<ureq::Agent> {
-    let mut b = ureq::AgentBuilder::new().timeout(Duration::from_millis(REQUEST_TIMEOUT_MS));
+    let mut b = ureq::AgentBuilder::new()
+        .timeout_connect(Duration::from_millis(CONNECT_TIMEOUT_MS))
+        .timeout_read(Duration::from_millis(READ_TIMEOUT_MS))
+        .timeout_write(Duration::from_millis(WRITE_TIMEOUT_MS));
     if let Some(url) = proxy_url {
         if !url.is_empty() {
             let proxy = ureq::Proxy::new(url).map_err(|e| Error::Other {
