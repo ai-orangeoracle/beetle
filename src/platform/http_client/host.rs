@@ -14,8 +14,8 @@ const TAG: &str = "platform::http_client";
 const REQUEST_TIMEOUT_MS: u64 = 30_000;
 /// 与 ESP `TLS_ADMISSION_TIMEOUT_SECS` 一致。
 const TLS_ADMISSION_TIMEOUT_SECS: u64 = 30;
-const RESPONSE_READ_CHUNK: usize = 1024;
-const INITIAL_RESPONSE_BODY_CAP: usize = 8 * 1024;
+const RESPONSE_READ_CHUNK: usize = 16 * 1024;
+const INITIAL_RESPONSE_BODY_CAP: usize = 64 * 1024;
 const MAX_DRAIN_BYTES: usize = 512 * 1024;
 
 /// `https://` 代理 URL 在 ureq 中按 HTTP CONNECT 使用（与常见企业代理一致）。

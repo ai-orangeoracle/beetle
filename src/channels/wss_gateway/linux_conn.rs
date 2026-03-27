@@ -77,6 +77,7 @@ fn is_timed_out_or_would_block(e: &tungstenite::Error) -> bool {
 /// Linux 上基于 tungstenite 的 WSS 连接（单线程读/写，与 `run_wss_gateway_loop` 用法一致）。
 pub struct LinuxWssConnection {
     ws: WebSocket<MaybeTlsStream<TcpStream>>,
+    last_read_timeout: Option<Duration>,
 }
 
 impl Drop for LinuxWssConnection {
@@ -87,6 +88,10 @@ impl Drop for LinuxWssConnection {
 
 impl WssConnection for LinuxWssConnection {
     fn send_binary(&mut self, data: &[u8]) -> Result<()> {
+        self.send_binary_owned(data.to_vec())
+    }
+
+    fn send_binary_owned(&mut self, data: Vec<u8>) -> Result<()> {
         if data.len() > MAX_WSS_SEND_PAYLOAD_BYTES {
             return Err(Error::Other {
                 source: Box::new(std::io::Error::new(
@@ -101,7 +106,7 @@ impl WssConnection for LinuxWssConnection {
             });
         }
         self.ws
-            .send(Message::Binary(data.to_vec()))
+            .send(Message::Binary(data))
             .map_err(|e| map_tungstenite("wss_linux_send", e))?;
         Ok(())
     }
@@ -120,8 +125,11 @@ impl WssConnection for LinuxWssConnection {
             if read_wait.is_zero() {
                 return Ok(None);
             }
-            set_tcp_read_timeout(self.ws.get_mut(), Some(read_wait))
-                .map_err(|e| map_io("wss_linux_recv", e))?;
+            if self.last_read_timeout != Some(read_wait) {
+                set_tcp_read_timeout(self.ws.get_mut(), Some(read_wait))
+                    .map_err(|e| map_io("wss_linux_recv", e))?;
+                self.last_read_timeout = Some(read_wait);
+            }
 
             match self.ws.read() {
                 Ok(Message::Binary(b)) => return Ok(Some(WssEvent::Binary(b))),
@@ -170,5 +178,8 @@ pub fn connect_linux_wss(url: &str) -> Result<LinuxWssConnection> {
     )
     .map_err(|e| map_io("wss_linux_connect", e))?;
 
-    Ok(LinuxWssConnection { ws })
+    Ok(LinuxWssConnection {
+        ws,
+        last_read_timeout: Some(Duration::from_secs(SOCKET_READ_TIMEOUT_SECS)),
+    })
 }

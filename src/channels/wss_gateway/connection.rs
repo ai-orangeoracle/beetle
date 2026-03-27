@@ -24,6 +24,11 @@ pub enum WssEvent {
 /// 带超时收一条事件：有数据返回 Some(ev)，超时返回 None；连接断开等错误返回 Err。
 pub trait WssConnection {
     fn send_binary(&mut self, data: &[u8]) -> Result<()>;
+    /// 发送已拥有所有权的二进制负载；默认实现转调 `send_binary`。
+    /// Send owned binary payload; default implementation forwards to `send_binary`.
+    fn send_binary_owned(&mut self, data: Vec<u8>) -> Result<()> {
+        self.send_binary(&data)
+    }
     /// 阻塞最多 timeout，返回收到的事件或 None 表示超时。
     fn recv_timeout(&mut self, timeout: Duration) -> Result<Option<WssEvent>>;
 }

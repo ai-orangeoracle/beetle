@@ -93,6 +93,79 @@ fn linux_max_body_bytes(path: &str, method: &str) -> usize {
 }
 
 #[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+const LINUX_HTTP_WORKERS: usize = 4;
+
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+fn handle_linux_request(
+    ctx: &Arc<handlers::HandlerContext>,
+    router_env: &router::RouterEnv,
+    mut request: tiny_http::Request,
+) {
+    use std::io::Read as _;
+
+    let method = request.method().as_str().to_string();
+    let uri = request.url().to_string();
+    let path = uri.split('?').next().unwrap_or("/").to_string();
+    let mut hdrs = Vec::new();
+    for h in request.headers() {
+        hdrs.push((h.field.to_string(), h.value.as_str().to_string()));
+    }
+    let max_body = linux_max_body_bytes(&path, &method);
+    let mut body = Vec::new();
+    if max_body > 0 {
+        if let Err(e) = request
+            .as_reader()
+            .take(max_body as u64)
+            .read_to_end(&mut body)
+        {
+            log::warn!("http_config_body_read: {}", e);
+            let mut resp = tiny_http::Response::from_data(br#"{"error":"internal error"}"#.to_vec())
+                .with_status_code(tiny_http::StatusCode(500));
+            for (k, v) in common::CORS_HEADERS {
+                if let Ok(h) = tiny_http::Header::from_bytes(k.as_bytes(), v.as_bytes()) {
+                    resp.add_header(h);
+                }
+            }
+            if let Err(e) = request.respond(resp) {
+                log::warn!("http_config_respond: {}", e);
+            }
+            return;
+        }
+    }
+    let incoming = router::IncomingRequest {
+        method,
+        uri,
+        headers: hdrs,
+        body,
+    };
+    let out = router::dispatch(ctx.as_ref(), router_env, incoming).unwrap_or_else(|e| {
+        log::warn!("http_config_dispatch: {}", e);
+        router::OutgoingResponse::json(
+            500,
+            "Internal Server Error",
+            common::CORS_HEADERS,
+            br#"{"error":"internal error"}"#.to_vec(),
+        )
+    });
+    let mut resp = tiny_http::Response::from_data(out.body).with_status_code(tiny_http::StatusCode(out.status));
+    for (k, v) in out.headers {
+        if let Ok(h) = tiny_http::Header::from_bytes(k.as_bytes(), v.as_bytes()) {
+            resp.add_header(h);
+        }
+    }
+    if let Err(e) = request.respond(resp) {
+        log::warn!("http_config_respond: {}", e);
+    }
+    if out.restart == router::RestartAction::After300Ms {
+        let platform = Arc::clone(&ctx.platform);
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            platform.request_restart();
+        });
+    }
+}
+
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
 #[allow(clippy::too_many_arguments)]
 pub fn run(
     platform: std::sync::Arc<dyn crate::platform::Platform>,
@@ -103,7 +176,6 @@ pub fn run(
     inbound_tx: crate::bus::InboundTx,
     msg_id_cache: crate::channels::QqMsgIdCache,
 ) -> Result<()> {
-    use std::io::Read as _;
     use std::time::Duration;
 
     let config_store = platform.config_store();
@@ -138,66 +210,30 @@ pub fn run(
     );
     let listen =
         std::env::var("BEETLE_CONFIG_HTTP_LISTEN").unwrap_or_else(|_| "0.0.0.0:80".to_string());
-    let server = tiny_http::Server::http(&listen).map_err(|e| Error::Other {
+    let server = Arc::new(tiny_http::Server::http(&listen).map_err(|e| Error::Other {
         source: Box::new(std::io::Error::other(e.to_string())),
         stage: "http_config_listen",
-    })?;
+    })?);
     log::info!(
         "beetle HTTP config API listening on {} (override with BEETLE_CONFIG_HTTP_LISTEN)",
         listen
     );
-    for mut request in server.incoming_requests() {
-        let method = request.method().as_str().to_string();
-        let uri = request.url().to_string();
-        let path = uri.split('?').next().unwrap_or("/").to_string();
-        let mut hdrs = Vec::new();
-        for h in request.headers() {
-            hdrs.push((h.field.to_string(), h.value.as_str().to_string()));
-        }
-        let max_body = linux_max_body_bytes(&path, &method);
-        let mut body = Vec::new();
-        if max_body > 0 {
-            request
-                .as_reader()
-                .take(max_body as u64)
-                .read_to_end(&mut body)
-                .map_err(|e| Error::Other {
-                    source: Box::new(e),
-                    stage: "http_config_body_read",
-                })?;
-        }
-        let incoming = router::IncomingRequest {
-            method,
-            uri,
-            headers: hdrs,
-            body,
-        };
-        let out = router::dispatch(ctx.as_ref(), &router_env, incoming).unwrap_or_else(|e| {
-            log::warn!("http_config_dispatch: {}", e);
-            router::OutgoingResponse::json(
-                500,
-                "Internal Server Error",
-                common::CORS_HEADERS,
-                br#"{"error":"internal error"}"#.to_vec(),
-            )
-        });
-        let mut resp = tiny_http::Response::from_data(out.body)
-            .with_status_code(tiny_http::StatusCode(out.status));
-        for (k, v) in out.headers {
-            if let Ok(h) = tiny_http::Header::from_bytes(k.as_bytes(), v.as_bytes()) {
-                resp.add_header(h);
+    for i in 0..LINUX_HTTP_WORKERS {
+        let worker_name = format!("http_config_worker_{}", i);
+        let server = Arc::clone(&server);
+        let ctx = Arc::clone(&ctx);
+        let router_env = router_env.clone();
+        crate::util::spawn_guarded(&worker_name, move || loop {
+            match server.recv() {
+                Ok(request) => handle_linux_request(&ctx, &router_env, request),
+                Err(e) => {
+                    log::warn!("http_config_recv: {}", e);
+                    break;
+                }
             }
-        }
-        if let Err(e) = request.respond(resp) {
-            log::warn!("http_config_respond: {}", e);
-        }
-        if out.restart == router::RestartAction::After300Ms {
-            let platform = Arc::clone(&ctx.platform);
-            std::thread::spawn(move || {
-                std::thread::sleep(Duration::from_millis(300));
-                platform.request_restart();
-            });
-        }
+        });
     }
-    Ok(())
+    loop {
+        std::thread::sleep(Duration::from_secs(3600));
+    }
 }

@@ -2,7 +2,10 @@
 //! Single source for resource bounds; only ESP32-S3 with PSRAM supported.
 
 /// 入站/出站队列固定容量（条数）。
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 pub const DEFAULT_CAPACITY: usize = 16;
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+pub const DEFAULT_CAPACITY: usize = 64;
 
 /// 单条消息 content 最大长度（字节）。
 pub const MAX_CONTENT_LEN: usize = 64 * 1024;
@@ -73,10 +76,16 @@ pub const CHANNEL_FAIL_COOLDOWN_SECS: u64 = 60;
 pub const CHANNEL_FAIL_THRESHOLD: u32 = 3;
 
 /// SSE 流式响应行缓冲区大小（字节）；单行 SSE data 不应超此值。
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 pub const SSE_LINE_BUF_SIZE: usize = 4096;
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+pub const SSE_LINE_BUF_SIZE: usize = 16 * 1024;
 
 /// HTTP 最大并发连接数（含 TLS）。lwIP ~10 socket，预留给 WSS/HTTP 服务器后可用 ~6，但 TLS 内存限制更紧。
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 pub const MAX_CONCURRENT_HTTP: usize = 3;
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+pub const MAX_CONCURRENT_HTTP: usize = 16;
 
 /// 压力判级：Normal 阈值的 internal 空闲下限（字节）。
 pub const PRESSURE_NORMAL_INTERNAL_MIN_BYTES: usize = 70 * 1024;
