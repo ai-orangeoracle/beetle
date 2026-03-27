@@ -15,7 +15,7 @@ use std::net::{Shutdown, TcpStream};
 use std::time::{Duration, Instant};
 
 use crate::channels::wss_gateway::connection::{
-    WssConnection, WssEvent, MAX_WSS_SEND_PAYLOAD_BYTES,
+    WssBinary, WssConnection, WssEvent, MAX_WSS_SEND_PAYLOAD_BYTES,
 };
 use crate::error::{Error, Result};
 use tungstenite::stream::MaybeTlsStream;
@@ -136,8 +136,12 @@ impl WssConnection for LinuxWssConnection {
             }
 
             match self.ws.read() {
-                Ok(Message::Binary(b)) => return Ok(Some(WssEvent::Binary(b))),
-                Ok(Message::Text(t)) => return Ok(Some(WssEvent::Binary(t.into_bytes()))),
+                Ok(Message::Binary(b)) => {
+                    return Ok(Some(WssEvent::Binary(WssBinary::from_vec(b))))
+                }
+                Ok(Message::Text(t)) => {
+                    return Ok(Some(WssEvent::Binary(WssBinary::from_vec(t.into_bytes()))))
+                }
                 Ok(Message::Ping(payload)) => {
                     if let Err(e) = self.ws.send(Message::Pong(payload)) {
                         log::debug!("[wss_linux] pong reply failed: {}", e);

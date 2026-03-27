@@ -596,7 +596,6 @@ impl DisplayState {
                     backend.flush(self.config.offset_x, self.config.offset_y)?;
                 }
                 DisplayCommand::UpdateIp { ip, uptime_secs } => {
-                    let bg = DISPLAY_BG;
                     render_ip_partial(
                         backend,
                         ip.as_str(),

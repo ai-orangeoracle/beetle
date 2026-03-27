@@ -158,6 +158,12 @@ pub struct SessionMessage {
 pub trait SessionStore {
     fn append(&self, chat_id: &str, role: &str, content: &str) -> Result<()>;
     fn load_recent(&self, chat_id: &str, n: usize) -> Result<Vec<SessionMessage>>;
+    /// 返回当前会话消息条数（不含可选头注释）。默认实现回退到 `load_recent(MAX_SESSION_ENTRIES)`。
+    /// Implementations should override with an O(file-scan) fast path when possible.
+    fn message_count(&self, chat_id: &str) -> Result<usize> {
+        self.load_recent(chat_id, MAX_SESSION_ENTRIES)
+            .map(|v| v.len())
+    }
     fn clear(&self, chat_id: &str) -> Result<()>;
     /// 列举所有会话的 chat_id（如 sessions 目录下 *.jsonl 文件名去掉后缀）。用于 GET /api/sessions。
     fn list_chat_ids(&self) -> Result<Vec<String>>;

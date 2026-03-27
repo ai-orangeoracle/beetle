@@ -246,6 +246,15 @@ impl SessionStore for SpiffsSessionStore {
         Ok(all.split_off(skip))
     }
 
+    fn message_count(&self, chat_id: &str) -> Result<usize> {
+        let (path, _) = session_path(chat_id)?;
+        let buf = match read_file(&path) {
+            Ok(buf) => buf,
+            Err(_) => return Ok(0),
+        };
+        Ok(count_session_message_lines(&buf))
+    }
+
     fn clear(&self, chat_id: &str) -> Result<()> {
         let (path, write_header) = session_path(chat_id)?;
         if write_header {

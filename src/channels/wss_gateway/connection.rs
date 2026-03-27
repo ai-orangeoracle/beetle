@@ -13,10 +13,64 @@ pub(crate) const MAX_WSS_SEND_PAYLOAD_BYTES: usize = DEFAULT_WSS_BUFFER_SIZE - 3
 #[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
 pub(crate) const MAX_WSS_SEND_PAYLOAD_BYTES: usize = 64 * 1024;
 
+/// 单次收到的 WSS 二进制负载。可选回收器用于高频路径复用缓冲，降低分配抖动。
+pub struct WssBinary {
+    data: Vec<u8>,
+    recycler: Option<fn(Vec<u8>)>,
+}
+
+impl WssBinary {
+    pub fn from_vec(data: Vec<u8>) -> Self {
+        Self {
+            data,
+            recycler: None,
+        }
+    }
+
+    pub fn from_vec_with_recycler(data: Vec<u8>, recycler: fn(Vec<u8>)) -> Self {
+        Self {
+            data,
+            recycler: Some(recycler),
+        }
+    }
+
+    pub fn as_slice(&self) -> &[u8] {
+        self.data.as_slice()
+    }
+
+    pub fn len(&self) -> usize {
+        self.data.len()
+    }
+}
+
+impl std::fmt::Debug for WssBinary {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WssBinary")
+            .field("len", &self.data.len())
+            .finish()
+    }
+}
+
+impl AsRef<[u8]> for WssBinary {
+    fn as_ref(&self) -> &[u8] {
+        self.as_slice()
+    }
+}
+
+impl Drop for WssBinary {
+    fn drop(&mut self) {
+        if let Some(recycler) = self.recycler.take() {
+            let mut data = std::mem::take(&mut self.data);
+            data.clear();
+            recycler(data);
+        }
+    }
+}
+
 /// 单次收到的 WSS 事件。
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum WssEvent {
-    Binary(Vec<u8>),
+    Binary(WssBinary),
     Disconnected,
     Closed,
 }

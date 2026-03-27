@@ -5,13 +5,13 @@
 #![cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 
 use crate::channels::wss_gateway::connection::{
-    WssConnection, WssEvent, DEFAULT_WSS_BUFFER_SIZE, MAX_WSS_SEND_PAYLOAD_BYTES,
+    WssBinary, WssConnection, WssEvent, DEFAULT_WSS_BUFFER_SIZE, MAX_WSS_SEND_PAYLOAD_BYTES,
 };
 use crate::error::{Error, Result};
 use esp_idf_svc::handle::RawHandle;
 use esp_idf_svc::ws::client::WebSocketEventType;
 use std::mem::ManuallyDrop;
-use std::sync::mpsc;
+use std::sync::{mpsc, Mutex, OnceLock};
 use std::time::Duration;
 
 const CONNECT_TIMEOUT_MS: u64 = 10_000;
@@ -24,6 +24,36 @@ const KEEPALIVE_INTERVAL_SECS: u64 = 10;
 const KEEPALIVE_COUNT: u16 = 3;
 /// close 超时 tick（FreeRTOS tick = 10ms, 200 ticks = 2s）。
 const CLOSE_TIMEOUT_TICKS: u32 = 200;
+const EVENT_BUF_POOL_MAX: usize = 32;
+static EVENT_BUF_POOL: OnceLock<Mutex<Vec<Vec<u8>>>> = OnceLock::new();
+
+fn take_event_buf(min_capacity: usize) -> Vec<u8> {
+    let pool = EVENT_BUF_POOL.get_or_init(|| Mutex::new(Vec::with_capacity(EVENT_BUF_POOL_MAX)));
+    if let Ok(mut guard) = pool.lock() {
+        while let Some(mut buf) = guard.pop() {
+            if buf.capacity() < min_capacity {
+                buf.reserve(min_capacity.saturating_sub(buf.capacity()));
+            }
+            if buf.capacity() >= min_capacity {
+                return buf;
+            }
+        }
+    }
+    Vec::with_capacity(min_capacity)
+}
+
+fn recycle_event_buf(mut buf: Vec<u8>) {
+    if buf.capacity() > (DEFAULT_WSS_BUFFER_SIZE * 2) {
+        return;
+    }
+    buf.clear();
+    let pool = EVENT_BUF_POOL.get_or_init(|| Mutex::new(Vec::with_capacity(EVENT_BUF_POOL_MAX)));
+    if let Ok(mut guard) = pool.lock() {
+        if guard.len() < EVENT_BUF_POOL_MAX {
+            guard.push(buf);
+        }
+    }
+}
 
 // ---- C API 声明 ----
 // `esp_websocket_client_handle_t` 是 `*mut esp_websocket_client`（不透明），
@@ -154,9 +184,22 @@ pub fn connect_esp_wss(url: &str) -> Result<EspWssConnection> {
             };
             let event = match ev_result {
                 Ok(ev) => match &ev.event_type {
-                    WebSocketEventType::Binary(data) => Some(WssEvent::Binary(data.to_vec())),
+                    WebSocketEventType::Binary(data) => {
+                        let mut buf = take_event_buf(data.len());
+                        buf.extend_from_slice(data);
+                        Some(WssEvent::Binary(WssBinary::from_vec_with_recycler(
+                            buf,
+                            recycle_event_buf,
+                        )))
+                    }
                     WebSocketEventType::Text(data) => {
-                        Some(WssEvent::Binary(data.as_bytes().to_vec()))
+                        let bytes = data.as_bytes();
+                        let mut buf = take_event_buf(bytes.len());
+                        buf.extend_from_slice(bytes);
+                        Some(WssEvent::Binary(WssBinary::from_vec_with_recycler(
+                            buf,
+                            recycle_event_buf,
+                        )))
                     }
                     WebSocketEventType::Disconnected => Some(WssEvent::Disconnected),
                     WebSocketEventType::Closed | WebSocketEventType::Close(_) => {

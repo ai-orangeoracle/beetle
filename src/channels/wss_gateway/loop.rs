@@ -87,6 +87,7 @@ pub fn run_wss_gateway_loop<D, H, C, CreateHttp, Conn>(
         let url = match driver.get_url(&mut http) {
             Ok(u) => u,
             Err(e) => {
+                crate::metrics::record_error_by_stage(e.stage());
                 log::warn!("[{}] get_url failed: {}", tag, e);
                 if e.is_tls_admission() {
                     sleep_with_wdt(TLS_ADMISSION_RETRY_SLEEP_SECS);
@@ -103,6 +104,7 @@ pub fn run_wss_gateway_loop<D, H, C, CreateHttp, Conn>(
         let mut conn = match connect(&url) {
             Ok(c) => c,
             Err(e) => {
+                crate::metrics::record_error_by_stage(e.stage());
                 log::warn!("[{}] connect failed: {}", tag, e);
                 sleep_with_wdt(backoff_secs);
                 backoff_secs = (backoff_secs * 2).min(BACKOFF_MAX_SECS);
@@ -112,7 +114,7 @@ pub fn run_wss_gateway_loop<D, H, C, CreateHttp, Conn>(
 
         let state = if driver.expects_hello() {
             match conn.recv_timeout(Duration::from_millis(HELLO_RECV_TIMEOUT_MS)) {
-                Ok(Some(WssEvent::Binary(data))) => match driver.on_hello(&data) {
+                Ok(Some(WssEvent::Binary(data))) => match driver.on_hello(data.as_slice()) {
                     Ok(s) => s,
                     Err(e) => {
                         log::warn!("[{}] on_hello parse failed, reconnecting: {}", tag, e);
@@ -134,6 +136,7 @@ pub fn run_wss_gateway_loop<D, H, C, CreateHttp, Conn>(
                     identify_payload: None,
                 },
                 Err(e) => {
+                    crate::metrics::record_error_by_stage(e.stage());
                     log::warn!("[{}] recv hello failed: {}", tag, e);
                     drop(conn);
                     sleep_with_wdt(backoff_secs);
@@ -148,14 +151,17 @@ pub fn run_wss_gateway_loop<D, H, C, CreateHttp, Conn>(
             }
         };
 
-        if let Some(ref payload) = state.identify_payload {
+        let WssSessionState {
+            heartbeat_interval_ms,
+            identify_payload,
+        } = state;
+
+        if let Some(payload) = identify_payload {
             log::debug!("[{}] send identify len={}", tag, payload.len());
-            if let Err(e) = conn.send_binary(payload) {
+            if let Err(e) = conn.send_binary_owned(payload) {
                 log::warn!(
-                    "[{}] send identify failed (len={}): {}",
-                    tag,
-                    payload.len(),
-                    e
+                    "[{}] send identify failed: {}",
+                    tag, e
                 );
                 drop(conn);
                 sleep_with_wdt(backoff_secs);
@@ -164,9 +170,10 @@ pub fn run_wss_gateway_loop<D, H, C, CreateHttp, Conn>(
             }
         }
 
-        let interval_ms = state
-            .heartbeat_interval_ms
-            .clamp(HEARTBEAT_INTERVAL_MIN_MS, HEARTBEAT_INTERVAL_MAX_MS);
+        let interval_ms = heartbeat_interval_ms.clamp(
+            HEARTBEAT_INTERVAL_MIN_MS,
+            HEARTBEAT_INTERVAL_MAX_MS,
+        );
         let heartbeat_interval = Duration::from_millis(interval_ms);
         let recv_chunk = heartbeat_interval.min(Duration::from_secs(WDT_RECV_CHUNK_SECS));
         let mut last_seq: Option<u64> = None;
@@ -179,7 +186,7 @@ pub fn run_wss_gateway_loop<D, H, C, CreateHttp, Conn>(
                 Ok(Some(WssEvent::Binary(data))) => {
                     last_heartbeat = Instant::now();
                     log::debug!("[{}] recv binary len={}", tag, data.len());
-                    match driver.on_recv(&data) {
+                    match driver.on_recv(data.as_slice()) {
                         Ok(WssRecvAction::Dispatch(Some(msg))) => {
                             let chat_id = msg.chat_id.clone();
                             if crate::orchestrator::current_pressure()
@@ -264,7 +271,7 @@ pub fn run_wss_gateway_loop<D, H, C, CreateHttp, Conn>(
                             if enqueued {
                                 std::thread::sleep(Duration::from_millis(100));
                                 log::debug!("[{}] send ack len={}", tag, ack.len());
-                                if conn.send_binary(&ack).is_err() {
+                                if conn.send_binary_owned(ack).is_err() {
                                     log::warn!("[{}] send ack failed", tag);
                                 }
                             }
@@ -279,6 +286,7 @@ pub fn run_wss_gateway_loop<D, H, C, CreateHttp, Conn>(
                             session_ended = true;
                         }
                         Err(e) => {
+                            crate::metrics::record_error_by_stage(e.stage());
                             log::warn!("[{}] on_recv failed: {}", tag, e);
                         }
                     }
@@ -298,7 +306,7 @@ pub fn run_wss_gateway_loop<D, H, C, CreateHttp, Conn>(
                         };
                         if !payload.is_empty() {
                             log::debug!("[{}] send heartbeat len={}", tag, payload.len());
-                            if conn.send_binary(&payload).is_err() {
+                            if conn.send_binary_owned(payload).is_err() {
                                 log::warn!("[{}] send heartbeat failed", tag);
                                 session_ended = true;
                             }
@@ -307,6 +315,7 @@ pub fn run_wss_gateway_loop<D, H, C, CreateHttp, Conn>(
                     }
                 }
                 Err(e) => {
+                    crate::metrics::record_error_by_stage(e.stage());
                     log::warn!("[{}] recv failed: {}", tag, e);
                     session_ended = true;
                 }

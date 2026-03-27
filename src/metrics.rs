@@ -13,6 +13,7 @@ const STAGE_LLM_REQUEST: &str = "llm_request";
 const STAGE_LLM_PARSE: &str = "llm_parse";
 const STAGE_CHANNEL_DISPATCH: &str = "channel_dispatch";
 const STAGE_SESSION_APPEND: &str = "session_append";
+const STAGE_TLS_ADMISSION: &str = "tls_admission";
 
 static MESSAGES_IN: AtomicU32 = AtomicU32::new(0);
 static MESSAGES_OUT: AtomicU32 = AtomicU32::new(0);
@@ -51,6 +52,7 @@ static ERRORS_LLM_REQUEST: AtomicU32 = AtomicU32::new(0);
 static ERRORS_LLM_PARSE: AtomicU32 = AtomicU32::new(0);
 static ERRORS_CHANNEL_DISPATCH: AtomicU32 = AtomicU32::new(0);
 static ERRORS_SESSION_APPEND: AtomicU32 = AtomicU32::new(0);
+static ERRORS_TLS_ADMISSION: AtomicU32 = AtomicU32::new(0);
 static ERRORS_OTHER: AtomicU32 = AtomicU32::new(0);
 
 #[inline]
@@ -210,6 +212,7 @@ pub fn record_error_by_stage(stage: &str) {
         STAGE_LLM_PARSE => &ERRORS_LLM_PARSE,
         STAGE_CHANNEL_DISPATCH => &ERRORS_CHANNEL_DISPATCH,
         STAGE_SESSION_APPEND => &ERRORS_SESSION_APPEND,
+        STAGE_TLS_ADMISSION => &ERRORS_TLS_ADMISSION,
         _ => &ERRORS_OTHER,
     };
     c.fetch_add(1, Ordering::Relaxed);
@@ -248,6 +251,7 @@ pub fn snapshot() -> MetricsSnapshot {
         errors_llm_parse: ERRORS_LLM_PARSE.load(Ordering::Relaxed) as u64,
         errors_channel_dispatch: ERRORS_CHANNEL_DISPATCH.load(Ordering::Relaxed) as u64,
         errors_session_append: ERRORS_SESSION_APPEND.load(Ordering::Relaxed) as u64,
+        errors_tls_admission: ERRORS_TLS_ADMISSION.load(Ordering::Relaxed) as u64,
         errors_other: ERRORS_OTHER.load(Ordering::Relaxed) as u64,
         last_active_epoch_secs: LAST_ACTIVE_EPOCH_SECS.load(Ordering::Relaxed) as u64,
         wifi_reconnect_total: WIFI_RECONNECT_TOTAL.load(Ordering::Relaxed) as u64,
@@ -292,6 +296,7 @@ pub struct MetricsSnapshot {
     pub errors_llm_parse: u64,
     pub errors_channel_dispatch: u64,
     pub errors_session_append: u64,
+    pub errors_tls_admission: u64,
     pub errors_other: u64,
     pub last_active_epoch_secs: u64,
     pub wifi_reconnect_total: u64,
@@ -307,7 +312,7 @@ impl MetricsSnapshot {
         let mut buf = String::with_capacity(384);
         let _ = write!(
             buf,
-            "metrics msg_in={} msg_out={} llm_calls={} llm_err={} llm_last_ms={} ttft_last_ms={} e2e_last_ms={} user_q_wait_ms={} sys_q_wait_ms={} cron_e2e_ms={} react_rounds_last={} tool_calls_last={} user_done={} sys_done={} cron_done={} tool_calls={} tool_err={} wdt_feeds={} dispatch_ok={} dispatch_fail={} outbound_enq_fail={} channel_http_ok={} channel_http_fail={} err_chat={} err_ctx={} err_tool={} err_llm_req={} err_llm_parse={} err_dispatch={} err_session={} err_other={} last_active_epoch={} wifi_reconn={} wifi_ap_restart={} wifi_last_fail_stage={}",
+            "metrics msg_in={} msg_out={} llm_calls={} llm_err={} llm_last_ms={} ttft_last_ms={} e2e_last_ms={} user_q_wait_ms={} sys_q_wait_ms={} cron_e2e_ms={} react_rounds_last={} tool_calls_last={} user_done={} sys_done={} cron_done={} tool_calls={} tool_err={} wdt_feeds={} dispatch_ok={} dispatch_fail={} outbound_enq_fail={} channel_http_ok={} channel_http_fail={} err_chat={} err_ctx={} err_tool={} err_llm_req={} err_llm_parse={} err_dispatch={} err_session={} err_tls_admission={} err_other={} last_active_epoch={} wifi_reconn={} wifi_ap_restart={} wifi_last_fail_stage={}",
             self.messages_in,
             self.messages_out,
             self.llm_calls,
@@ -338,6 +343,7 @@ impl MetricsSnapshot {
             self.errors_llm_parse,
             self.errors_channel_dispatch,
             self.errors_session_append,
+            self.errors_tls_admission,
             self.errors_other,
             self.last_active_epoch_secs,
             self.wifi_reconnect_total,

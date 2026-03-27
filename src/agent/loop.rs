@@ -965,8 +965,7 @@ pub fn run_agent_loop<H: PlatformHttpClient>(
         if delivered {
             let after_count = config
                 .session_store
-                .load_recent(&msg.chat_id, 128)
-                .map(|v| v.len())
+                .message_count(&msg.chat_id)
                 .unwrap_or(0);
             let last_summary_count = config
                 .session_summary_store
