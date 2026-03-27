@@ -68,6 +68,8 @@ pub const INBOUND_RECV_TIMEOUT_SECS: u64 = 30;
 pub const AGENT_RETRY_BASE_MS: u64 = 100;
 /// Agent 重试退避上限（毫秒）。
 pub const AGENT_RETRY_MAX_MS: u64 = 500;
+/// Cautious 压力下 LLM RetryLater 的等待毫秒数，避免固定 3s 造成体感卡顿。
+pub const LLM_RETRY_LATER_DELAY_MS: u64 = 1000;
 /// pending_retry 重放次数上限；超过则清除不再注入，避免重复饥饿。
 pub const PENDING_RETRY_MAX_REPLAY: u32 = 3;
 /// Dispatch 单通道连续失败后熔断冷却时间（秒）；冷却期内不再向该通道发送。
@@ -131,6 +133,10 @@ pub const OUTBOUND_DEFER_DELAY_MS: u64 = 2000;
 /// 出站门禁 Cautious 压力时轻量退避毫秒数（短于 Critical，与队列拥塞→Cautious 闭环）。
 /// Light outbound defer under Cautious pressure (shorter than Critical).
 pub const OUTBOUND_DEFER_DELAY_MS_CAUTIOUS: u64 = 500;
+/// QQ sender 第一次重试前等待毫秒数（attempt=2）。
+pub const QQ_SEND_RETRY_DELAY_MS_STEP1: u64 = 300;
+/// QQ sender 第二次重试前等待毫秒数（attempt=3）。
+pub const QQ_SEND_RETRY_DELAY_MS_STEP2: u64 = 800;
 
 // ---------- 显示自适应刷新频率 ----------
 /// 显示刷新间隔：Busy 状态（秒）。

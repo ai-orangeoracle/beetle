@@ -160,9 +160,7 @@ pub fn post(ctx: &HandlerContext, body: &str) -> Result<(ApiResponse, bool), std
     };
     let url = match url {
         Some(u) => u,
-        None => {
-            return Ok((ApiResponse::err_400(&tr(Message::InvalidUrl, loc)), false))
-        }
+        None => return Ok((ApiResponse::err_400(&tr(Message::InvalidUrl, loc)), false)),
     };
     let valid = (url.starts_with("http://") || url.starts_with("https://")) && url.len() > 8;
     if !valid {

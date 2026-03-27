@@ -111,7 +111,7 @@ fn send_feishu_message<H: ChannelHttpClient>(
 
 /// 从 rx 取出待发送，鉴权后调用飞书发消息 API（一次性 drain）。
 pub fn flush_feishu_sends<H: ChannelHttpClient>(
-    rx: &std::sync::mpsc::Receiver<(String, String)>,
+    rx: &std::sync::mpsc::Receiver<(String, String, Option<String>)>,
     app_id: &str,
     app_secret: &str,
     http: &mut H,
@@ -123,14 +123,14 @@ pub fn flush_feishu_sends<H: ChannelHttpClient>(
         Some(t) => t,
         None => return,
     };
-    while let Ok((chat_id, content)) = rx.try_recv() {
+    while let Ok((chat_id, content, _req_id)) = rx.try_recv() {
         send_feishu_message(http, &token, &chat_id, &content);
     }
 }
 
 /// 持续运行的飞书发送循环：sender 线程内**复用**同一 HTTP；tenant_access_token 仍按 TTL 缓存，减少 getToken 次数。
 pub fn run_feishu_sender_loop<H, F>(
-    rx: std::sync::mpsc::Receiver<(String, String)>,
+    rx: std::sync::mpsc::Receiver<(String, String, Option<String>)>,
     app_id: &str,
     app_secret: &str,
     mut create_http: F,
@@ -149,7 +149,7 @@ pub fn run_feishu_sender_loop<H, F>(
     let token_ttl = std::time::Duration::from_secs(7200 - TOKEN_REFRESH_MARGIN_SECS);
     let mut cached_token: Option<(String, std::time::Instant)> = None;
     loop {
-        let (chat_id, content) = match rx.recv_timeout(recv_timeout) {
+        let (chat_id, content, req_id) = match rx.recv_timeout(recv_timeout) {
             Ok(item) => item,
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
                 crate::platform::task_wdt::feed_current_task();
@@ -206,7 +206,7 @@ pub fn run_feishu_sender_loop<H, F>(
                 continue;
             };
             send_feishu_message(h, token.as_str(), &chat_id, &content);
-            while let Ok((cid, cnt)) = rx.try_recv() {
+            while let Ok((cid, cnt, _)) = rx.try_recv() {
                 send_feishu_message(h, token, &cid, &cnt);
             }
             sent = true;
@@ -217,6 +217,11 @@ pub fn run_feishu_sender_loop<H, F>(
                 "[{}] message dropped after 3 retries, chat_id={}",
                 TAG,
                 chat_id
+            );
+            log::error!(
+                "[{}] req_id={} message dropped after retries",
+                TAG,
+                req_id.as_deref().unwrap_or("-")
             );
             cached_token = None; // 连续失败后清除缓存，下次强制刷新
         }

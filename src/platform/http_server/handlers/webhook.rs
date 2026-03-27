@@ -26,9 +26,7 @@ pub fn post(
     }
     let msg = match PcMsg::new("webhook", "webhook", body) {
         Ok(m) => m,
-        Err(_) => {
-            return Ok(ApiResponse::err_413(&tr(Message::ContentTooLong, loc)))
-        }
+        Err(_) => return Ok(ApiResponse::err_413(&tr(Message::ContentTooLong, loc))),
     };
     if inbound_tx.send(msg).is_err() {
         return Ok(ApiResponse::err_503(&tr(Message::QueueFull, loc)));

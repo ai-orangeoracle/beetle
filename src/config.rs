@@ -161,13 +161,6 @@ pub struct AppConfig {
     #[serde(default)]
     pub llm_sources: Vec<LlmSource>,
 
-    /// 路由模式：路由用源下标；None 表示不启用路由，仅用 worker 回退链。
-    #[serde(default)]
-    pub llm_router_source_index: Option<u8>,
-    /// 路由模式：worker 用源下标；与 router 同时为 Some 且均在 llm_sources 范围内时启用路由。
-    #[serde(default)]
-    pub llm_worker_source_index: Option<u8>,
-
     /// 界面语言 "zh" | "en"；存 NVS 键 locale，GET /api/config 与前端一致。
     #[serde(default)]
     pub locale: Option<String>,
@@ -266,8 +259,6 @@ impl AppConfig {
             qq_channel_app_id: option_env!("BEETLE_QQ_CHANNEL_APP_ID").unwrap_or("").into(),
             qq_channel_secret: option_env!("BEETLE_QQ_CHANNEL_SECRET").unwrap_or("").into(),
             llm_sources: vec![],
-            llm_router_source_index: None,
-            llm_worker_source_index: None,
             locale: option_env!("BEETLE_LOCALE")
                 .filter(|s| *s == "zh" || *s == "en")
                 .map(String::from),
@@ -404,8 +395,6 @@ impl AppConfig {
                 self.llm_stream = seg.llm_stream;
                 if !seg.llm_sources.is_empty() {
                     self.llm_sources = seg.llm_sources.clone();
-                    self.llm_router_source_index = seg.llm_router_source_index;
-                    self.llm_worker_source_index = seg.llm_worker_source_index;
                     let first = &self.llm_sources[0];
                     self.api_key = first.api_key.clone();
                     self.model = first.model.clone();
@@ -744,11 +733,7 @@ impl AppConfig {
                 max_tokens: None,
             }];
         }
-        validate_llm_sources(
-            &c.llm_sources,
-            c.llm_router_source_index,
-            c.llm_worker_source_index,
-        )?;
+        validate_llm_sources(&c.llm_sources)?;
         if c.tg_group_activation != "mention" && c.tg_group_activation != "always" {
             return Err(Error::config(
                 "config",
@@ -834,10 +819,6 @@ pub fn set_locale(store: &dyn ConfigStore, locale: &str) -> Result<()> {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct LlmSegment {
     pub llm_sources: Vec<LlmSource>,
-    #[serde(default)]
-    pub llm_router_source_index: Option<u8>,
-    #[serde(default)]
-    pub llm_worker_source_index: Option<u8>,
     #[serde(default)]
     pub llm_stream: bool,
 }
@@ -990,12 +971,8 @@ pub struct HardwareSegment {
     pub i2c_sensors: Vec<I2cSensorEntry>,
 }
 
-/// 私有：校验 llm_sources 非空、字段长度、router/worker 下标。供 from_json_and_validate 与 save_llm_segment 复用。
-fn validate_llm_sources(
-    sources: &[LlmSource],
-    router_index: Option<u8>,
-    worker_index: Option<u8>,
-) -> Result<()> {
+/// 私有：校验 llm_sources 非空、字段长度。供 from_json_and_validate 与 save_llm_segment 复用。
+fn validate_llm_sources(sources: &[LlmSource]) -> Result<()> {
     if sources.is_empty() {
         return Err(Error::config("config", "llm_sources must not be empty"));
     }
@@ -1008,15 +985,6 @@ fn validate_llm_sources(
             return Err(Error::config(
                 "config",
                 format!("llm_sources[{}] field length over limit", i),
-            ));
-        }
-    }
-    let n = sources.len();
-    if let (Some(r), Some(w)) = (router_index, worker_index) {
-        if (r as usize) >= n || (w as usize) >= n {
-            return Err(Error::config(
-                "config",
-                "llm_router_source_index and llm_worker_source_index must be < llm_sources.len()",
             ));
         }
     }
@@ -1268,10 +1236,7 @@ fn validate_hardware_segment(seg: &HardwareSegment) -> Result<()> {
     if seg.i2c_sensors.len() > I2C_SENSOR_MAX_ENTRIES {
         return Err(Error::config(
             "hardware",
-            format!(
-                "i2c_sensors count must be <= {}",
-                I2C_SENSOR_MAX_ENTRIES
-            ),
+            format!("i2c_sensors count must be <= {}", I2C_SENSOR_MAX_ENTRIES),
         ));
     }
     let mut seen_i2c_sensor_ids = std::collections::HashSet::new();
@@ -1381,10 +1346,7 @@ fn validate_hardware_segment(seg: &HardwareSegment) -> Result<()> {
                 if b > 255 {
                     return Err(Error::config(
                         "hardware",
-                        format!(
-                            "i2c_sensors[{}].options.init_cmd[{}] must be 0-255",
-                            i, j
-                        ),
+                        format!("i2c_sensors[{}].options.init_cmd[{}] must be 0-255", i, j),
                     ));
                 }
             }
@@ -1414,10 +1376,7 @@ fn validate_hardware_segment(seg: &HardwareSegment) -> Result<()> {
                 if ms > 2000 {
                     return Err(Error::config(
                         "hardware",
-                        format!(
-                            "i2c_sensors[{}] conversion_wait_ms must be <= 2000",
-                            i
-                        ),
+                        format!("i2c_sensors[{}] conversion_wait_ms must be <= 2000", i),
                     ));
                 }
             }
@@ -1517,11 +1476,7 @@ pub fn save_llm_segment(writer: &dyn ConfigFileStore, body: &str) -> Result<()> 
             ));
         }
     }
-    validate_llm_sources(
-        &seg.llm_sources,
-        seg.llm_router_source_index,
-        seg.llm_worker_source_index,
-    )?;
+    validate_llm_sources(&seg.llm_sources)?;
     let json =
         serde_json::to_string(&seg).map_err(|e| Error::config("serialize", e.to_string()))?;
     writer.write_config_file("config/llm.json", json.as_bytes())?;

@@ -51,7 +51,9 @@ pub enum Message {
     ErrorSpiffs,
     ErrorIo,
     ErrorEsp,
-    ErrorHttpStatus { code: u16 },
+    ErrorHttpStatus {
+        code: u16,
+    },
     ErrorProxyUnsupported,
     // --- 阶段 2：system_info / 连通性 ---
     SystemStatusOk,
@@ -69,8 +71,14 @@ pub enum Message {
     ReplyTruncated,
     StreamLowMemoryOmitted,
     RemindPrefix,
-    ToolProgress { name: String, index: usize, total: usize },
-    ToolProgressSingle { name: String },
+    ToolProgress {
+        name: String,
+        index: usize,
+        total: usize,
+    },
+    ToolProgressSingle {
+        name: String,
+    },
     // --- 阶段 5：Telegram / 工具 ---
     TgActivationMention,
     TgActivationAlways,

@@ -1,7 +1,7 @@
 //! GET/POST /api/soul：配对后读/写 SOUL 配置（config/SOUL.md）。
 
-use crate::memory::MAX_SOUL_USER_LEN;
 use crate::i18n::{locale_from_store, tr, tr_error, Message};
+use crate::memory::MAX_SOUL_USER_LEN;
 use crate::platform::http_server::common::ApiResponse;
 use crate::state;
 

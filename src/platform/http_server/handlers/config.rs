@@ -23,9 +23,7 @@ pub fn post_wifi(ctx: &HandlerContext, body: &str) -> Result<ApiResponse, std::i
     let loc = locale_from_store(ctx.config_store.as_ref());
     let payload: WifiConfigPayload = match serde_json::from_str(body) {
         Ok(p) => p,
-        Err(_) => {
-            return Ok(ApiResponse::err_400(&tr(Message::InvalidJson, loc)))
-        }
+        Err(_) => return Ok(ApiResponse::err_400(&tr(Message::InvalidJson, loc))),
     };
     match config::save_wifi_to_nvs(
         ctx.config_store.as_ref(),

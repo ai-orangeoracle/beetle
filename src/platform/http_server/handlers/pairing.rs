@@ -29,9 +29,7 @@ pub fn post_body(ctx: &HandlerContext, body_json: &str) -> ApiResponse {
     }
     let payload: SetCodePayload = match serde_json::from_str(body_json) {
         Ok(p) => p,
-        Err(_) => {
-            return ApiResponse::err_400(&tr(Message::InvalidJson, loc))
-        }
+        Err(_) => return ApiResponse::err_400(&tr(Message::InvalidJson, loc)),
     };
     let code = payload.code.trim();
     if code.len() != 6 || !code.chars().all(|c| c.is_ascii_digit()) {

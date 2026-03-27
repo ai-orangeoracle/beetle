@@ -59,7 +59,9 @@ impl AgentTaskGuard {
 
 impl Drop for AgentTaskGuard {
     fn drop(&mut self) {
-        self.state.active_agent_tasks.fetch_sub(1, Ordering::Relaxed);
+        self.state
+            .active_agent_tasks
+            .fetch_sub(1, Ordering::Relaxed);
     }
 }
 

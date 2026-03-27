@@ -83,7 +83,8 @@ pub fn clear_ipv4_addresses(iface: &str) -> Result<()> {
 }
 
 async fn clear_ipv4_addresses_async(iface: &str) -> Result<()> {
-    let (connection, handle, _) = new_connection().map_err(|e| Error::io("wifi_sta_ip_flush", e))?;
+    let (connection, handle, _) =
+        new_connection().map_err(|e| Error::io("wifi_sta_ip_flush", e))?;
     tokio::spawn(connection);
 
     let mut links = handle.link().get().match_name(iface.to_string()).execute();

@@ -17,6 +17,10 @@ use std::time::Duration;
 pub trait MessageSink: Send + Sync {
     fn send(&self, chat_id: &str, content: &str) -> Result<()>;
 
+    fn send_with_req(&self, chat_id: &str, content: &str, _req_id: Option<&str>) -> Result<()> {
+        self.send(chat_id, content)
+    }
+
     /// 发送消息并返回平台侧 message_id（用于后续编辑）。默认回退到 send + None。
     fn send_and_get_id(&self, chat_id: &str, content: &str) -> Result<Option<String>> {
         self.send(chat_id, content)?;
@@ -31,21 +35,32 @@ pub trait MessageSink: Send + Sync {
 
 /// 队列型 Sink：将 (chat_id, content) 送入 channel，由 main 的 flush_*_sends 消费。各通道仅 stage 不同。
 pub struct QueuedSink {
-    tx: std::sync::mpsc::SyncSender<(String, String)>,
+    tx: std::sync::mpsc::SyncSender<(String, String, Option<String>)>,
     stage: &'static str,
 }
 
 impl QueuedSink {
-    pub fn new(tx: std::sync::mpsc::SyncSender<(String, String)>, stage: &'static str) -> Self {
+    pub fn new(
+        tx: std::sync::mpsc::SyncSender<(String, String, Option<String>)>,
+        stage: &'static str,
+    ) -> Self {
         Self { tx, stage }
     }
 }
 
 impl MessageSink for QueuedSink {
     fn send(&self, chat_id: &str, content: &str) -> Result<()> {
+        self.send_with_req(chat_id, content, None)
+    }
+
+    fn send_with_req(&self, chat_id: &str, content: &str, req_id: Option<&str>) -> Result<()> {
         let content = truncate_content_to_max(content, MAX_CONTENT_LEN);
         self.tx
-            .try_send((chat_id.to_string(), content.into_owned()))
+            .try_send((
+                chat_id.to_string(),
+                content.into_owned(),
+                req_id.map(str::to_string),
+            ))
             .map_err(|e| crate::error::Error::Other {
                 source: Box::new(e),
                 stage: self.stage,
@@ -116,11 +131,7 @@ pub fn run_dispatch(outbound_rx: OutboundRx, sinks: Arc<ChannelSinks>) {
         let msg = match outbound_rx.recv() {
             Ok(m) => m,
             Err(e) => {
-                log::warn!(
-                    "[{}] outbound disconnected, dispatch exiting: {:?}",
-                    TAG,
-                    e
-                );
+                log::warn!("[{}] outbound disconnected, dispatch exiting: {:?}", TAG, e);
                 break;
             }
         };
@@ -140,15 +151,19 @@ pub fn run_dispatch(outbound_rx: OutboundRx, sinks: Arc<ChannelSinks>) {
             if let Some(buffered) = cooldown_buffer.swap_remove_back(i) {
                 let bc = truncate_content_to_max(&buffered.content, MAX_CONTENT_LEN);
                 if let Some(sink) = sinks.get(buffered.channel.as_ref()) {
-                    if sink.send(&buffered.chat_id, &bc).is_ok() {
+                    if sink
+                        .send_with_req(&buffered.chat_id, &bc, buffered.req_id.as_deref())
+                        .is_ok()
+                    {
                         record_channel_ok(&buffered.channel);
                         metrics::record_dispatch_send(true);
                     } else {
                         record_channel_fail(&buffered.channel);
                         metrics::record_dispatch_send(false);
                         log::warn!(
-                            "[{}] channel={} cooldown replay failed",
+                            "[{}] req_id={} channel={} cooldown replay failed",
                             TAG,
+                            buffered.req_id.as_deref().unwrap_or("-"),
                             buffered.channel
                         );
                     }
@@ -169,8 +184,9 @@ pub fn run_dispatch(outbound_rx: OutboundRx, sinks: Arc<ChannelSinks>) {
                 cooldown_buffer.push_back(msg);
             } else {
                 log::warn!(
-                    "[{}] channel={} cooldown buffer full, dropping oldest",
+                    "[{}] req_id={} channel={} cooldown buffer full, dropping oldest",
                     TAG,
+                    msg.req_id.as_deref().unwrap_or("-"),
                     msg.channel
                 );
                 cooldown_buffer.pop_front();
@@ -192,9 +208,15 @@ pub fn run_dispatch(outbound_rx: OutboundRx, sinks: Arc<ChannelSinks>) {
                 if attempt > 0 {
                     std::thread::sleep(Duration::from_millis(SEND_RETRY_DELAY_MS));
                 }
-                match sink.send(&msg.chat_id, &content) {
+                match sink.send_with_req(&msg.chat_id, &content, msg.req_id.as_deref()) {
                     Ok(()) => {
                         last_err = None;
+                        log::info!(
+                            "[latency][dispatch] req_id={} channel={} attempt={} status=ok",
+                            msg.req_id.as_deref().unwrap_or("-"),
+                            msg.channel,
+                            attempt + 1
+                        );
                         record_channel_ok(&msg.channel);
                         metrics::record_dispatch_send(true);
                         break;
@@ -209,8 +231,9 @@ pub fn run_dispatch(outbound_rx: OutboundRx, sinks: Arc<ChannelSinks>) {
                 metrics::record_dispatch_send(false);
                 metrics::record_error_by_stage("channel_dispatch");
                 log::warn!(
-                    "[{}] channel={} send failed after retries: {}",
+                    "[{}] req_id={} channel={} send failed after retries: {}",
                     TAG,
+                    msg.req_id.as_deref().unwrap_or("-"),
                     msg.channel,
                     e
                 );
@@ -227,7 +250,7 @@ pub fn run_dispatch(outbound_rx: OutboundRx, sinks: Arc<ChannelSinks>) {
 
 /// 各通道的 rx 及 flush 所需凭证，由 build_channel_sinks 填充；未启用通道为 None。
 pub struct ChannelRxSet {
-    pub telegram: Option<mpsc::Receiver<(String, String)>>,
+    pub telegram: Option<mpsc::Receiver<(String, String, Option<String>)>>,
     pub feishu: Option<FeishuRxConfig>,
     pub dingtalk: Option<DingtalkRxConfig>,
     pub wecom: Option<WecomRxConfig>,
@@ -235,18 +258,18 @@ pub struct ChannelRxSet {
 }
 
 pub struct FeishuRxConfig {
-    pub rx: mpsc::Receiver<(String, String)>,
+    pub rx: mpsc::Receiver<(String, String, Option<String>)>,
     pub app_id: String,
     pub app_secret: String,
 }
 
 pub struct DingtalkRxConfig {
-    pub rx: mpsc::Receiver<(String, String)>,
+    pub rx: mpsc::Receiver<(String, String, Option<String>)>,
     pub webhook_url: String,
 }
 
 pub struct WecomRxConfig {
-    pub rx: mpsc::Receiver<(String, String)>,
+    pub rx: mpsc::Receiver<(String, String, Option<String>)>,
     pub corp_id: String,
     pub corp_secret: String,
     pub agent_id: String,
@@ -254,7 +277,7 @@ pub struct WecomRxConfig {
 }
 
 pub struct QqChannelRxConfig {
-    pub rx: mpsc::Receiver<(String, String)>,
+    pub rx: mpsc::Receiver<(String, String, Option<String>)>,
     pub app_id: String,
     pub app_secret: String,
     pub msg_id_cache: super::QqMsgIdCache,

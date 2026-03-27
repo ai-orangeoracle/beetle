@@ -1,9 +1,12 @@
 //! 四维门禁决策：入站/出站/LLM/工具，基于统一资源快照做全局协调。
 //! Four-dimensional admission: inbound/outbound/LLM/tool, coordinated via unified resource snapshot.
 
-use crate::constants::{LOW_MEM_DEFER_SLEEP_MS, OUTBOUND_DEFER_DELAY_MS};
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 use crate::constants::OUTBOUND_DEFER_DELAY_MS_CAUTIOUS;
+use crate::constants::{
+    LLM_RETRY_LATER_DELAY_MS, LOW_MEM_DEFER_SLEEP_MS, OUTBOUND_DEFER_DELAY_MS,
+    PRESSURE_QUEUE_CONGESTION_THRESHOLD,
+};
 use crate::constants::{TLS_ADMISSION_MIN_INTERNAL_BYTES, TLS_ADMISSION_MIN_LARGEST_BLOCK_BYTES};
 use std::sync::atomic::Ordering;
 
@@ -31,6 +34,13 @@ pub enum LlmDecision {
 pub enum ToolDecision {
     Allow,
     Deny { reason: &'static str },
+}
+
+#[inline]
+fn is_queue_congested(state: &OrchestratorState) -> bool {
+    let inbound = state.inbound_depth.load(Ordering::Relaxed);
+    let outbound = state.outbound_depth.load(Ordering::Relaxed);
+    inbound.saturating_add(outbound) >= PRESSURE_QUEUE_CONGESTION_THRESHOLD
 }
 
 /// agent loop 收到消息后、处理前调用。
@@ -78,7 +88,9 @@ pub fn can_call_llm(state: &OrchestratorState) -> LlmDecision {
         PressureLevel::Cautious => {
             let largest_block = state.heap_largest_block.load(Ordering::Relaxed);
             if largest_block < TLS_ADMISSION_MIN_LARGEST_BLOCK_BYTES as u32 {
-                LlmDecision::RetryLater { delay_ms: 3000 }
+                LlmDecision::RetryLater {
+                    delay_ms: LLM_RETRY_LATER_DELAY_MS,
+                }
             } else {
                 LlmDecision::Proceed
             }
@@ -125,17 +137,30 @@ pub fn can_execute_tool(
 /// Called by dispatch before sending. Outbound messages already consumed LLM compute; prefer Defer over Reject.
 pub fn should_accept_outbound(state: &OrchestratorState, _channel: &str) -> AdmissionDecision {
     let pressure = PressureLevel::from_byte(state.pressure_level.load(Ordering::Relaxed));
+    let congested = is_queue_congested(state);
     match pressure {
-        PressureLevel::Critical => AdmissionDecision::Defer {
-            delay_ms: OUTBOUND_DEFER_DELAY_MS,
-        },
+        PressureLevel::Critical => {
+            if congested {
+                AdmissionDecision::Defer {
+                    delay_ms: OUTBOUND_DEFER_DELAY_MS,
+                }
+            } else {
+                AdmissionDecision::Accept
+            }
+        }
         PressureLevel::Cautious => {
             // Linux Cautious 不做出站延迟——已有真实内存阈值保障，避免无意义拖慢。
             #[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
             return AdmissionDecision::Accept;
             #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
-            AdmissionDecision::Defer {
-                delay_ms: OUTBOUND_DEFER_DELAY_MS_CAUTIOUS,
+            {
+                if congested {
+                    AdmissionDecision::Defer {
+                        delay_ms: OUTBOUND_DEFER_DELAY_MS_CAUTIOUS,
+                    }
+                } else {
+                    AdmissionDecision::Accept
+                }
             }
         }
         PressureLevel::Normal => AdmissionDecision::Accept,

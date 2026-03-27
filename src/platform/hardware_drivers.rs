@@ -561,9 +561,9 @@ fn dht_pull_from_options(
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 pub fn drive_dht(pins: &PinConfig, _params: &Value, options: &Value) -> Result<String> {
     use esp_idf_svc::sys::{
-        esp_rom_delay_us, gpio_config, gpio_config_t,
-        gpio_int_type_t_GPIO_INTR_DISABLE, gpio_mode_t_GPIO_MODE_INPUT,
-        gpio_mode_t_GPIO_MODE_OUTPUT, gpio_reset_pin, gpio_set_level, ESP_OK,
+        esp_rom_delay_us, gpio_config, gpio_config_t, gpio_int_type_t_GPIO_INTR_DISABLE,
+        gpio_mode_t_GPIO_MODE_INPUT, gpio_mode_t_GPIO_MODE_OUTPUT, gpio_reset_pin, gpio_set_level,
+        ESP_OK,
     };
 
     let pin = *pins
@@ -597,52 +597,50 @@ pub fn drive_dht(pins: &PinConfig, _params: &Value, options: &Value) -> Result<S
             std::thread::sleep(Duration::from_millis(DHT_RETRY_DELAY_MS));
         }
 
-        let sample_result: Result<[u8; 5]> = (|| {
-            unsafe {
-                gpio_reset_pin(pin);
-                let conf_out = gpio_config_t {
-                    pin_bit_mask: 1u64 << pin,
-                    mode: gpio_mode_t_GPIO_MODE_OUTPUT,
-                    pull_up_en: pull_up,
-                    pull_down_en: pull_down,
-                    intr_type: gpio_int_type_t_GPIO_INTR_DISABLE,
-                };
-                let ret = gpio_config(&conf_out);
-                if ret != ESP_OK {
-                    return Err(Error::Other {
-                        source: Box::new(std::io::Error::other(format!(
-                            "gpio_config output failed: {}",
-                            ret
-                        ))),
-                        stage: "drive_dht",
-                    });
-                }
-
-                gpio_set_level(pin, 0);
-                esp_rom_delay_us(start_low_us);
-                gpio_set_level(pin, 1);
-                esp_rom_delay_us(DHT_START_RELEASE_US);
-
-                let conf_in = gpio_config_t {
-                    pin_bit_mask: 1u64 << pin,
-                    mode: gpio_mode_t_GPIO_MODE_INPUT,
-                    pull_up_en: pull_up,
-                    pull_down_en: pull_down,
-                    intr_type: gpio_int_type_t_GPIO_INTR_DISABLE,
-                };
-                let ret = gpio_config(&conf_in);
-                if ret != ESP_OK {
-                    return Err(Error::Other {
-                        source: Box::new(std::io::Error::other(format!(
-                            "gpio_config input failed: {}",
-                            ret
-                        ))),
-                        stage: "drive_dht",
-                    });
-                }
-
-                dht_sample_raw_frame(pin)
+        let sample_result: Result<[u8; 5]> = (|| unsafe {
+            gpio_reset_pin(pin);
+            let conf_out = gpio_config_t {
+                pin_bit_mask: 1u64 << pin,
+                mode: gpio_mode_t_GPIO_MODE_OUTPUT,
+                pull_up_en: pull_up,
+                pull_down_en: pull_down,
+                intr_type: gpio_int_type_t_GPIO_INTR_DISABLE,
+            };
+            let ret = gpio_config(&conf_out);
+            if ret != ESP_OK {
+                return Err(Error::Other {
+                    source: Box::new(std::io::Error::other(format!(
+                        "gpio_config output failed: {}",
+                        ret
+                    ))),
+                    stage: "drive_dht",
+                });
             }
+
+            gpio_set_level(pin, 0);
+            esp_rom_delay_us(start_low_us);
+            gpio_set_level(pin, 1);
+            esp_rom_delay_us(DHT_START_RELEASE_US);
+
+            let conf_in = gpio_config_t {
+                pin_bit_mask: 1u64 << pin,
+                mode: gpio_mode_t_GPIO_MODE_INPUT,
+                pull_up_en: pull_up,
+                pull_down_en: pull_down,
+                intr_type: gpio_int_type_t_GPIO_INTR_DISABLE,
+            };
+            let ret = gpio_config(&conf_in);
+            if ret != ESP_OK {
+                return Err(Error::Other {
+                    source: Box::new(std::io::Error::other(format!(
+                        "gpio_config input failed: {}",
+                        ret
+                    ))),
+                    stage: "drive_dht",
+                });
+            }
+
+            dht_sample_raw_frame(pin)
         })();
 
         let data = match sample_result {
@@ -960,14 +958,7 @@ impl I2cBusState {
 
         let dev = self.ensure_device(addr)?;
         let mut read_buf = vec![0u8; len];
-        let ret = unsafe {
-            i2c_master_receive(
-                dev,
-                read_buf.as_mut_ptr(),
-                read_buf.len(),
-                -1,
-            )
-        };
+        let ret = unsafe { i2c_master_receive(dev, read_buf.as_mut_ptr(), read_buf.len(), -1) };
         if ret != ESP_OK {
             return Err(Error::esp("i2c_read", ret));
         }
@@ -1002,10 +993,16 @@ pub(crate) fn parse_sht3x(data: &[u8]) -> Result<(f64, f64)> {
         ));
     }
     if crc8_sht3x(&data[0..2]) != data[2] {
-        return Err(Error::config("drive_i2c_sensor", "sht3x humidity CRC mismatch"));
+        return Err(Error::config(
+            "drive_i2c_sensor",
+            "sht3x humidity CRC mismatch",
+        ));
     }
     if crc8_sht3x(&data[3..5]) != data[5] {
-        return Err(Error::config("drive_i2c_sensor", "sht3x temperature CRC mismatch"));
+        return Err(Error::config(
+            "drive_i2c_sensor",
+            "sht3x temperature CRC mismatch",
+        ));
     }
     let rh_raw = u16::from_be_bytes([data[0], data[1]]);
     let t_raw = u16::from_be_bytes([data[3], data[4]]);
@@ -1029,10 +1026,9 @@ pub(crate) fn parse_aht20(data: &[u8]) -> Result<(f64, f64)> {
             "aht20 sensor busy (status bit 7 set)",
         ));
     }
-    let h_raw: u32 = ((u32::from(data[1]) << 12)
-        | (u32::from(data[2]) << 4)
-        | (u32::from(data[3]) >> 4))
-        & 0xFFFFF;
+    let h_raw: u32 =
+        ((u32::from(data[1]) << 12) | (u32::from(data[2]) << 4) | (u32::from(data[3]) >> 4))
+            & 0xFFFFF;
     let t_raw: u32 =
         (((u32::from(data[3]) & 0x0F) << 16) | (u32::from(data[4]) << 8) | u32::from(data[5]))
             & 0xFFFFF;
@@ -1090,7 +1086,9 @@ static I2C_SENSOR_LAST_READ: Mutex<Option<HashMap<i32, Instant>>> = Mutex::new(N
 fn i2c_sensor_stub_rate_limit_check(addr: u8) -> Result<()> {
     use crate::constants::I2C_SENSOR_RATE_LIMIT_MS;
     let pin_key = i32::from(addr);
-    let guard = I2C_SENSOR_LAST_READ.lock().unwrap_or_else(|e| e.into_inner());
+    let guard = I2C_SENSOR_LAST_READ
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     if let Some(map) = guard.as_ref() {
         if let Some(prev) = map.get(&pin_key) {
             let elapsed_ms = prev.elapsed().as_millis() as u64;
@@ -1112,7 +1110,9 @@ fn i2c_sensor_stub_rate_limit_check(addr: u8) -> Result<()> {
 #[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
 fn i2c_sensor_stub_rate_limit_on_success(addr: u8) {
     let pin_key = i32::from(addr);
-    let mut guard = I2C_SENSOR_LAST_READ.lock().unwrap_or_else(|e| e.into_inner());
+    let mut guard = I2C_SENSOR_LAST_READ
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let map = guard.get_or_insert_with(HashMap::new);
     map.insert(pin_key, Instant::now());
 }

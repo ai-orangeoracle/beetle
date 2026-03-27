@@ -4,11 +4,20 @@
 
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 use esp_idf_svc::sys;
-#[cfg(all(not(any(target_arch = "xtensa", target_arch = "riscv32")), target_os = "linux"))]
+#[cfg(all(
+    not(any(target_arch = "xtensa", target_arch = "riscv32")),
+    target_os = "linux"
+))]
 use std::net::{ToSocketAddrs, UdpSocket};
-#[cfg(all(not(any(target_arch = "xtensa", target_arch = "riscv32")), target_os = "linux"))]
+#[cfg(all(
+    not(any(target_arch = "xtensa", target_arch = "riscv32")),
+    target_os = "linux"
+))]
 use std::sync::Once;
-#[cfg(all(not(any(target_arch = "xtensa", target_arch = "riscv32")), target_os = "linux"))]
+#[cfg(all(
+    not(any(target_arch = "xtensa", target_arch = "riscv32")),
+    target_os = "linux"
+))]
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const TAG: &str = "platform::sntp";
@@ -36,23 +45,44 @@ pub fn init_sntp() {
     );
 }
 
-#[cfg(all(not(any(target_arch = "xtensa", target_arch = "riscv32")), target_os = "linux"))]
+#[cfg(all(
+    not(any(target_arch = "xtensa", target_arch = "riscv32")),
+    target_os = "linux"
+))]
 static SNTP_ONCE: Once = Once::new();
 
-#[cfg(all(not(any(target_arch = "xtensa", target_arch = "riscv32")), target_os = "linux"))]
+#[cfg(all(
+    not(any(target_arch = "xtensa", target_arch = "riscv32")),
+    target_os = "linux"
+))]
 const NTP_UNIX_OFFSET_SECS: u64 = 2_208_988_800;
-#[cfg(all(not(any(target_arch = "xtensa", target_arch = "riscv32")), target_os = "linux"))]
+#[cfg(all(
+    not(any(target_arch = "xtensa", target_arch = "riscv32")),
+    target_os = "linux"
+))]
 const SNTP_RETRY_SECS: u64 = 5;
-#[cfg(all(not(any(target_arch = "xtensa", target_arch = "riscv32")), target_os = "linux"))]
+#[cfg(all(
+    not(any(target_arch = "xtensa", target_arch = "riscv32")),
+    target_os = "linux"
+))]
 const SNTP_QUERY_TIMEOUT_SECS: u64 = 5;
-#[cfg(all(not(any(target_arch = "xtensa", target_arch = "riscv32")), target_os = "linux"))]
+#[cfg(all(
+    not(any(target_arch = "xtensa", target_arch = "riscv32")),
+    target_os = "linux"
+))]
 const UNIX_TIME_SYNC_THRESHOLD_SECS: u64 = 1_700_000_000;
 
 /// 每 6 小时重新同步一次，防止长时间运行后漂移。
-#[cfg(all(not(any(target_arch = "xtensa", target_arch = "riscv32")), target_os = "linux"))]
+#[cfg(all(
+    not(any(target_arch = "xtensa", target_arch = "riscv32")),
+    target_os = "linux"
+))]
 const SNTP_RESYNC_SECS: u64 = 6 * 3600;
 
-#[cfg(all(not(any(target_arch = "xtensa", target_arch = "riscv32")), target_os = "linux"))]
+#[cfg(all(
+    not(any(target_arch = "xtensa", target_arch = "riscv32")),
+    target_os = "linux"
+))]
 pub fn init_sntp() {
     SNTP_ONCE.call_once(|| {
         crate::util::spawn_guarded("sntp", || {
@@ -120,14 +150,20 @@ pub fn init_sntp() {
     });
 }
 
-#[cfg(all(not(any(target_arch = "xtensa", target_arch = "riscv32")), target_os = "linux"))]
+#[cfg(all(
+    not(any(target_arch = "xtensa", target_arch = "riscv32")),
+    target_os = "linux"
+))]
 fn sync_once() -> crate::error::Result<u64> {
     let epoch = query_ntp_unix_secs()?;
     set_system_time(epoch)?;
     Ok(epoch)
 }
 
-#[cfg(all(not(any(target_arch = "xtensa", target_arch = "riscv32")), target_os = "linux"))]
+#[cfg(all(
+    not(any(target_arch = "xtensa", target_arch = "riscv32")),
+    target_os = "linux"
+))]
 fn query_ntp_unix_secs() -> crate::error::Result<u64> {
     for server in ["pool.ntp.org:123", "time.google.com:123"] {
         let addrs = match server.to_socket_addrs() {
@@ -174,7 +210,10 @@ fn query_ntp_unix_secs() -> crate::error::Result<u64> {
     ))
 }
 
-#[cfg(all(not(any(target_arch = "xtensa", target_arch = "riscv32")), target_os = "linux"))]
+#[cfg(all(
+    not(any(target_arch = "xtensa", target_arch = "riscv32")),
+    target_os = "linux"
+))]
 fn set_system_time(epoch_secs: u64) -> crate::error::Result<()> {
     let ts = libc::timespec {
         tv_sec: epoch_secs as _,
@@ -190,7 +229,10 @@ fn set_system_time(epoch_secs: u64) -> crate::error::Result<()> {
     Ok(())
 }
 
-#[cfg(all(not(any(target_arch = "xtensa", target_arch = "riscv32")), target_os = "linux"))]
+#[cfg(all(
+    not(any(target_arch = "xtensa", target_arch = "riscv32")),
+    target_os = "linux"
+))]
 fn current_unix_secs() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -198,7 +240,10 @@ fn current_unix_secs() -> u64 {
         .unwrap_or(0)
 }
 
-#[cfg(all(not(any(target_arch = "xtensa", target_arch = "riscv32")), not(target_os = "linux")))]
+#[cfg(all(
+    not(any(target_arch = "xtensa", target_arch = "riscv32")),
+    not(target_os = "linux")
+))]
 pub fn init_sntp() {
     log::info!("[{}] SNTP no-op on non-Linux host", TAG);
 }

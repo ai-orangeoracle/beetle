@@ -640,8 +640,7 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
                     }
 
                     // F7: 错误闪烁 — 检测新错误
-                    let current_error_total = m_snap.errors_agent_router
-                        + m_snap.errors_agent_chat
+                    let current_error_total = m_snap.errors_agent_chat
                         + m_snap.errors_agent_context
                         + m_snap.errors_tool_execute
                         + m_snap.errors_llm_request
@@ -931,8 +930,7 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
             }
         }
 
-        let (router_client, worker_llm_box) =
-            beetle::build_llm_clients(&config, Arc::clone(&resolve_locale_ui));
+        let worker_llm_box = beetle::build_llm_clients(&config, Arc::clone(&resolve_locale_ui));
         let registry = beetle::build_default_registry(
             &config,
             Arc::clone(&platform),
@@ -1049,7 +1047,6 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
 
         if let Err(e) = run_agent_loop(
             &mut http_client,
-            router_client.as_deref(),
             &*worker_llm_box,
             &registry,
             &agent_config,

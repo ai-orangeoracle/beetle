@@ -119,8 +119,9 @@ fn handle_linux_request(
             .read_to_end(&mut body)
         {
             log::warn!("http_config_body_read: {}", e);
-            let mut resp = tiny_http::Response::from_data(br#"{"error":"internal error"}"#.to_vec())
-                .with_status_code(tiny_http::StatusCode(500));
+            let mut resp =
+                tiny_http::Response::from_data(br#"{"error":"internal error"}"#.to_vec())
+                    .with_status_code(tiny_http::StatusCode(500));
             for (k, v) in common::CORS_HEADERS {
                 if let Ok(h) = tiny_http::Header::from_bytes(k.as_bytes(), v.as_bytes()) {
                     resp.add_header(h);
@@ -147,7 +148,8 @@ fn handle_linux_request(
             br#"{"error":"internal error"}"#.to_vec(),
         )
     });
-    let mut resp = tiny_http::Response::from_data(out.body).with_status_code(tiny_http::StatusCode(out.status));
+    let mut resp = tiny_http::Response::from_data(out.body)
+        .with_status_code(tiny_http::StatusCode(out.status));
     for (k, v) in out.headers {
         if let Ok(h) = tiny_http::Header::from_bytes(k.as_bytes(), v.as_bytes()) {
             resp.add_header(h);

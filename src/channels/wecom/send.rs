@@ -314,7 +314,7 @@ fn send_one_wecom<H: ChannelHttpClient>(
 
 /// 从 rx 取出待发送（一次性 drain）。
 pub fn flush_wecom_sends<H: ChannelHttpClient>(
-    rx: &std::sync::mpsc::Receiver<(String, String)>,
+    rx: &std::sync::mpsc::Receiver<(String, String, Option<String>)>,
     corp_id: &str,
     corp_secret: &str,
     agent_id: &str,
@@ -335,7 +335,7 @@ pub fn flush_wecom_sends<H: ChannelHttpClient>(
         Some(t) => t,
         None => return,
     };
-    while let Ok((chat_id, content)) = rx.try_recv() {
+    while let Ok((chat_id, content, _req_id)) = rx.try_recv() {
         send_one_wecom(
             http,
             &token,
@@ -352,7 +352,7 @@ const WECOM_TOKEN_CACHE_MARGIN_SECS: u64 = 120;
 
 /// 持续运行的企业微信发送循环：sender 线程内**复用** HTTP，并按 `expires_in` **缓存** token。
 pub fn run_wecom_sender_loop<H, F>(
-    rx: std::sync::mpsc::Receiver<(String, String)>,
+    rx: std::sync::mpsc::Receiver<(String, String, Option<String>)>,
     corp_id: &str,
     corp_secret: &str,
     agent_id: &str,
@@ -381,7 +381,7 @@ pub fn run_wecom_sender_loop<H, F>(
     let mut token_cache: Option<(String, std::time::Instant)> = None;
     let recv_timeout = std::time::Duration::from_secs(30);
     loop {
-        let (chat_id, content) = match rx.recv_timeout(recv_timeout) {
+        let (chat_id, content, req_id) = match rx.recv_timeout(recv_timeout) {
             Ok(item) => item,
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
                 crate::platform::task_wdt::feed_current_task();
@@ -462,7 +462,7 @@ pub fn run_wecom_sender_loop<H, F>(
                 continue;
             };
             send_one_wecom(h, &token, agent_id_u32, &chat_id, default_touser, &content);
-            while let Ok((cid, cnt)) = rx.try_recv() {
+            while let Ok((cid, cnt, _)) = rx.try_recv() {
                 send_one_wecom(h, &token, agent_id_u32, &cid, default_touser, &cnt);
             }
             sent = true;
@@ -473,6 +473,11 @@ pub fn run_wecom_sender_loop<H, F>(
                 "[{}] message dropped after 3 retries, chat_id={}",
                 TAG,
                 chat_id
+            );
+            log::error!(
+                "[{}] req_id={} message dropped after retries",
+                TAG,
+                req_id.as_deref().unwrap_or("-")
             );
         }
     }

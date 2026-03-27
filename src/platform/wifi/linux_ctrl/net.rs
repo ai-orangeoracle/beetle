@@ -1,8 +1,8 @@
 //! Linux network operations for AP/STA（数据面均经 rtnetlink，无 `ip` 命令依赖）。
 //! Linux network operations for AP/STA (data plane via rtnetlink, no `ip` dependency).
 
-use crate::error::{Error, Result};
 use super::process::run_checked;
+use crate::error::{Error, Result};
 use std::path::Path;
 use std::time::{Duration, Instant};
 
@@ -31,7 +31,15 @@ pub fn create_virtual_ap_iface(phy_iface: &str, ap_iface: &str) -> Result<()> {
     let _ = delete_virtual_iface(ap_iface);
     run_checked(
         "iw",
-        &["dev", phy_iface, "interface", "add", ap_iface, "type", "__ap"],
+        &[
+            "dev",
+            phy_iface,
+            "interface",
+            "add",
+            ap_iface,
+            "type",
+            "__ap",
+        ],
         Duration::from_secs(5),
         "wifi_virt_iface_add",
     )?;

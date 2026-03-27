@@ -183,11 +183,10 @@ pub fn connect_linux_wss(url: &str) -> Result<LinuxWssConnection> {
     tcp.set_write_timeout(Some(Duration::from_secs(SOCKET_WRITE_TIMEOUT_SECS)))
         .map_err(|e| map_io("wss_linux_connect", e))?;
 
-    let (ws, _resp) = tungstenite::client_tls(url, tcp)
-        .map_err(|e| Error::Other {
-            source: Box::new(std::io::Error::other(e.to_string())),
-            stage: "wss_linux_connect",
-        })?;
+    let (ws, _resp) = tungstenite::client_tls(url, tcp).map_err(|e| Error::Other {
+        source: Box::new(std::io::Error::other(e.to_string())),
+        stage: "wss_linux_connect",
+    })?;
 
     Ok(LinuxWssConnection {
         ws,
@@ -197,7 +196,9 @@ pub fn connect_linux_wss(url: &str) -> Result<LinuxWssConnection> {
 
 /// 从 `wss://host:port/path` 中提取 `host:port`（默认 443）。
 fn parse_wss_host_port(url: &str) -> Option<String> {
-    let rest = url.strip_prefix("wss://").or_else(|| url.strip_prefix("ws://"))?;
+    let rest = url
+        .strip_prefix("wss://")
+        .or_else(|| url.strip_prefix("ws://"))?;
     let authority = rest.split('/').next().unwrap_or(rest);
     if authority.is_empty() {
         return None;
@@ -213,14 +214,21 @@ fn tcp_connect_with_timeout(url: &str) -> Result<TcpStream> {
     use std::net::ToSocketAddrs;
 
     let host_port = parse_wss_host_port(url).ok_or_else(|| Error::Other {
-        source: Box::new(std::io::Error::new(ErrorKind::InvalidInput, "cannot parse host from wss url")),
+        source: Box::new(std::io::Error::new(
+            ErrorKind::InvalidInput,
+            "cannot parse host from wss url",
+        )),
         stage: "wss_linux_connect",
     })?;
-    let addr = host_port.to_socket_addrs()
+    let addr = host_port
+        .to_socket_addrs()
         .map_err(|e| map_io("wss_linux_dns", e))?
         .next()
         .ok_or_else(|| Error::Other {
-            source: Box::new(std::io::Error::new(ErrorKind::AddrNotAvailable, "dns resolved to nothing")),
+            source: Box::new(std::io::Error::new(
+                ErrorKind::AddrNotAvailable,
+                "dns resolved to nothing",
+            )),
             stage: "wss_linux_dns",
         })?;
 

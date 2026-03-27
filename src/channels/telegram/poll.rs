@@ -252,6 +252,7 @@ pub fn poll_telegram_once<H: ChannelHttpClient>(
                 channel: Arc::from("telegram"),
                 chat_id: Arc::from(chat_id.as_str()),
                 content,
+                req_id: None,
                 is_group,
             };
             let mut enqueued = false;
@@ -266,13 +267,20 @@ pub fn poll_telegram_once<H: ChannelHttpClient>(
                         continue;
                     }
                     Err(std::sync::mpsc::TrySendError::Disconnected(_)) => {
-                        log::warn!("[{}] inbound_tx closed while enqueueing telegram msg", TAG_POLL);
+                        log::warn!(
+                            "[{}] inbound_tx closed while enqueueing telegram msg",
+                            TAG_POLL
+                        );
                         break;
                     }
                 }
             }
             if !enqueued {
-                log::warn!("[{}] inbound queue full, drop telegram msg chat_id={}", TAG_POLL, chat_id);
+                log::warn!(
+                    "[{}] inbound queue full, drop telegram msg chat_id={}",
+                    TAG_POLL,
+                    chat_id
+                );
                 let _ = pending_retry.save_pending_retry(&pc);
             }
         }

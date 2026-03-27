@@ -37,9 +37,8 @@ pub fn get(ctx: &HandlerContext, name: Option<String>) -> Result<SkillsGetResult
         ctx.skill_storage.as_ref(),
     );
     let payload = serde_json::json!({ "skills": list, "order": order });
-    let body = serde_json::to_string(&payload).map_err(|_| {
-        ApiResponse::err_500(&tr(Message::OperationFailed, loc))
-    })?;
+    let body = serde_json::to_string(&payload)
+        .map_err(|_| ApiResponse::err_500(&tr(Message::OperationFailed, loc)))?;
     Ok(SkillsGetResult::Json(body))
 }
 
@@ -48,9 +47,7 @@ pub fn post(ctx: &HandlerContext, body: &str) -> ApiResponse {
     let loc = locale_from_store(ctx.config_store.as_ref());
     let v = match serde_json::from_str::<serde_json::Value>(body) {
         Ok(x) => x,
-        Err(_) => {
-            return ApiResponse::err_400(&tr(Message::InvalidJson, loc))
-        }
+        Err(_) => return ApiResponse::err_400(&tr(Message::InvalidJson, loc)),
     };
     let name = v.get("name").and_then(|n| n.as_str()).map(String::from);
     if let Some(order_arr) = v.get("order").and_then(|o| o.as_array()) {
@@ -109,9 +106,7 @@ pub fn import(ctx: &HandlerContext, body: &str) -> Result<ApiResponse, std::io::
     let loc = locale_from_store(ctx.config_store.as_ref());
     let v = match serde_json::from_str::<serde_json::Value>(body) {
         Ok(x) => x,
-        Err(_) => {
-            return Ok(ApiResponse::err_400(&tr(Message::InvalidJson, loc)))
-        }
+        Err(_) => return Ok(ApiResponse::err_400(&tr(Message::InvalidJson, loc))),
     };
     let url = v
         .get("url")
@@ -124,15 +119,11 @@ pub fn import(ctx: &HandlerContext, body: &str) -> Result<ApiResponse, std::io::
         .map(|s| s.to_string());
     let url = match url {
         Some(u) => u,
-        None => {
-            return Ok(ApiResponse::err_400(&tr(Message::MissingUrl, loc)))
-        }
+        None => return Ok(ApiResponse::err_400(&tr(Message::MissingUrl, loc))),
     };
     let name = match name {
         Some(n) => n.strip_suffix(".md").unwrap_or(&n).to_string(),
-        None => {
-            return Ok(ApiResponse::err_400(&tr(Message::MissingName, loc)))
-        }
+        None => return Ok(ApiResponse::err_400(&tr(Message::MissingName, loc))),
     };
     if !(url.starts_with("http://") || url.starts_with("https://")) || url.len() <= 8 {
         return Ok(ApiResponse::err_400(&tr(Message::InvalidUrl, loc)));
@@ -146,9 +137,7 @@ pub fn import(ctx: &HandlerContext, body: &str) -> Result<ApiResponse, std::io::
     };
     let content = match String::from_utf8(body_bytes) {
         Ok(s) => s,
-        Err(_) => {
-            return Ok(ApiResponse::err_400(&tr(Message::UrlBodyNotUtf8, loc)))
-        }
+        Err(_) => return Ok(ApiResponse::err_400(&tr(Message::UrlBodyNotUtf8, loc))),
     };
     match skills::write_skill(ctx.skill_storage.as_ref(), &name, &content) {
         Ok(()) => Ok(ApiResponse::ok_200_json("{\"ok\":true}")),

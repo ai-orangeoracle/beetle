@@ -122,7 +122,10 @@ fn request_dhcp_lease(iface: &str, timeout: Duration) -> Result<()> {
     if net::read_sta_ip(iface)?.is_some() {
         return Ok(());
     }
-    Err(Error::config("wifi_dhcp", "udhcpc exited but no IPv4 assigned"))
+    Err(Error::config(
+        "wifi_dhcp",
+        "udhcpc exited but no IPv4 assigned",
+    ))
 }
 
 pub fn connect_sta(iface: &str, ssid: &str, pass: &str) -> Result<Option<String>> {

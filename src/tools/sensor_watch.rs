@@ -388,8 +388,7 @@ pub(crate) fn check_sensor_watches(
             continue;
         }
 
-        let read_result =
-            read_sensor_value(&watch.device_id, platform, devices, i2c_sensors);
+        let read_result = read_sensor_value(&watch.device_id, platform, devices, i2c_sensors);
         let value = match read_result {
             Ok(v) => v,
             Err(e) => {

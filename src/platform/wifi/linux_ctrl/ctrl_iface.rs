@@ -21,11 +21,9 @@ pub fn request_unix(
     let client_path = temp_client_socket_path();
     let sock = UnixDatagram::bind(&client_path).map_err(|e| Error::io(stage, e))?;
     sock.connect(path).map_err(|e| Error::io(stage, e))?;
-    sock
-        .set_read_timeout(Some(timeout))
+    sock.set_read_timeout(Some(timeout))
         .map_err(|e| Error::io(stage, e))?;
-    sock
-        .set_write_timeout(Some(timeout))
+    sock.set_write_timeout(Some(timeout))
         .map_err(|e| Error::io(stage, e))?;
     sock.send(cmd.as_bytes()).map_err(|e| Error::io(stage, e))?;
 

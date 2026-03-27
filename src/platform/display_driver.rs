@@ -1238,12 +1238,18 @@ fn render_dashboard<D: DrawTarget<Color = Rgb565>>(target: &mut D, p: &Dashboard
     let div_style = PrimitiveStyle::with_stroke(rgb565(0x22, 0x22, 0x38), 1);
     let mid_div_y = layout.middle_top.saturating_sub(6) as i32;
     let foot_div_y = layout.footer_top.saturating_sub(6) as i32;
-    let _ = Line::new(Point::new(0, mid_div_y), Point::new(p.width as i32, mid_div_y))
-        .into_styled(div_style)
-        .draw(target);
-    let _ = Line::new(Point::new(0, foot_div_y), Point::new(p.width as i32, foot_div_y))
-        .into_styled(div_style)
-        .draw(target);
+    let _ = Line::new(
+        Point::new(0, mid_div_y),
+        Point::new(p.width as i32, mid_div_y),
+    )
+    .into_styled(div_style)
+    .draw(target);
+    let _ = Line::new(
+        Point::new(0, foot_div_y),
+        Point::new(p.width as i32, foot_div_y),
+    )
+    .into_styled(div_style)
+    .draw(target);
 
     draw_title_strip(target, layout, p.width, TITLE_STRIP_BG);
 
@@ -1430,7 +1436,6 @@ const TITLE_STRIP_BG: Rgb565 = Rgb565::new(2, 4, 4);
 /// Corner bracket stroke (`rgb565(0x33, 0x33, 0x50)`).
 /// 四角框线色。
 const CORNER_BRACKET_COLOR: Rgb565 = Rgb565::new(6, 12, 10);
-
 
 /// F3: 格式化副标题 "IP Up:XdYh" 或 "IP Up:XhYm"（栈上，无堆分配）。
 fn format_subtitle_with_uptime<'a>(ip: &'a str, secs: u64, buf: &'a mut [u8; 30]) -> &'a str {

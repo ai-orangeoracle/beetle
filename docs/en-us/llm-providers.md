@@ -13,7 +13,7 @@ Configure sources in the web UI or via SPIFFS `config/llm.json` (or the HTTP API
 
 Field length validation lives in `config`. **Inclusion in the fallback chain** also follows `build_llm_clients`: **empty `api_url` is OK** for the OpenAI-compatible IDs above; **`anthropic` (and any provider not in that list) is skipped when `api_url` is empty**. For non-empty URLs, `AnthropicClient` expects the **full Messages request URL** (same role as the default `https://api.anthropic.com/v1/messages`), see [`anthropic.rs`](../../src/llm/anthropic.rs).
 
-**Multi-source fallback** ([`FallbackLlmClient`](../../src/llm/fallback.rs)): try `llm_sources` **in order**, return the **first Ok**; if all fail, return the **last** error. Router mode is described under **GET /api/config** / multi-LLM fields in [config-api](config-api.md).
+**Multi-source fallback** ([`FallbackLlmClient`](../../src/llm/fallback.rs)): try `llm_sources` **in order**, return the **first Ok**; if all fail, return the **last** error. Runtime behavior is fixed to a **single-stage worker path + fallback**.
 
 Model names in each vendor section are **examples**—follow each vendor’s current documentation.
 

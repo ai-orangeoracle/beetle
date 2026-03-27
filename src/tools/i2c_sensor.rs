@@ -101,7 +101,10 @@ impl I2cSensorTool {
     }
 
     fn build_schema(sensors: &[I2cSensorEntry]) -> Value {
-        let ids: Vec<Value> = sensors.iter().map(|s| Value::String(s.id.clone())).collect();
+        let ids: Vec<Value> = sensors
+            .iter()
+            .map(|s| Value::String(s.id.clone()))
+            .collect();
         json!({
             "type": "object",
             "properties": {

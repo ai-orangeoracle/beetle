@@ -43,10 +43,18 @@ pub fn check_all<H: crate::channels::ChannelHttpClient + ?Sized>(
     loc: Locale,
 ) -> Vec<ChannelConnectivityItem> {
     let mut out = Vec::with_capacity(6);
-    out.push(crate::channels::telegram::check_connectivity(config, http, loc));
-    out.push(crate::channels::feishu::check_connectivity(config, http, loc));
-    out.push(crate::channels::dingtalk::check_connectivity(config, http, loc));
-    out.push(crate::channels::wecom::check_connectivity(config, http, loc));
+    out.push(crate::channels::telegram::check_connectivity(
+        config, http, loc,
+    ));
+    out.push(crate::channels::feishu::check_connectivity(
+        config, http, loc,
+    ));
+    out.push(crate::channels::dingtalk::check_connectivity(
+        config, http, loc,
+    ));
+    out.push(crate::channels::wecom::check_connectivity(
+        config, http, loc,
+    ));
     out.push(crate::channels::qq::check_connectivity(config, http, loc));
     let configured = webhook_configured(config);
     let msg = if configured {

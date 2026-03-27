@@ -25,6 +25,9 @@ pub struct PcMsg {
     )]
     pub chat_id: Arc<str>,
     pub content: String,
+    /// 请求关联 ID：用于贯通 agent -> dispatch -> sender 的端到端时延日志。
+    #[serde(default)]
+    pub req_id: Option<String>,
     /// 是否来自群组（group/supergroup）；用于 system 注入与 SILENT 约定。
     pub is_group: bool,
 }
@@ -76,6 +79,7 @@ impl PcMsg {
             channel: Arc::from(channel.into().as_str()),
             chat_id: Arc::from(chat_id.into().as_str()),
             content,
+            req_id: None,
             is_group,
         })
     }

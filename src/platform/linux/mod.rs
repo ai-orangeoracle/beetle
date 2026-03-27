@@ -42,7 +42,7 @@ pub struct LinuxPlatform {
 impl LinuxPlatform {
     pub fn new() -> Self {
         let state_fs: Arc<dyn StateFs + Send + Sync> =
-            Arc::new(crate::platform::state_fs::LinuxStateFs::default());
+            Arc::new(crate::platform::state_fs::LinuxStateFs);
         Self {
             state_fs,
             config_store: Arc::new(NvsConfigStore),
