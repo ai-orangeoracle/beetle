@@ -220,6 +220,7 @@ export const zhCN = {
       sttProvider: 'STT 提供商',
       sttApiUrl: 'STT API 地址',
       sttApiKey: 'STT API Key',
+      sttApiSecret: 'STT API Secret',
       sttModel: 'STT 模型',
       sttLanguage: 'STT 语言',
       ttsProvider: 'TTS 提供商',
@@ -248,6 +249,7 @@ export const zhCN = {
         vadSilence: '静音判定时长必须在 1～60000ms 之间',
         soundEvents: '监听事件格式不合法（最多 16 项，每项 1～32 字符）',
         checkInterval: '判断间隔必须在 1～86400 秒之间',
+        sttCredentialRequired: '启用麦克风且 STT 为百度时，需填写 STT API Key 与 Secret',
       },
     },
     hardwareConfig: {

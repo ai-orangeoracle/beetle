@@ -217,5 +217,16 @@ pub const I2C_SENSOR_MAX_ENTRIES: usize = 8;
 pub const I2C_SENSOR_ID_MAX_LEN: usize = 64;
 /// I2C 传感器读取最小间隔（毫秒）。
 pub const I2C_SENSOR_RATE_LIMIT_MS: u64 = 2_000;
+// ---------- voice_input / voice_output ----------
+/// 语音采集每帧样本数（16kHz 下约 20ms）。
+pub const AUDIO_CAPTURE_FRAME_SAMPLES: usize = 320;
+/// 单次语音采集最长时长（毫秒）。
+pub const AUDIO_CAPTURE_MAX_MS: u32 = 12_000;
+/// 语音工具可发送到 STT 的最大 PCM 字节数（约 30 秒 16k 单声道 16-bit）。
+pub const AUDIO_STT_MAX_PCM_BYTES: usize = 960_000;
+/// TTS 输入文本最大长度（UTF-8 字节）。
+pub const AUDIO_TTS_MAX_TEXT_LEN: usize = 512;
+/// TTS 播放写喇叭时的分块样本数。
+pub const AUDIO_TTS_WRITE_CHUNK_SAMPLES: usize = 1024;
 /// `raw` 模型 `options.init_cmd` 最大长度（字节）。
 pub const I2C_SENSOR_MAX_CMD_LEN: usize = 4;

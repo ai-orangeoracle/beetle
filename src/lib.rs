@@ -10,6 +10,7 @@ pub use build_info::{build_board_id, ota_manifest_url};
 /// Re-export PlatformHttpClient at crate root so core modules (agent, tools) can depend on
 /// `crate::PlatformHttpClient` without importing `crate::platform` directly.
 pub use platform::PlatformHttpClient;
+pub mod audio;
 pub mod agent;
 pub mod bus;
 pub mod channels;
@@ -81,8 +82,8 @@ pub use tools::{
     build_default_registry, CronManageTool, DeviceControlTool, FileWriteTool, FilesTool,
     GetTimeTool, HttpRequestTool, I2cDeviceTool, I2cSensorTool, KvStoreTool, MemoryManageTool,
     ModelConfigTool, NetworkScanTool, ProxyConfigTool, RemindAtTool, SensorWatchTool,
-    SessionManageTool, SystemControlTool, Tool, ToolContext, ToolRegistry,
-    UpdateSessionSummaryTool, WebSearchTool,
+    SessionManageTool, SystemControlTool, Tool, ToolContext, ToolRegistry, UpdateSessionSummaryTool,
+    VoiceInputTool, VoiceOutputTool, WebSearchTool,
 };
 
 /// 任何 PlatformHttpClient 均可作为 LlmHttpClient、ToolContext、ChannelHttpClient 使用。

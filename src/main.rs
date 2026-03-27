@@ -135,6 +135,8 @@ fn bootstrap_config_and_wifi(platform: &Arc<dyn Platform>) -> (Arc<AppConfig>, b
 
     #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
     esp_boot_display_after_wifi(platform, &config, wifi_init_ok);
+    #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+    esp_boot_audio_after_wifi(platform, &config);
 
     (config, wifi_init_ok)
 }
@@ -207,6 +209,24 @@ fn esp_boot_display_after_wifi(
             .unwrap_or_else(|| SOFTAP_DEFAULT_IPV4.to_string());
         let uptime_secs = beetle::platform::time::uptime_secs();
         let _ = platform.display_command(DisplayCommand::UpdateIp { ip, uptime_secs });
+    }
+}
+
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+fn esp_boot_audio_after_wifi(platform: &Arc<dyn Platform>, config: &Arc<AppConfig>) {
+    if let Some(audio_cfg) = config.audio.as_ref() {
+        if audio_cfg.enabled {
+            if let Err(e) = platform.init_audio(audio_cfg) {
+                log::warn!("[{}] audio init failed (degraded): {}", TAG, e);
+            } else {
+                log::info!(
+                    "[{}] audio initialized (mic_ready={}, speaker_ready={})",
+                    TAG,
+                    platform.audio_mic_ready(),
+                    platform.audio_speaker_ready()
+                );
+            }
+        }
     }
 }
 

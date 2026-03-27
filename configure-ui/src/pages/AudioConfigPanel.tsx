@@ -50,6 +50,7 @@ import {
   ambientCooldownOptions,
   ambientIntervalOptions,
   bufferSelectOptions,
+  DEFAULT_STT_API_URL_BAIDU,
   DEFAULT_STT_API_URL_WHISPER,
   defaultAudioConfig,
   normalizeAudioConfigForSave,
@@ -144,6 +145,14 @@ function validateAudioConfig(
   }
   if (form.led_indicator.enabled && !pinInRange(form.led_indicator.pin)) {
     return t('audioConfig.validation.pin')
+  }
+  if (
+    form.enabled &&
+    form.microphone.enabled &&
+    form.stt.provider === 'baidu' &&
+    (!form.stt.api_key.trim() || !form.stt.api_secret.trim())
+  ) {
+    return t('audioConfig.validation.sttCredentialRequired')
   }
   return null
 }
@@ -787,8 +796,19 @@ export function AudioConfigPanel() {
                                     ? form.stt.api_url.trim()
                                       ? form.stt.api_url
                                       : DEFAULT_STT_API_URL_WHISPER
+                                    : p === 'baidu'
+                                      ? form.stt.api_url.trim()
+                                        ? form.stt.api_url
+                                        : DEFAULT_STT_API_URL_BAIDU
                                     : form.stt.api_url,
-                                model: p === 'whisper' ? 'whisper-1' : form.stt.model,
+                                model:
+                                  p === 'whisper'
+                                    ? 'whisper-1'
+                                    : p === 'baidu'
+                                      ? form.stt.model.trim()
+                                        ? form.stt.model
+                                        : '1537'
+                                      : form.stt.model,
                               },
                             })
                           }}
@@ -851,6 +871,20 @@ export function AudioConfigPanel() {
                           setDraftSafe({ ...form, stt: { ...form.stt, api_key: e.target.value } })
                         }
                       />
+                      {form.stt.provider === 'baidu' ? (
+                        <TextField
+                          size="small"
+                          label={t('audioConfig.sttApiSecret')}
+                          type="password"
+                          value={form.stt.api_secret}
+                          onChange={(e) =>
+                            setDraftSafe({
+                              ...form,
+                              stt: { ...form.stt, api_secret: e.target.value },
+                            })
+                          }
+                        />
+                      ) : null}
                       {form.stt.provider !== 'whisper' ? (
                         <TextField
                           size="small"

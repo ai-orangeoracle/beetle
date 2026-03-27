@@ -208,6 +208,7 @@
   - `version` 必须为 `1`
   - 启用的 microphone/speaker 引脚需在 1～48；采样率 8000～48000；位深 16/24/32
   - microphone `buffer_size` 需在 256～16384
+  - 当 `enabled=true` 且 `microphone.enabled=true` 且 `stt.provider="baidu"` 时，`stt.api_key` 与 `stt.api_secret` 必填
   - `vad.threshold` 需在 [0,1]；`silence_duration_ms` 需在 1～60000
   - `ambient_listening.sound_events` 最多 16 项，每项 1～32 字符；`check_interval_seconds` 需在 1～86400
 - **响应**：成功 200，`{"ok": true, "restart_required": true}`；校验失败 400。

@@ -2,6 +2,8 @@
 //! Platform: only place that depends on esp-idf-svc/hardware.
 
 pub mod abstraction;
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+pub(crate) mod audio_drivers;
 pub mod board_info;
 pub mod csrf;
 pub mod display_driver;

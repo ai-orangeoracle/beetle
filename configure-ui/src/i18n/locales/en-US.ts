@@ -220,6 +220,7 @@ export const enUS = {
       sttProvider: 'STT provider',
       sttApiUrl: 'STT API URL',
       sttApiKey: 'STT API Key',
+      sttApiSecret: 'STT API Secret',
       sttModel: 'STT model',
       sttLanguage: 'STT language',
       ttsProvider: 'TTS provider',
@@ -248,6 +249,7 @@ export const enUS = {
         vadSilence: 'Silence duration must be 1–60000ms',
         soundEvents: 'Invalid sound events (max 16 items, each 1–32 chars)',
         checkInterval: 'Check interval must be 1–86400 seconds',
+        sttCredentialRequired: 'When microphone is enabled and STT provider is baidu, STT API Key and Secret are required',
       },
     },
     hardwareConfig: {

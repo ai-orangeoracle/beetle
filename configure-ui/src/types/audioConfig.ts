@@ -43,6 +43,7 @@ export interface AudioSttConfig {
   provider: string
   api_url: string
   api_key: string
+  api_secret: string
   model: string
   language: string
 }
@@ -154,10 +155,17 @@ export const AUDIO_AMBIENT_CHECK_INTERVAL_PRESETS = [60, 120, 300, 600, 1800] as
 
 export const DEFAULT_STT_API_URL_WHISPER =
   'https://api.openai.com/v1/audio/transcriptions'
+export const DEFAULT_STT_API_URL_BAIDU = 'https://vop.baidu.com/server_api'
 
 /** 保存前补齐默认 URL（Whisper 在 UI 中可隐藏地址栏） */
 export function normalizeAudioConfigForSave(c: AudioConfig): AudioConfig {
   const stt = { ...c.stt }
+  if (stt.provider === 'baidu' && !stt.api_url.trim()) {
+    stt.api_url = DEFAULT_STT_API_URL_BAIDU
+  }
+  if (stt.provider === 'baidu' && !stt.model.trim()) {
+    stt.model = '1537'
+  }
   if (stt.provider === 'whisper' && !stt.api_url.trim()) {
     stt.api_url = DEFAULT_STT_API_URL_WHISPER
   }
@@ -235,15 +243,16 @@ export function defaultAudioConfig(): AudioConfig {
       keyword: 'hi_beetle',
     },
     stt: {
-      provider: 'whisper',
-      api_url: 'https://api.openai.com/v1/audio/transcriptions',
+      provider: 'baidu',
+      api_url: 'https://vop.baidu.com/server_api',
       api_key: '',
-      model: 'whisper-1',
+      api_secret: '',
+      model: '1537',
       language: 'zh',
     },
     tts: {
-      provider: 'edge',
-      voice: 'zh-CN-XiaoxiaoNeural',
+      provider: 'baidu',
+      voice: '0',
       rate: '+0%',
       pitch: '+0Hz',
     },

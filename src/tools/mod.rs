@@ -24,6 +24,8 @@ pub mod sensor_watch;
 pub mod session_manage;
 pub mod system_control;
 pub mod update_session_summary;
+pub mod voice_input;
+pub mod voice_output;
 pub mod web_search;
 
 pub use analyze_image::AnalyzeImageTool;
@@ -47,6 +49,8 @@ pub use sensor_watch::SensorWatchTool;
 pub use session_manage::SessionManageTool;
 pub use system_control::SystemControlTool;
 pub use update_session_summary::UpdateSessionSummaryTool;
+pub use voice_input::VoiceInputTool;
+pub use voice_output::VoiceOutputTool;
 pub use web_search::WebSearchTool;
 
 use crate::error::{Error, Result};

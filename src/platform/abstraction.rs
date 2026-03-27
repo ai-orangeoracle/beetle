@@ -1,7 +1,7 @@
 //! 平台抽象 trait：ConfigStore、SkillStorage、PlatformHttpClient、Platform。
 //! 核心域与 main 仅依赖这些 trait，便于后续支持多种硬件。
 
-use crate::config::{AppConfig, PinConfig};
+use crate::config::{AppConfig, AudioSegment, PinConfig};
 use crate::display::{DisplayCommand, DisplayConfig};
 use crate::error::Result;
 use crate::memory::{
@@ -246,6 +246,37 @@ pub trait Platform: Send + Sync {
     /// 初始化显示器硬件。默认 no-op（非显示平台）。
     fn init_display(&self, _config: &DisplayConfig) -> Result<()> {
         Ok(())
+    }
+
+    /// 初始化音频硬件（麦克风/喇叭）。默认 no-op（非音频平台）。
+    fn init_audio(&self, _config: &AudioSegment) -> Result<()> {
+        Ok(())
+    }
+
+    /// 麦克风链路是否可用。默认 false。
+    fn audio_mic_ready(&self) -> bool {
+        false
+    }
+
+    /// 喇叭链路是否可用。默认 false。
+    fn audio_speaker_ready(&self) -> bool {
+        false
+    }
+
+    /// 读取 PCM i16 单声道采样帧；返回实际样本数。默认返回不支持错误。
+    fn read_mic_pcm_i16(&self, _out: &mut [i16]) -> Result<usize> {
+        Err(crate::error::Error::config(
+            "audio_mic",
+            "Microphone input not supported on this platform",
+        ))
+    }
+
+    /// 写入 PCM i16 单声道采样帧。默认返回不支持错误。
+    fn write_speaker_pcm_i16(&self, _buf: &[i16]) -> Result<()> {
+        Err(crate::error::Error::config(
+            "audio_speaker",
+            "Speaker output not supported on this platform",
+        ))
     }
 
     /// 显示器是否可用。默认 false。

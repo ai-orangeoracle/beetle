@@ -169,5 +169,38 @@ pub fn build_default_registry(
             config.i2c_sensors.clone(),
         )));
     }
+    if let Some(audio_cfg) = config.audio.clone() {
+        let stt_ok = audio_cfg.stt.provider == "baidu"
+            && !audio_cfg.stt.api_key.trim().is_empty()
+            && !audio_cfg.stt.api_secret.trim().is_empty()
+            && !audio_cfg.stt.api_url.trim().is_empty()
+            && audio_cfg.microphone.enabled;
+        let tts_ok = audio_cfg.tts.provider == "baidu" && audio_cfg.speaker.enabled;
+        let baidu_token_cache = if audio_cfg.enabled && (stt_ok || tts_ok) {
+            Some(Arc::new(crate::audio::baidu_token::BaiduTokenCache::new()))
+        } else {
+            None
+        };
+        if audio_cfg.enabled && stt_ok {
+            if let Some(ref cache) = baidu_token_cache {
+                registry.register(Box::new(super::VoiceInputTool::new(
+                    Arc::clone(&platform),
+                    config.clone(),
+                    audio_cfg.clone(),
+                    Arc::clone(cache),
+                )));
+            }
+        }
+        if audio_cfg.enabled && tts_ok {
+            if let Some(ref cache) = baidu_token_cache {
+                registry.register(Box::new(super::VoiceOutputTool::new(
+                    Arc::clone(&platform),
+                    config.clone(),
+                    audio_cfg,
+                    Arc::clone(cache),
+                )));
+            }
+        }
+    }
     registry
 }

@@ -169,6 +169,13 @@ pub struct AppConfig {
     #[serde(default)]
     pub llm_stream: bool,
 
+    /// 优先使用的 `llm_sources` 下标；None 表示按列表顺序构建回退链（与 Web UI「主用源」一致）。
+    #[serde(default)]
+    pub llm_router_source_index: Option<u32>,
+    /// 主用失败后优先尝试的下标；None 表示主用后按其余有效源顺序继续（与 Web UI「备用源」一致）。
+    #[serde(default)]
+    pub llm_worker_source_index: Option<u32>,
+
     /// 硬件设备配置（从 SPIFFS config/hardware.json 加载），不序列化到 NVS。
     #[serde(skip, default)]
     pub hardware_devices: Vec<DeviceEntry>,
@@ -186,6 +193,9 @@ pub struct AppConfig {
     /// 显示配置（从 SPIFFS config/display.json 加载），不序列化到 NVS。
     #[serde(skip, default)]
     pub display: Option<DisplayConfig>,
+    /// 音频配置（从 SPIFFS config/audio.json 加载），不序列化到 NVS。
+    #[serde(skip, default)]
+    pub audio: Option<AudioSegment>,
 
     /// 加载过程中产生的可观测错误（NVS/SPIFFS/JSON 解析），仅 load() 内写入，不序列化。
     #[serde(skip, default)]
@@ -265,11 +275,14 @@ impl AppConfig {
             llm_stream: option_env!("BEETLE_LLM_STREAM")
                 .map(|s| s == "1" || s.eq_ignore_ascii_case("true"))
                 .unwrap_or(false),
+            llm_router_source_index: None,
+            llm_worker_source_index: None,
             hardware_devices: vec![],
             i2c_bus: None,
             i2c_devices: vec![],
             i2c_sensors: vec![],
             display: None,
+            audio: None,
             load_errors: None,
         }
     }
@@ -370,6 +383,16 @@ impl AppConfig {
                     load_errors.push("spiffs_display_read_error".into());
                 }
             }
+            match r.read_config_file("config/audio.json") {
+                Ok(Some(b)) => {
+                    let s = String::from_utf8_lossy(&b);
+                    c.merge_audio_from_json(&s, &mut load_errors);
+                }
+                Ok(None) => {}
+                Err(_) => {
+                    load_errors.push("spiffs_audio_read_error".into());
+                }
+            }
         }
         if c.llm_sources.is_empty() {
             c.llm_sources = vec![LlmSource {
@@ -393,6 +416,8 @@ impl AppConfig {
         match serde_json::from_str::<LlmSegment>(json) {
             Ok(seg) => {
                 self.llm_stream = seg.llm_stream;
+                self.llm_router_source_index = seg.llm_router_source_index;
+                self.llm_worker_source_index = seg.llm_worker_source_index;
                 if !seg.llm_sources.is_empty() {
                     self.llm_sources = seg.llm_sources.clone();
                     let first = &self.llm_sources[0];
@@ -480,6 +505,27 @@ impl AppConfig {
             Err(e) => {
                 log::warn!("[config] merge_display_from_json parse failed: {}", e);
                 errors.push("display_json_invalid".into());
+            }
+        }
+    }
+
+    /// 从 SPIFFS 读到的 audio.json 字符串合并到当前 config。
+    pub fn merge_audio_from_json(&mut self, json: &str, errors: &mut Vec<String>) {
+        match serde_json::from_str::<AudioSegment>(json) {
+            Ok(mut seg) => {
+                if seg.version == 0 {
+                    seg.version = AUDIO_CONFIG_VERSION;
+                }
+                if let Err(e) = validate_audio_segment(&seg) {
+                    log::warn!("[config] merge_audio_from_json validation failed: {}", e);
+                    errors.push("audio_validation_failed".into());
+                    return;
+                }
+                self.audio = Some(seg);
+            }
+            Err(e) => {
+                log::warn!("[config] merge_audio_from_json parse failed: {}", e);
+                errors.push("audio_json_invalid".into());
             }
         }
     }
@@ -734,6 +780,11 @@ impl AppConfig {
             }];
         }
         validate_llm_sources(&c.llm_sources)?;
+        validate_llm_source_indices(
+            c.llm_sources.len(),
+            c.llm_router_source_index,
+            c.llm_worker_source_index,
+        )?;
         if c.tg_group_activation != "mention" && c.tg_group_activation != "always" {
             return Err(Error::config(
                 "config",
@@ -821,6 +872,10 @@ pub struct LlmSegment {
     pub llm_sources: Vec<LlmSource>,
     #[serde(default)]
     pub llm_stream: bool,
+    #[serde(default)]
+    pub llm_router_source_index: Option<u32>,
+    #[serde(default)]
+    pub llm_worker_source_index: Option<u32>,
 }
 
 /// 允许的 enabled_channel 取值；空表示不启用任何通道。
@@ -902,6 +957,7 @@ const AUDIO_VOICE_MAX_LEN: usize = 64;
 const AUDIO_RATE_MAX_LEN: usize = 16;
 const AUDIO_PITCH_MAX_LEN: usize = 16;
 const AUDIO_STT_API_KEY_MAX_LEN: usize = 256;
+const AUDIO_STT_API_SECRET_MAX_LEN: usize = 256;
 const AUDIO_SOUND_EVENTS_MAX: usize = 16;
 const AUDIO_SOUND_EVENT_MAX_LEN: usize = 32;
 
@@ -967,6 +1023,10 @@ pub struct AudioWakeWordConfig {
     pub keyword: String,
 }
 
+/// 语音识别（STT）配置。
+/// For Baidu (`provider == "baidu"`), `api_key` / `api_secret` are the same application credentials
+/// used to obtain OAuth `access_token` for **both** STT and TTS; TTS does not carry separate keys.
+/// 百度场景下 `api_key`、`api_secret` 为语音应用凭证，**STT 与 TTS 共用**，换取的 token 两端通用。
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AudioSttConfig {
     #[serde(default)]
@@ -976,11 +1036,14 @@ pub struct AudioSttConfig {
     #[serde(default)]
     pub api_key: String,
     #[serde(default)]
+    pub api_secret: String,
+    #[serde(default)]
     pub model: String,
     #[serde(default)]
     pub language: String,
 }
 
+/// 语音合成（TTS）音色与语速等。**百度 TTS** 的鉴权与 `AudioSttConfig` 共用 `api_key` / `api_secret`（见该结构体说明），本结构不含密钥字段。
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AudioTtsConfig {
     #[serde(default)]
@@ -1111,15 +1174,16 @@ pub fn default_disabled_audio_segment() -> AudioSegment {
             keyword: "hi_beetle".to_string(),
         },
         stt: AudioSttConfig {
-            provider: "whisper".to_string(),
-            api_url: "https://api.openai.com/v1/audio/transcriptions".to_string(),
+            provider: "baidu".to_string(),
+            api_url: "https://vop.baidu.com/server_api".to_string(),
             api_key: String::new(),
-            model: "whisper-1".to_string(),
+            api_secret: String::new(),
+            model: "1537".to_string(),
             language: "zh".to_string(),
         },
         tts: AudioTtsConfig {
-            provider: "edge".to_string(),
-            voice: "zh-CN-XiaoxiaoNeural".to_string(),
+            provider: "baidu".to_string(),
+            voice: "0".to_string(),
             rate: "+0%".to_string(),
             pitch: "+0Hz".to_string(),
         },
@@ -1228,6 +1292,37 @@ pub struct HardwareSegment {
     pub i2c_devices: Vec<I2cDeviceEntry>,
     #[serde(default)]
     pub i2c_sensors: Vec<I2cSensorEntry>,
+}
+
+/// 校验主用/备用下标在 `llm_sources` 范围内（与 Web UI 一致）。
+fn validate_llm_source_indices(
+    len: usize,
+    router: Option<u32>,
+    worker: Option<u32>,
+) -> Result<()> {
+    if let Some(i) = router {
+        if (i as usize) >= len {
+            return Err(Error::config(
+                "config",
+                format!(
+                    "llm_router_source_index {} out of range (llm_sources len {})",
+                    i, len
+                ),
+            ));
+        }
+    }
+    if let Some(i) = worker {
+        if (i as usize) >= len {
+            return Err(Error::config(
+                "config",
+                format!(
+                    "llm_worker_source_index {} out of range (llm_sources len {})",
+                    i, len
+                ),
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// 私有：校验 llm_sources 非空、字段长度。供 from_json_and_validate 与 save_llm_segment 复用。
@@ -1405,10 +1500,29 @@ fn validate_audio_segment(seg: &AudioSegment) -> Result<()> {
             format!("stt.api_key length must be <= {}", AUDIO_STT_API_KEY_MAX_LEN),
         ));
     }
+    if seg.stt.api_secret.len() > AUDIO_STT_API_SECRET_MAX_LEN {
+        return Err(Error::config(
+            "audio",
+            format!(
+                "stt.api_secret length must be <= {}",
+                AUDIO_STT_API_SECRET_MAX_LEN
+            ),
+        ));
+    }
     if seg.stt.api_url.len() > CONFIG_URL_MAX_LEN {
         return Err(Error::config(
             "audio",
             format!("stt.api_url length must be <= {}", CONFIG_URL_MAX_LEN),
+        ));
+    }
+    if seg.enabled
+        && seg.microphone.enabled
+        && seg.stt.provider == "baidu"
+        && (seg.stt.api_key.trim().is_empty() || seg.stt.api_secret.trim().is_empty())
+    {
+        return Err(Error::config(
+            "audio",
+            "stt.api_key and stt.api_secret are required when stt.provider == baidu",
         ));
     }
 
@@ -1903,6 +2017,11 @@ pub fn save_llm_segment(writer: &dyn ConfigFileStore, body: &str) -> Result<()> 
         }
     }
     validate_llm_sources(&seg.llm_sources)?;
+    validate_llm_source_indices(
+        seg.llm_sources.len(),
+        seg.llm_router_source_index,
+        seg.llm_worker_source_index,
+    )?;
     let json =
         serde_json::to_string(&seg).map_err(|e| Error::config("serialize", e.to_string()))?;
     writer.write_config_file("config/llm.json", json.as_bytes())?;

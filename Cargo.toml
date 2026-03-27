@@ -39,6 +39,8 @@ ed25519-dalek = { version = "2.1", default-features = false, features = ["std"] 
 hex = "0.4"
 getrandom = "0.2"
 indexmap = "2.0"
+base64 = "0.22"
+urlencoding = "2.1"
 
 [target.'cfg(any(target_arch = "xtensa", target_arch = "riscv32"))'.dependencies]
 embedded-svc = "0.29"

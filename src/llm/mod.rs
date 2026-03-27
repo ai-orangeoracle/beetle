@@ -20,10 +20,71 @@ pub use types::{
     MAX_MESSAGE_CONTENT_LEN, MAX_REQUEST_BODY_LEN,
 };
 
-use crate::config::AppConfig;
+use crate::config::{AppConfig, LlmSource};
 use crate::error::Result;
 use crate::i18n::Locale;
+use std::collections::HashSet;
 use std::sync::Arc;
+
+fn llm_source_is_usable(s: &LlmSource) -> bool {
+    let has_key = !s.api_key.trim().is_empty();
+    let has_model = !s.model.trim().is_empty();
+    let has_provider = !s.provider.trim().is_empty();
+    let has_url = !s.api_url.trim().is_empty()
+        || s.provider == "openai"
+        || s.provider == "openai_compatible"
+        || s.provider == "gemini"
+        || s.provider == "glm"
+        || s.provider == "qwen"
+        || s.provider == "deepseek"
+        || s.provider == "moonshot"
+        || s.provider == "ollama";
+    has_key && has_model && has_provider && has_url
+}
+
+/// 回退链下标顺序：未指定主用时按列表顺序；指定主用时先主用、再备用（若设且有效）、再其余有效源。
+fn llm_fallback_source_indices(config: &AppConfig) -> Vec<usize> {
+    let n = config.llm_sources.len();
+    let valid: Vec<bool> = config
+        .llm_sources
+        .iter()
+        .map(llm_source_is_usable)
+        .collect();
+    let valid_list: Vec<usize> = (0..n).filter(|&i| valid[i]).collect();
+    let router = config.llm_router_source_index.map(|u| u as usize);
+    let worker = config.llm_worker_source_index.map(|u| u as usize);
+    match router {
+        None => valid_list,
+        Some(r) if r < n && valid.get(r).copied().unwrap_or(false) => {
+            let mut out = vec![r];
+            let mut seen = HashSet::from([r]);
+            if let Some(w) = worker {
+                if w < n && w != r && valid.get(w).copied().unwrap_or(false) {
+                    out.push(w);
+                    seen.insert(w);
+                }
+            }
+            for i in valid_list {
+                if !seen.contains(&i) {
+                    out.push(i);
+                }
+            }
+            out
+        }
+        Some(_) => {
+            // 主用下标无效或源未就绪时回退为列表顺序，避免整链为空。
+            valid_list
+        }
+    }
+}
+
+fn box_client_for_source(s: &LlmSource, global_stream: bool) -> Box<dyn LlmClient> {
+    match s.provider.as_str() {
+        "openai" | "openai_compatible" | "gemini" | "glm" | "qwen" | "deepseek" | "moonshot"
+        | "ollama" => Box::new(OpenAiCompatibleClient::from_source(s, global_stream)),
+        _ => Box::new(AnthropicClient::from_source(s, global_stream)),
+    }
+}
 
 /// 从配置构建单一 worker LLM 客户端。
 /// worker 内部使用 Fallback 链。空列表返回 NoopLlmClient。
@@ -35,33 +96,10 @@ pub fn build_llm_clients(
 
     let global_stream = config.llm_stream;
 
-    let llm_clients: Vec<Box<dyn LlmClient>> = config
-        .llm_sources
-        .iter()
-        .filter(|s| {
-            let has_key = !s.api_key.trim().is_empty();
-            let has_model = !s.model.trim().is_empty();
-            let has_provider = !s.provider.trim().is_empty();
-            let has_url = !s.api_url.trim().is_empty()
-                || s.provider == "openai"
-                || s.provider == "openai_compatible"
-                || s.provider == "gemini"
-                || s.provider == "glm"
-                || s.provider == "qwen"
-                || s.provider == "deepseek"
-                || s.provider == "moonshot"
-                || s.provider == "ollama";
-            has_key && has_model && has_provider && has_url
-        })
-        .map(|s| -> Box<dyn LlmClient> {
-            match s.provider.as_str() {
-                "openai" | "openai_compatible" | "gemini" | "glm" | "qwen" | "deepseek"
-                | "moonshot" | "ollama" => {
-                    Box::new(OpenAiCompatibleClient::from_source(s, global_stream))
-                }
-                _ => Box::new(AnthropicClient::from_source(s, global_stream)),
-            }
-        })
+    let llm_clients: Vec<Box<dyn LlmClient>> = llm_fallback_source_indices(config)
+        .into_iter()
+        .filter_map(|i| config.llm_sources.get(i))
+        .map(|s| box_client_for_source(s, global_stream))
         .collect();
 
     if llm_clients.is_empty() {
