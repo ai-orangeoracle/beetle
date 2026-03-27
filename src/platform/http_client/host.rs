@@ -28,7 +28,11 @@ fn normalize_proxy_for_ureq(trimmed: &str) -> String {
 }
 
 fn build_agent(proxy_url: Option<&str>, stage: &'static str) -> Result<ureq::Agent> {
-    let mut b = ureq::AgentBuilder::new().timeout(Duration::from_millis(REQUEST_TIMEOUT_MS));
+    let timeout = Duration::from_millis(REQUEST_TIMEOUT_MS);
+    let mut b = ureq::AgentBuilder::new()
+        .timeout_connect(timeout)
+        .timeout_read(timeout)
+        .timeout_write(timeout);
     if let Some(url) = proxy_url {
         if !url.is_empty() {
             let proxy = ureq::Proxy::new(url).map_err(|e| Error::Other {

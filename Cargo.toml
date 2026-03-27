@@ -45,6 +45,7 @@ esp-idf-hal = "0.46.2"
 esp-idf-svc = "0.52"
 
 [target.'cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))'.dependencies]
+libc = "0.2"
 env_logger = "0.11"
 # Step 7.2：Linux 配置 API（同步 HTTP，无 tokio）
 tiny_http = "0.12"
@@ -57,7 +58,6 @@ tungstenite = { version = "0.24", default-features = false, features = ["handsha
 rtnetlink = "0.20"
 tokio = { version = "1", features = ["rt", "macros", "net", "time"] }
 futures = "0.3"
-libc = "0.2"
 
 [features]
 default = ["config_api", "feishu"]

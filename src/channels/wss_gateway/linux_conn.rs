@@ -19,12 +19,16 @@ use crate::channels::wss_gateway::connection::{
 };
 use crate::error::{Error, Result};
 use tungstenite::stream::MaybeTlsStream;
-use tungstenite::{client::connect, protocol::Message, WebSocket};
+use tungstenite::{protocol::Message, WebSocket};
 
 /// 与 `esp_conn` 一致。
 const WSS_TLS_ADMISSION_TIMEOUT_SECS: u64 = 10;
 /// 与 `wss_gateway/loop.rs` 中 `WDT_RECV_CHUNK_SECS` 一致（单次 `read` 阻塞上限）。
 const SOCKET_READ_TIMEOUT_SECS: u64 = 25;
+/// TCP write 超时；防止网络异常时 `ws.send()` 无限阻塞。
+const SOCKET_WRITE_TIMEOUT_SECS: u64 = 15;
+/// TCP connect 超时；避免 DNS/路由不可达时阻塞 127s+。
+const TCP_CONNECT_TIMEOUT_SECS: u64 = 15;
 
 fn map_io(stage: &'static str, e: std::io::Error) -> Error {
     Error::Other {
@@ -164,22 +168,62 @@ impl WssConnection for LinuxWssConnection {
 }
 
 /// 建立 WSS 连接（`wss://`）；与 ESP 相同在握手前申请 orchestrator TLS 准入。
+///
+/// 使用 `TcpStream::connect_timeout` 限制 TCP 建连时间（避免默认 127s+ SYN 超时），
+/// 并设置 read / write timeout 防止后续 `ws.send()` / `ws.read()` 无限阻塞。
 pub fn connect_linux_wss(url: &str) -> Result<LinuxWssConnection> {
     let _permit = crate::orchestrator::request_http_permit(
         crate::orchestrator::Priority::Normal,
         Duration::from_secs(WSS_TLS_ADMISSION_TIMEOUT_SECS),
     )?;
 
-    let (mut ws, _resp) = connect(url).map_err(|e| map_tungstenite("wss_linux_connect", e))?;
+    let tcp = tcp_connect_with_timeout(url)?;
+    tcp.set_read_timeout(Some(Duration::from_secs(SOCKET_READ_TIMEOUT_SECS)))
+        .map_err(|e| map_io("wss_linux_connect", e))?;
+    tcp.set_write_timeout(Some(Duration::from_secs(SOCKET_WRITE_TIMEOUT_SECS)))
+        .map_err(|e| map_io("wss_linux_connect", e))?;
 
-    set_tcp_read_timeout(
-        ws.get_mut(),
-        Some(Duration::from_secs(SOCKET_READ_TIMEOUT_SECS)),
-    )
-    .map_err(|e| map_io("wss_linux_connect", e))?;
+    let (ws, _resp) = tungstenite::client_tls(url, tcp)
+        .map_err(|e| Error::Other {
+            source: Box::new(std::io::Error::other(e.to_string())),
+            stage: "wss_linux_connect",
+        })?;
 
     Ok(LinuxWssConnection {
         ws,
         last_read_timeout: Some(Duration::from_secs(SOCKET_READ_TIMEOUT_SECS)),
     })
+}
+
+/// 从 `wss://host:port/path` 中提取 `host:port`（默认 443）。
+fn parse_wss_host_port(url: &str) -> Option<String> {
+    let rest = url.strip_prefix("wss://").or_else(|| url.strip_prefix("ws://"))?;
+    let authority = rest.split('/').next().unwrap_or(rest);
+    if authority.is_empty() {
+        return None;
+    }
+    if authority.contains(':') {
+        Some(authority.to_string())
+    } else {
+        Some(format!("{}:443", authority))
+    }
+}
+
+fn tcp_connect_with_timeout(url: &str) -> Result<TcpStream> {
+    use std::net::ToSocketAddrs;
+
+    let host_port = parse_wss_host_port(url).ok_or_else(|| Error::Other {
+        source: Box::new(std::io::Error::new(ErrorKind::InvalidInput, "cannot parse host from wss url")),
+        stage: "wss_linux_connect",
+    })?;
+    let addr = host_port.to_socket_addrs()
+        .map_err(|e| map_io("wss_linux_dns", e))?
+        .next()
+        .ok_or_else(|| Error::Other {
+            source: Box::new(std::io::Error::new(ErrorKind::AddrNotAvailable, "dns resolved to nothing")),
+            stage: "wss_linux_dns",
+        })?;
+
+    TcpStream::connect_timeout(&addr, Duration::from_secs(TCP_CONNECT_TIMEOUT_SECS))
+        .map_err(|e| map_io("wss_linux_tcp_connect", e))
 }

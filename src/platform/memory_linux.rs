@@ -30,7 +30,7 @@ pub fn linux_memory_snapshot() -> MemorySnapshot {
     }
 }
 
-fn parse_meminfo_kb(content: &str, prefix: &str) -> Option<u64> {
+pub(crate) fn parse_meminfo_kb(content: &str, prefix: &str) -> Option<u64> {
     for line in content.lines() {
         let line = line.trim_start();
         if let Some(rest) = line.strip_prefix(prefix) {
@@ -42,13 +42,20 @@ fn parse_meminfo_kb(content: &str, prefix: &str) -> Option<u64> {
     None
 }
 
-fn kb_to_bytes_saturating_u32(kb: u64) -> u32 {
+pub(crate) fn kb_to_bytes_saturating_u32(kb: u64) -> u32 {
     let bytes = kb.saturating_mul(1024);
     if bytes >= u64::from(u32::MAX) {
         u32::MAX
     } else {
         bytes as u32
     }
+}
+
+/// `/proc/meminfo` 中 kB 数值转为字节（u64），供 board_info 等需要完整精度的路径。
+/// Convert meminfo kB line value to bytes (u64) for board_info and similar.
+#[cfg(target_os = "linux")]
+pub(crate) fn meminfo_kb_to_bytes(kb: u64) -> u64 {
+    kb.saturating_mul(1024)
 }
 
 #[cfg(test)]

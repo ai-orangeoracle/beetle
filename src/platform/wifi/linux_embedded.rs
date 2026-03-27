@@ -179,7 +179,8 @@ pub fn connect(config: &AppConfig) -> Result<Option<WifiScanHandle>> {
 
     // When concurrent STA+AP is supported AND STA is requested, use a virtual AP interface
     // so hostapd and wpa_supplicant don't fight over the same nl80211 interface.
-    let ap_iface = if concurrent && want_sta {
+    let mut effective_concurrent = concurrent;
+    let mut ap_iface = if concurrent && want_sta {
         match net::create_virtual_ap_iface(&iface, WIFI_LINUX_AP_VIRT_IFACE) {
             Ok(()) => {
                 log::info!(
@@ -192,12 +193,13 @@ pub fn connect(config: &AppConfig) -> Result<Option<WifiScanHandle>> {
             }
             Err(e) => {
                 log::warn!(
-                    "[{}] failed to create virtual AP iface '{}': {}; falling back to '{}'",
+                    "[{}] failed to create virtual AP iface '{}': {}; degrading to SoftAP-only on '{}'",
                     TAG,
                     WIFI_LINUX_AP_VIRT_IFACE,
                     e,
                     iface
                 );
+                effective_concurrent = false;
                 iface.clone()
             }
         }
@@ -205,7 +207,31 @@ pub fn connect(config: &AppConfig) -> Result<Option<WifiScanHandle>> {
         iface.clone()
     };
 
-    hostapd::start_ap(&ap_iface, SOFTAP_SSID, ap_ip)?;
+    if let Err(e) = hostapd::start_ap(&ap_iface, SOFTAP_SSID, ap_ip) {
+        if ap_iface != iface {
+            log::warn!(
+                "[{}] start AP on virtual iface '{}' failed: {}; deleting iface and degrading to SoftAP-only on '{}'",
+                TAG,
+                ap_iface,
+                e,
+                iface
+            );
+            hostapd::stop_ap(&ap_iface);
+            if let Err(del_err) = net::delete_virtual_iface(&ap_iface) {
+                log::warn!(
+                    "[{}] failed to delete virtual AP iface '{}' after AP start failure: {}",
+                    TAG,
+                    ap_iface,
+                    del_err
+                );
+            }
+            ap_iface = iface.clone();
+            effective_concurrent = false;
+            hostapd::start_ap(&ap_iface, SOFTAP_SSID, ap_ip)?;
+        } else {
+            return Err(e);
+        }
+    }
     clear_sta_state();
 
     let ap_ip_owned = ap_ip.to_string();
@@ -219,9 +245,9 @@ pub fn connect(config: &AppConfig) -> Result<Option<WifiScanHandle>> {
         }));
     }
 
-    if !concurrent {
+    if !effective_concurrent {
         log::warn!(
-            "[{}] phy does not advertise managed+AP concurrent combo; SoftAP only — STA connect skipped (use provisioning UI, then reboot if driver allows STA-only)",
+            "[{}] phy is not usable for managed+AP concurrent runtime; SoftAP only — STA connect skipped (use provisioning UI, then reboot if driver allows STA-only)",
             TAG
         );
         clear_sta_state();
