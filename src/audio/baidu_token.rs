@@ -2,7 +2,7 @@
 //! Fetch and in-process cache for Baidu OAuth access_token (shared by STT/TTS).
 
 use crate::error::{Error, Result};
-use crate::platform::{PlatformHttpClient, ResponseBody};
+use crate::platform::PlatformHttpClient;
 use serde_json::Value;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -96,9 +96,8 @@ fn fetch_access_token(
             format!("token http status {}", status),
         ));
     }
-    let text = response_to_string(body_buf)?;
-    let v: Value =
-        serde_json::from_str(&text).map_err(|e| Error::config("baidu_token_parse", e.to_string()))?;
+    let v: Value = serde_json::from_slice(body_buf.as_slice())
+        .map_err(|e| Error::config("baidu_token_parse", e.to_string()))?;
     let token = v
         .get("access_token")
         .and_then(|x| x.as_str())
@@ -106,11 +105,4 @@ fn fetch_access_token(
         .to_string();
     let expires_in = v.get("expires_in").and_then(|x| x.as_u64());
     Ok((token, expires_in))
-}
-
-fn response_to_string(body: ResponseBody) -> Result<String> {
-    let bytes = body.as_slice();
-    std::str::from_utf8(bytes)
-        .map(|s| s.to_string())
-        .map_err(|e| Error::config("baidu_token_utf8", e.to_string()))
 }

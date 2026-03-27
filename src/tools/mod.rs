@@ -12,6 +12,7 @@ pub mod files;
 pub mod get_time;
 pub mod hardware;
 pub mod http_request;
+mod http_bridge;
 pub mod i2c_device;
 pub mod i2c_sensor;
 pub mod kv_store;

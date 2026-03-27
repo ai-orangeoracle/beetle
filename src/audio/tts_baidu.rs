@@ -7,7 +7,7 @@
 use super::baidu_token::BaiduTokenCache;
 use crate::config::{AudioSttConfig, AudioTtsConfig};
 use crate::error::{Error, Result};
-use crate::platform::PlatformHttpClient;
+use crate::platform::{PlatformHttpClient, ResponseBody};
 
 const BAIDU_TTS_URL: &str = "https://tsn.baidu.com/text2audio";
 
@@ -17,7 +17,7 @@ pub fn synthesize_wav(
     stt: &AudioSttConfig,
     tts: &AudioTtsConfig,
     text: &str,
-) -> Result<Vec<u8>> {
+) -> Result<ResponseBody> {
     let token = token_cache.get_or_fetch(http, &stt.api_key, &stt.api_secret)?;
     let per = tts.voice.trim().parse::<u32>().unwrap_or(0).min(4);
     let spd = map_speed_percent_to_baidu(&tts.rate);
@@ -42,13 +42,44 @@ pub fn synthesize_wav(
     }
     let bytes = resp.as_slice();
     if bytes.starts_with(b"{") {
-        let msg = std::str::from_utf8(bytes).unwrap_or_default();
-        return Err(Error::config("tts_baidu_request", msg.to_string()));
+        let msg = extract_tts_error_message(bytes);
+        return Err(Error::config("tts_baidu_request", msg));
     }
-    Ok(bytes.to_vec())
+    Ok(resp)
 }
 
-pub fn wav_pcm16le_to_i16(wav: &[u8]) -> Result<Vec<i16>> {
+pub fn play_wav_pcm16le_chunks<F>(
+    wav: &ResponseBody,
+    chunk_samples: usize,
+    mut on_chunk: F,
+) -> Result<usize>
+where
+    F: FnMut(&[i16]) -> Result<()>,
+{
+    let bytes = wav.as_slice();
+    let (start, data_len) = wav_data_chunk(bytes)?;
+    let mut played = 0usize;
+    let mut idx = start;
+    let end = start + data_len;
+    let mut chunk = vec![0i16; chunk_samples.max(1)];
+    while idx < end {
+        let remain_bytes = end - idx;
+        let take_samples = (remain_bytes / 2).min(chunk.len());
+        if take_samples == 0 {
+            break;
+        }
+        for i in 0..take_samples {
+            let pos = idx + i * 2;
+            chunk[i] = i16::from_le_bytes([bytes[pos], bytes[pos + 1]]);
+        }
+        on_chunk(&chunk[..take_samples])?;
+        played += take_samples;
+        idx += take_samples * 2;
+    }
+    Ok(played)
+}
+
+fn wav_data_chunk(wav: &[u8]) -> Result<(usize, usize)> {
     if wav.len() < 44 || &wav[0..4] != b"RIFF" || &wav[8..12] != b"WAVE" {
         return Err(Error::config("tts_baidu_wav", "invalid WAV header"));
     }
@@ -78,11 +109,7 @@ pub fn wav_pcm16le_to_i16(wav: &[u8]) -> Result<Vec<i16>> {
     if !data_len.is_multiple_of(2) {
         return Err(Error::config("tts_baidu_wav", "PCM data length must be even"));
     }
-    let mut out = Vec::with_capacity(data_len / 2);
-    for i in (start..start + data_len).step_by(2) {
-        out.push(i16::from_le_bytes([wav[i], wav[i + 1]]));
-    }
-    Ok(out)
+    Ok((start, data_len))
 }
 
 fn map_speed_percent_to_baidu(rate: &str) -> u32 {
@@ -105,4 +132,19 @@ fn map_percent_like(s: &str) -> u32 {
     let delta = num.parse::<i32>().unwrap_or(0);
     let mapped = 5 + delta / 10;
     mapped.clamp(0, 15) as u32
+}
+
+fn extract_tts_error_message(bytes: &[u8]) -> String {
+    let parsed = serde_json::from_slice::<serde_json::Value>(bytes).ok();
+    if let Some(v) = parsed {
+        if let Some(msg) = v.get("err_msg").and_then(|x| x.as_str()) {
+            return msg.to_string();
+        }
+        if let Some(msg) = v.get("message").and_then(|x| x.as_str()) {
+            return msg.to_string();
+        }
+    }
+    std::str::from_utf8(bytes)
+        .map(|s| s.to_string())
+        .unwrap_or_else(|_| "unknown tts error".to_string())
 }

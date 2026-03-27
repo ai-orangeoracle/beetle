@@ -3,9 +3,10 @@
 use crate::audio::baidu_token::BaiduTokenCache;
 use crate::audio::energy::{EndpointConfig, EndpointEvent, EndpointState};
 use crate::audio::stt_baidu;
-use crate::config::{AppConfig, AudioSegment};
+use crate::config::AudioSegment;
 use crate::constants::{AUDIO_CAPTURE_FRAME_SAMPLES, AUDIO_CAPTURE_MAX_MS, AUDIO_STT_MAX_PCM_BYTES};
 use crate::error::{Error, Result};
+use crate::tools::http_bridge::ToolContextHttpClient;
 use crate::tools::{parse_tool_args, Tool, ToolContext};
 use crate::Platform;
 use serde_json::json;
@@ -13,7 +14,6 @@ use std::sync::Arc;
 
 pub struct VoiceInputTool {
     platform: Arc<dyn Platform>,
-    app_config: AppConfig,
     audio_cfg: AudioSegment,
     baidu_token: Arc<BaiduTokenCache>,
 }
@@ -21,13 +21,11 @@ pub struct VoiceInputTool {
 impl VoiceInputTool {
     pub fn new(
         platform: Arc<dyn Platform>,
-        app_config: AppConfig,
         audio_cfg: AudioSegment,
         baidu_token: Arc<BaiduTokenCache>,
     ) -> Self {
         Self {
             platform,
-            app_config,
             audio_cfg,
             baidu_token,
         }
@@ -56,7 +54,8 @@ impl Tool for VoiceInputTool {
         true
     }
 
-    fn execute(&self, args: &str, _ctx: &mut dyn ToolContext) -> Result<String> {
+    fn execute(&self, args: &str, ctx: &mut dyn ToolContext) -> Result<String> {
+        log_audio_resource_snapshot("voice_input_start");
         if !self.platform.audio_mic_ready() {
             return Err(Error::config("tool_voice_input", "microphone not ready"));
         }
@@ -67,7 +66,7 @@ impl Tool for VoiceInputTool {
             .map(|v| v.min(AUDIO_CAPTURE_MAX_MS as u64) as u32)
             .unwrap_or(AUDIO_CAPTURE_MAX_MS);
 
-        let mut http = self.platform.create_http_client(&self.app_config)?;
+        let mut http = ToolContextHttpClient::new(ctx);
         let mic_sr = self.audio_cfg.microphone.sample_rate.max(8_000);
         let frame_ms = ((AUDIO_CAPTURE_FRAME_SAMPLES as u64) * 1000 / (mic_sr as u64))
             .clamp(1, 40) as u32;
@@ -120,17 +119,26 @@ impl Tool for VoiceInputTool {
                 "no speech captured within time window",
             ));
         }
-        let mut pcm_bytes = Vec::with_capacity(captured.len() * 2);
-        for s in captured {
-            pcm_bytes.extend_from_slice(&s.to_le_bytes());
-        }
-        let text = stt_baidu::transcribe_pcm16(
-            http.as_mut(),
+        let text = stt_baidu::transcribe_pcm16_samples(
+            &mut http,
             self.baidu_token.as_ref(),
             &self.audio_cfg.stt,
-            &pcm_bytes,
+            &captured,
             mic_sr,
         )?;
+        log_audio_resource_snapshot("voice_input_done");
         Ok(text)
     }
+}
+
+fn log_audio_resource_snapshot(stage: &str) {
+    let snap = crate::orchestrator::snapshot();
+    log::info!(
+        "[tool_voice_input] {} heap_internal={} heap_spiram={} heap_largest={} pressure={:?}",
+        stage,
+        snap.heap_free_internal,
+        snap.heap_free_spiram,
+        snap.heap_largest_block_internal,
+        snap.pressure
+    );
 }

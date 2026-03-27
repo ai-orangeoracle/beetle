@@ -7,6 +7,7 @@ use crate::error::{Error, Result};
 use crate::platform::{PlatformHttpClient, ResponseBody};
 use base64::Engine;
 use serde_json::Value;
+use std::io::Write;
 
 const BAIDU_STT_DEFAULT_URL: &str = "https://vop.baidu.com/server_api";
 
@@ -43,6 +44,39 @@ pub fn transcribe_pcm16(
     parse_asr_response(status, body_buf)
 }
 
+pub fn transcribe_pcm16_samples(
+    http: &mut dyn PlatformHttpClient,
+    token_cache: &BaiduTokenCache,
+    stt: &AudioSttConfig,
+    pcm16: &[i16],
+    sample_rate: u32,
+) -> Result<String> {
+    let token = token_cache.get_or_fetch(http, &stt.api_key, &stt.api_secret)?;
+    let speech_b64 = encode_pcm16_samples_base64(pcm16)?;
+    let dev_pid = stt.model.trim().parse::<u32>().unwrap_or(1537);
+    let body = serde_json::json!({
+        "format": "pcm",
+        "rate": sample_rate,
+        "channel": 1,
+        "cuid": "beetle",
+        "token": token,
+        "speech": speech_b64,
+        "len": pcm16.len() * 2,
+        "dev_pid": dev_pid,
+    })
+    .to_string();
+    let api_url = if stt.api_url.trim().is_empty() {
+        BAIDU_STT_DEFAULT_URL
+    } else {
+        stt.api_url.trim()
+    };
+    let headers = [("Content-Type", "application/json")];
+    let (status, body_buf) = http
+        .post(api_url, &headers, body.as_bytes())
+        .map_err(|e| Error::config("stt_baidu_request", e.to_string()))?;
+    parse_asr_response(status, body_buf)
+}
+
 fn parse_asr_response(status: u16, body: ResponseBody) -> Result<String> {
     if status != 200 {
         return Err(Error::config(
@@ -50,9 +84,8 @@ fn parse_asr_response(status: u16, body: ResponseBody) -> Result<String> {
             format!("asr http status {}", status),
         ));
     }
-    let text = response_to_string(body)?;
-    let v: Value =
-        serde_json::from_str(&text).map_err(|e| Error::config("stt_baidu_parse", e.to_string()))?;
+    let v: Value = serde_json::from_slice(body.as_slice())
+        .map_err(|e| Error::config("stt_baidu_parse", e.to_string()))?;
     let err_no = v.get("err_no").and_then(|x| x.as_i64()).unwrap_or(-1);
     if err_no != 0 {
         let err_msg = v
@@ -73,9 +106,35 @@ fn parse_asr_response(status: u16, body: ResponseBody) -> Result<String> {
     Ok(first.trim().to_string())
 }
 
-fn response_to_string(body: ResponseBody) -> Result<String> {
-    let bytes = body.as_slice();
-    std::str::from_utf8(bytes)
-        .map(|s| s.to_string())
-        .map_err(|e| Error::config("stt_baidu_utf8", e.to_string()))
+fn encode_pcm16_samples_base64(samples: &[i16]) -> Result<String> {
+    let mut out = Vec::with_capacity((samples.len() * 8) / 3 + 8);
+    {
+        let mut encoder = base64::write::EncoderWriter::new(
+            &mut out,
+            &base64::engine::general_purpose::STANDARD,
+        );
+        let mut buf = [0u8; 1024];
+        let mut cursor = 0usize;
+        for sample in samples {
+            let bytes = sample.to_le_bytes();
+            buf[cursor] = bytes[0];
+            buf[cursor + 1] = bytes[1];
+            cursor += 2;
+            if cursor == buf.len() {
+                encoder
+                    .write_all(&buf)
+                    .map_err(|e| Error::config("stt_baidu_encode", e.to_string()))?;
+                cursor = 0;
+            }
+        }
+        if cursor > 0 {
+            encoder
+                .write_all(&buf[..cursor])
+                .map_err(|e| Error::config("stt_baidu_encode", e.to_string()))?;
+        }
+        encoder
+            .finish()
+            .map_err(|e| Error::config("stt_baidu_encode", e.to_string()))?;
+    }
+    String::from_utf8(out).map_err(|e| Error::config("stt_baidu_encode", e.to_string()))
 }

@@ -185,7 +185,6 @@ pub fn build_default_registry(
             if let Some(ref cache) = baidu_token_cache {
                 registry.register(Box::new(super::VoiceInputTool::new(
                     Arc::clone(&platform),
-                    config.clone(),
                     audio_cfg.clone(),
                     Arc::clone(cache),
                 )));
@@ -195,7 +194,6 @@ pub fn build_default_registry(
             if let Some(ref cache) = baidu_token_cache {
                 registry.register(Box::new(super::VoiceOutputTool::new(
                     Arc::clone(&platform),
-                    config.clone(),
                     audio_cfg,
                     Arc::clone(cache),
                 )));
