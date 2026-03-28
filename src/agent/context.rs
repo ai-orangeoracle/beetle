@@ -2,20 +2,33 @@
 //! Pure logic; no platform dependency; for use by agent::loop.
 
 use crate::bus::PcMsg;
-use crate::constants::{
-    AGENT_MARKER_MARK_IMPORTANT, AGENT_MARKER_SIGNAL_COMFORT, AGENT_MARKER_STOP,
-};
 use crate::error::Result;
 use crate::llm::Message;
 use crate::memory::{build_system_prompt, ImportantMessageStore, MemoryStore, SessionStore};
 use crate::state;
+use std::borrow::Cow;
 use std::collections::HashSet;
+use std::fmt::Write as _;
 
 pub use crate::constants::{DEFAULT_MESSAGES_MAX_LEN, DEFAULT_SYSTEM_MAX_LEN};
 /// 从 SessionStore 加载的最近条数。
 pub const SESSION_RECENT_N: usize = 32;
 /// 每日笔记取最近条数。
 const DAILY_RECENT_N: usize = 5;
+
+/// 预构建的 structured output 指令块（三个 marker 均为编译期常量）。
+const STRUCTURED_BLOCK: &str = concat!(
+    "\n\n## Structured output\n",
+    "When the user clearly asks to stop or cancel the current task, reply with ",
+    "[STOP]",
+    " then a short confirmation. ",
+    "When you want to mark the current user message as important for context truncation, include ",
+    "[MARK_IMPORTANT]",
+    " in your reply. ",
+    "When you sense the user may need comfort or encouragement, include ",
+    "[SIGNAL:comfort]",
+    " in your reply."
+);
 
 /// build_context 参数聚合，减少函数签名复杂度。
 pub struct ContextParams<'a> {
@@ -112,13 +125,16 @@ pub fn build_context(p: &ContextParams<'_>) -> Result<(String, Vec<Message>)> {
         } else {
             "Linux"
         };
-        let runtime_block = format!(
+        // 直接写入已预分配的 system String，避免临时 format!() 分配。
+        let before = system.len();
+        let _ = write!(
+            system,
             "\n\n## Runtime\n{:04}-{:02}-{:02} {} {:02}:{:02}:{:02} UTC | {}",
             y, mo, d, wd, h, mi, s_sec, platform
         );
-        let remain = p.system_max_len.saturating_sub(system.len());
-        if runtime_block.len() <= remain {
-            system.push_str(&runtime_block);
+        // 若超出预算，回退到写入前状态。
+        if system.len() > p.system_max_len {
+            system.truncate(before);
         }
     }
     if p.msg.is_group {
@@ -137,14 +153,8 @@ pub fn build_context(p: &ContextParams<'_>) -> Result<(String, Vec<Message>)> {
         system.push_str("\n\n");
         system.push_str(suffix);
     }
-    let structured_block = format!(
-        "\n\n## Structured output\nWhen the user clearly asks to stop or cancel the current task, reply with {} then a short confirmation. When you want to mark the current user message as important for context truncation, include {} in your reply. When you sense the user may need comfort or encouragement, include {} in your reply.",
-        AGENT_MARKER_STOP,
-        AGENT_MARKER_MARK_IMPORTANT,
-        AGENT_MARKER_SIGNAL_COMFORT
-    );
-    if system.len().saturating_add(structured_block.len()) <= p.system_max_len {
-        system.push_str(&structured_block);
+    if system.len().saturating_add(STRUCTURED_BLOCK.len()) <= p.system_max_len {
+        system.push_str(STRUCTURED_BLOCK);
     }
     if let Some(em) = p.emotion_signal_suffix {
         system.push_str("\n\n");
@@ -174,16 +184,16 @@ pub fn build_context(p: &ContextParams<'_>) -> Result<(String, Vec<Message>)> {
     let mut messages: Vec<Message> = Vec::with_capacity(cap);
     if let Some(summary) = p.summary_text {
         messages.push(Message {
-            role: "user".to_string(),
+            role: Cow::Borrowed("user"),
             content: format!("[CONTEXT_SUMMARY]\n{}\n[/CONTEXT_SUMMARY]", summary),
         });
     }
     messages.extend(recent.into_iter().map(|m| Message {
-        role: m.role,
+        role: Cow::Owned(m.role),
         content: m.content,
     }));
     messages.push(Message {
-        role: "user".to_string(),
+        role: Cow::Borrowed("user"),
         content: p.msg.content.clone(),
     });
 

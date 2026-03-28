@@ -26,6 +26,7 @@ use crate::util::{
     remove_substrings_all_trim, strip_agent_stop_confirmation, truncate_content_to_max,
 };
 use crate::PlatformHttpClient;
+use std::borrow::Cow;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
@@ -364,7 +365,7 @@ fn generate_session_summary(
         );
     }
     let user_msg = Message {
-        role: "user".to_string(),
+        role: Cow::Borrowed("user"),
         content: transcript,
     };
     let messages = [user_msg];
@@ -463,6 +464,7 @@ pub fn run_agent_loop(
     mut typing_notifier: Option<TypingNotifier>,
 ) -> Result<()> {
     let tool_descriptions = registry.format_descriptions_for_system_prompt(8 * 1024);
+    let skill_descriptions = (config.get_skill_descriptions)();
 
     // Track repeated LLM failure for same request body, avoid infinite retry.
     // Key: u64 hash of (channel, chat_id, content) — avoids per-message format! String alloc.
@@ -709,6 +711,7 @@ pub fn run_agent_loop(
                 registry,
                 config,
                 &tool_descriptions,
+                &skill_descriptions,
                 loc,
             )
         } else {
@@ -760,6 +763,7 @@ pub fn run_agent_loop(
                 registry,
                 config,
                 &tool_descriptions,
+                &skill_descriptions,
                 loc,
             )
         };
@@ -1048,6 +1052,7 @@ pub fn run_agent_loop(
 
 /// 完整 context + worker LLM + ReAct 循环，返回 (WorkerOutcome, consumed_round, streamed, latency)。不写 session，由调用方写。
 /// streamed=true 表示已通过流式编辑发送到通道，调用方应跳过 outbound_tx。
+#[allow(clippy::too_many_arguments)]
 fn run_worker_path(
     http: &mut dyn PlatformHttpClient,
     worker_llm: &(dyn LlmClient + Send + Sync),
@@ -1055,10 +1060,10 @@ fn run_worker_path(
     registry: &crate::tools::ToolRegistry,
     config: &AgentLoopConfig,
     tool_descriptions: &str,
+    skill_descriptions: &str,
     loc: UiLocale,
 ) -> Result<(WorkerOutcome, Option<u32>, bool, WorkerLatency)> {
     let mut latency = WorkerLatency::default();
-    let runtime_tool_specs: Vec<ToolSpec> = config.tool_specs.iter().cloned().collect();
     let llm_tool_choice = ToolChoicePolicy::Auto;
     let mut tool_ctx = AgentToolCtx {
         http,
@@ -1080,7 +1085,6 @@ fn run_worker_path(
             }
             _ => (None, None),
         };
-    let skill_descriptions = (config.get_skill_descriptions)();
     let emotion_signal_suffix = config
         .emotion_signal_store
         .get_then_clear(&msg.chat_id)
@@ -1107,7 +1111,7 @@ fn run_worker_path(
         session: config.session_store.as_ref(),
         important_message_store: config.important_message_store.as_ref(),
         tool_descriptions,
-        skill_descriptions: &skill_descriptions,
+        skill_descriptions,
         system_max_len: budget.system_prompt_max,
         messages_max_len: budget.messages_max,
         session_max_messages: config.session_max_messages,
@@ -1229,7 +1233,7 @@ fn run_worker_path(
                 &mut tool_ctx,
                 &system,
                 &messages,
-                Some(runtime_tool_specs.as_ref()),
+                Some(&config.tool_specs),
                 llm_tool_choice,
                 &mut progress_cb,
             )
@@ -1238,7 +1242,7 @@ fn run_worker_path(
                 &mut tool_ctx,
                 &system,
                 &messages,
-                Some(runtime_tool_specs.as_ref()),
+                Some(&config.tool_specs),
                 llm_tool_choice,
             )
         };
@@ -1307,7 +1311,7 @@ fn run_worker_path(
                 break;
             }
             messages.push(Message {
-                role: "assistant".to_string(),
+                role: Cow::Borrowed("assistant"),
                 // Anthropic API 要求 tool_use 轮的 assistant content 非空；空时用占位符。
                 content: if response.content.is_empty() {
                     "[tool_use]".to_string()
@@ -1440,7 +1444,7 @@ fn run_worker_path(
                 );
             }
             messages.push(Message {
-                role: "user".to_string(),
+                role: Cow::Borrowed("user"),
                 content: user_content_raw,
             });
             continue;

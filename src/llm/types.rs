@@ -2,6 +2,7 @@
 //! Request/response DTOs aligned with Anthropic Messages API.
 
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 
 /// 请求体大小上界（字节），与 constants::MAX_RESPONSE_BODY_LEN 单源一致。
 pub use crate::constants::MAX_REQUEST_BODY_LEN;
@@ -20,7 +21,7 @@ pub enum ToolChoicePolicy {
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Message {
-    pub role: String,
+    pub role: Cow<'static, str>,
     pub content: String,
 }
 

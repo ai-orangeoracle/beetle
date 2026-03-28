@@ -485,7 +485,7 @@ mod tests {
             128,
             "",
             &[Message {
-                role: "user".to_string(),
+                role: std::borrow::Cow::Borrowed("user"),
                 content: "hi".to_string(),
             }],
             Some(&[ToolSpec {
