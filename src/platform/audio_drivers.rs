@@ -461,7 +461,7 @@ impl Drop for AudioPipelineState {
                 let _ = esp_idf_svc::sys::i2s_channel_disable(mic.rx_handle);
                 let _ = esp_idf_svc::sys::i2s_del_channel(mic.rx_handle);
             }
-            log::info!("[audio] mic I2S0 RX channel released");
+            log::debug!("[audio] mic I2S0 RX channel released");
         }
         // -- Speaker cleanup --------------------------------------------------
         if let Some(ref spk) = self.speaker {
@@ -478,7 +478,7 @@ impl Drop for AudioPipelineState {
                     );
                 }
             }
-            log::info!("[audio] speaker I2S1 TX channel released");
+            log::debug!("[audio] speaker I2S1 TX channel released");
         }
     }
 }

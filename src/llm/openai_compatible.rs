@@ -5,13 +5,13 @@
 use crate::config::{AppConfig, LlmSource};
 use crate::error::{Error, Result};
 use crate::llm::types::{LlmResponse, StopReason, ToolCall, MAX_REQUEST_BODY_LEN};
-use crate::llm::{LlmClient, LlmHttpClient, Message, ToolSpec};
+use crate::llm::{LlmClient, LlmHttpClient, Message, ToolChoicePolicy, ToolSpec};
 use serde::{Deserialize, Serialize};
 
 const TAG: &str = "llm::openai_compat";
 const DEFAULT_API_BASE: &str = "https://api.openai.com/v1";
 const CHAT_PATH: &str = "/chat/completions";
-const DEFAULT_MAX_TOKENS: u32 = 1024;
+const DEFAULT_MAX_TOKENS: u32 = 2048;
 
 /// OpenAI 兼容客户端；持 config 只读，HTTP 由 chat 时注入。
 pub struct OpenAiCompatibleClient {
@@ -102,6 +102,8 @@ struct OpenAiRequestRef<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     tools: Option<Vec<OpenAiToolRef<'a>>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    tool_choice: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     stream: Option<bool>,
 }
 
@@ -154,6 +156,7 @@ fn build_request_body(
     system: &str,
     messages: &[Message],
     tools: Option<&[ToolSpec]>,
+    tool_choice: ToolChoicePolicy,
     stream: bool,
 ) -> Result<Vec<u8>> {
     let mut req_messages: Vec<OpenAiRequestMessageRef<'_>> =
@@ -190,11 +193,17 @@ fn build_request_body(
         }
     });
 
+    let has_tools = tools_api.as_ref().is_some_and(|v| !v.is_empty());
     let req = OpenAiRequestRef {
         model,
         max_tokens,
         messages: req_messages,
         tools: tools_api,
+        tool_choice: if has_tools && tool_choice == ToolChoicePolicy::Require {
+            Some("required")
+        } else {
+            None
+        },
         stream: if stream { Some(true) } else { None },
     };
 
@@ -219,6 +228,7 @@ impl LlmClient for OpenAiCompatibleClient {
         system: &str,
         messages: &[Message],
         tools: Option<&[ToolSpec]>,
+        tool_choice: ToolChoicePolicy,
     ) -> Result<LlmResponse> {
         let body = build_request_body(
             &self.model,
@@ -226,6 +236,7 @@ impl LlmClient for OpenAiCompatibleClient {
             system,
             messages,
             tools,
+            tool_choice,
             self.stream,
         )?;
         if self.stream {
@@ -251,12 +262,21 @@ impl LlmClient for OpenAiCompatibleClient {
         system: &str,
         messages: &[Message],
         tools: Option<&[ToolSpec]>,
+        tool_choice: ToolChoicePolicy,
         on_progress: crate::llm::StreamProgressFn,
     ) -> Result<LlmResponse> {
         if !self.stream {
-            return self.chat(http, system, messages, tools);
+            return self.chat(http, system, messages, tools, tool_choice);
         }
-        let body = build_request_body(&self.model, self.max_tokens, system, messages, tools, true)?;
+        let body = build_request_body(
+            &self.model,
+            self.max_tokens,
+            system,
+            messages,
+            tools,
+            tool_choice,
+            true,
+        )?;
         // 与 chat() 保持同一重试策略；仅首轮传递 progress 回调，后续重试避免重复回放增量。
         let mut progress = Some(on_progress);
         crate::llm::retry::with_retry(2, 500, TAG, http, |http| {
@@ -581,4 +601,36 @@ fn do_request_streaming(
     }
 
     Ok(accumulator.finish())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::build_request_body;
+    use crate::llm::{Message, ToolChoicePolicy, ToolSpec};
+
+    #[test]
+    fn request_contains_required_tool_choice_when_forced() {
+        let body = build_request_body(
+            "m",
+            128,
+            "",
+            &[Message {
+                role: "user".to_string(),
+                content: "hi".to_string(),
+            }],
+            Some(&[ToolSpec {
+                name: "t".to_string(),
+                description: "d".to_string(),
+                parameters: serde_json::json!({"type":"object"}),
+            }]),
+            ToolChoicePolicy::Require,
+            false,
+        )
+        .expect("ok");
+        let v: serde_json::Value = serde_json::from_slice(&body).expect("json");
+        assert_eq!(
+            v.get("tool_choice").and_then(|x| x.as_str()),
+            Some("required")
+        );
+    }
 }

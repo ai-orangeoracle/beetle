@@ -126,8 +126,8 @@ impl Tool for VoiceInputTool {
                 let (mn, mx) = chunk.iter().fold((i16::MAX, i16::MIN), |(lo, hi), &v| {
                     (lo.min(v), hi.max(v))
                 });
-                log::info!(
-                    "[voice_input] dbg t={}ms samples={} rms={:.5} min={} max={} thr={:.3}",
+                log::debug!(
+                    "[voice_input] t={}ms samples={} rms={:.5} min={} max={} thr={:.3}",
                     elapsed, n, rms, mn, mx, endpoint_cfg.threshold
                 );
                 dbg_next_log_ms = elapsed.saturating_add(1000);

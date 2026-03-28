@@ -32,6 +32,9 @@ static SYSTEM_MESSAGES_DONE: AtomicU32 = AtomicU32::new(0);
 static CRON_MESSAGES_DONE: AtomicU32 = AtomicU32::new(0);
 static TOOL_CALLS: AtomicU32 = AtomicU32::new(0);
 static TOOL_ERRORS: AtomicU32 = AtomicU32::new(0);
+static TOOL_PROTOCOL_FORCED_ROUNDS: AtomicU32 = AtomicU32::new(0);
+static TOOL_PROTOCOL_VIOLATION: AtomicU32 = AtomicU32::new(0);
+static FINAL_ANSWER_CALLS: AtomicU32 = AtomicU32::new(0);
 static WDT_FEEDS: AtomicU32 = AtomicU32::new(0);
 static DISPATCH_SEND_OK: AtomicU32 = AtomicU32::new(0);
 static DISPATCH_SEND_FAIL: AtomicU32 = AtomicU32::new(0);
@@ -145,6 +148,21 @@ pub fn record_tool_call(ok: bool) {
 }
 
 #[inline]
+pub fn record_tool_protocol_forced_round() {
+    TOOL_PROTOCOL_FORCED_ROUNDS.fetch_add(1, Ordering::Relaxed);
+}
+
+#[inline]
+pub fn record_tool_protocol_violation() {
+    TOOL_PROTOCOL_VIOLATION.fetch_add(1, Ordering::Relaxed);
+}
+
+#[inline]
+pub fn record_final_answer_call() {
+    FINAL_ANSWER_CALLS.fetch_add(1, Ordering::Relaxed);
+}
+
+#[inline]
 pub fn record_wdt_feed() {
     WDT_FEEDS.fetch_add(1, Ordering::Relaxed);
 }
@@ -238,6 +256,9 @@ pub fn snapshot() -> MetricsSnapshot {
         cron_messages_done: CRON_MESSAGES_DONE.load(Ordering::Relaxed) as u64,
         tool_calls: TOOL_CALLS.load(Ordering::Relaxed) as u64,
         tool_errors: TOOL_ERRORS.load(Ordering::Relaxed) as u64,
+        tool_protocol_forced_rounds: TOOL_PROTOCOL_FORCED_ROUNDS.load(Ordering::Relaxed) as u64,
+        tool_protocol_violation: TOOL_PROTOCOL_VIOLATION.load(Ordering::Relaxed) as u64,
+        final_answer_calls: FINAL_ANSWER_CALLS.load(Ordering::Relaxed) as u64,
         wdt_feeds: WDT_FEEDS.load(Ordering::Relaxed) as u64,
         dispatch_send_ok: DISPATCH_SEND_OK.load(Ordering::Relaxed) as u64,
         dispatch_send_fail: DISPATCH_SEND_FAIL.load(Ordering::Relaxed) as u64,
@@ -283,6 +304,9 @@ pub struct MetricsSnapshot {
     pub cron_messages_done: u64,
     pub tool_calls: u64,
     pub tool_errors: u64,
+    pub tool_protocol_forced_rounds: u64,
+    pub tool_protocol_violation: u64,
+    pub final_answer_calls: u64,
     pub wdt_feeds: u64,
     pub dispatch_send_ok: u64,
     pub dispatch_send_fail: u64,
@@ -312,7 +336,7 @@ impl MetricsSnapshot {
         let mut buf = String::with_capacity(384);
         let _ = write!(
             buf,
-            "metrics msg_in={} msg_out={} llm_calls={} llm_err={} llm_last_ms={} ttft_last_ms={} e2e_last_ms={} user_q_wait_ms={} sys_q_wait_ms={} cron_e2e_ms={} react_rounds_last={} tool_calls_last={} user_done={} sys_done={} cron_done={} tool_calls={} tool_err={} wdt_feeds={} dispatch_ok={} dispatch_fail={} outbound_enq_fail={} channel_http_ok={} channel_http_fail={} err_chat={} err_ctx={} err_tool={} err_llm_req={} err_llm_parse={} err_dispatch={} err_session={} err_tls_admission={} err_other={} last_active_epoch={} wifi_reconn={} wifi_ap_restart={} wifi_last_fail_stage={}",
+            "metrics msg_in={} msg_out={} llm_calls={} llm_err={} llm_last_ms={} ttft_last_ms={} e2e_last_ms={} user_q_wait_ms={} sys_q_wait_ms={} cron_e2e_ms={} react_rounds_last={} tool_calls_last={} user_done={} sys_done={} cron_done={} tool_calls={} tool_err={} tool_protocol_forced={} tool_protocol_violation={} final_answer_calls={} wdt_feeds={} dispatch_ok={} dispatch_fail={} outbound_enq_fail={} channel_http_ok={} channel_http_fail={} err_chat={} err_ctx={} err_tool={} err_llm_req={} err_llm_parse={} err_dispatch={} err_session={} err_tls_admission={} err_other={} last_active_epoch={} wifi_reconn={} wifi_ap_restart={} wifi_last_fail_stage={}",
             self.messages_in,
             self.messages_out,
             self.llm_calls,
@@ -330,6 +354,9 @@ impl MetricsSnapshot {
             self.cron_messages_done,
             self.tool_calls,
             self.tool_errors,
+            self.tool_protocol_forced_rounds,
+            self.tool_protocol_violation,
+            self.final_answer_calls,
             self.wdt_feeds,
             self.dispatch_send_ok,
             self.dispatch_send_fail,

@@ -5,7 +5,9 @@ use std::sync::Arc;
 
 use crate::error::Result;
 use crate::i18n::{tr, Locale, Message as UiMessage};
-use crate::llm::{LlmClient, LlmHttpClient, LlmResponse, Message, StopReason, ToolSpec};
+use crate::llm::{
+    LlmClient, LlmHttpClient, LlmResponse, Message, StopReason, ToolChoicePolicy, ToolSpec,
+};
 
 pub struct NoopLlmClient {
     resolve_locale: Arc<dyn Fn() -> Locale + Send + Sync>,
@@ -24,6 +26,7 @@ impl LlmClient for NoopLlmClient {
         _system: &str,
         _messages: &[Message],
         _tools: Option<&[ToolSpec]>,
+        _tool_choice: ToolChoicePolicy,
     ) -> Result<LlmResponse> {
         let loc = (self.resolve_locale)();
         Ok(LlmResponse {

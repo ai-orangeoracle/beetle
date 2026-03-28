@@ -11,6 +11,13 @@ pub const MAX_MESSAGE_CONTENT_LEN: usize = 64 * 1024;
 /// 流式输出进度回调；delta 为本次新增文本，accumulated 为累计全文。
 /// Stream progress callback; delta = new text, accumulated = full text so far.
 pub type StreamProgressFn<'a> = &'a mut dyn FnMut(&str, &str);
+
+/// 工具选择策略：Auto 由模型决定；Require 强制本轮必须产出结构化 tool call。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ToolChoicePolicy {
+    Auto,
+    Require,
+}
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Message {
     pub role: String,

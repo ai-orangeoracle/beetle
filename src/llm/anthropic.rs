@@ -7,13 +7,13 @@ use crate::config::{AppConfig, LlmSource};
 use crate::error::{Error, Result};
 use crate::llm::types::MAX_REQUEST_BODY_LEN;
 use crate::llm::types::{AnthropicResponse, StopReason, ToolCall};
-use crate::llm::{LlmClient, LlmHttpClient, LlmResponse, Message, ToolSpec};
+use crate::llm::{LlmClient, LlmHttpClient, LlmResponse, Message, ToolChoicePolicy, ToolSpec};
 use serde::{Deserialize, Serialize};
 use serde_json;
 
 const TAG: &str = "llm::anthropic";
 const API_BASE: &str = "https://api.anthropic.com/v1/messages";
-const DEFAULT_MAX_TOKENS: u32 = 1024;
+const DEFAULT_MAX_TOKENS: u32 = 2048;
 
 /// Anthropic Messages API 客户端；持 config 只读，HTTP 由 chat 时注入。
 /// `api_base` 为完整 Messages URL（构造时解析），请求路径零额外分配。
@@ -63,6 +63,7 @@ impl LlmClient for AnthropicClient {
         system: &str,
         messages: &[Message],
         tools: Option<&[ToolSpec]>,
+        tool_choice: ToolChoicePolicy,
     ) -> Result<LlmResponse> {
         let body = build_request_body(
             &self.model,
@@ -70,6 +71,7 @@ impl LlmClient for AnthropicClient {
             system,
             messages,
             tools,
+            tool_choice,
             self.stream,
         )?;
 
@@ -90,12 +92,21 @@ impl LlmClient for AnthropicClient {
         system: &str,
         messages: &[Message],
         tools: Option<&[ToolSpec]>,
+        tool_choice: ToolChoicePolicy,
         on_progress: crate::llm::StreamProgressFn,
     ) -> Result<LlmResponse> {
         if !self.stream {
-            return self.chat(http, system, messages, tools);
+            return self.chat(http, system, messages, tools, tool_choice);
         }
-        let body = build_request_body(&self.model, self.max_tokens, system, messages, tools, true)?;
+        let body = build_request_body(
+            &self.model,
+            self.max_tokens,
+            system,
+            messages,
+            tools,
+            tool_choice,
+            true,
+        )?;
         // 与 chat() 保持同一重试策略；仅首轮传递 progress 回调，后续重试避免重复回放增量。
         let mut progress = Some(on_progress);
         crate::llm::retry::with_retry(2, 500, TAG, http, |http| {
@@ -110,8 +121,14 @@ fn build_request_body(
     system: &str,
     messages: &[Message],
     tools: Option<&[ToolSpec]>,
+    tool_choice: ToolChoicePolicy,
     stream: bool,
 ) -> Result<Vec<u8>> {
+    #[derive(Serialize)]
+    struct AnthropicToolChoiceRef {
+        #[serde(rename = "type")]
+        choice_type: &'static str,
+    }
     #[derive(Serialize)]
     struct AnthropicToolRef<'a> {
         name: &'a str,
@@ -133,6 +150,8 @@ fn build_request_body(
         #[serde(skip_serializing_if = "Option::is_none")]
         tools: Option<Vec<AnthropicToolRef<'a>>>,
         #[serde(skip_serializing_if = "Option::is_none")]
+        tool_choice: Option<AnthropicToolChoiceRef>,
+        #[serde(skip_serializing_if = "Option::is_none")]
         stream: Option<bool>,
     }
     let tools_api = tools.and_then(|t| {
@@ -150,6 +169,7 @@ fn build_request_body(
             )
         }
     });
+    let has_tools = tools_api.as_ref().is_some_and(|v| !v.is_empty());
     let req = AnthropicRequestRef {
         model,
         max_tokens,
@@ -166,6 +186,11 @@ fn build_request_body(
             })
             .collect(),
         tools: tools_api,
+        tool_choice: if has_tools && tool_choice == ToolChoicePolicy::Require {
+            Some(AnthropicToolChoiceRef { choice_type: "any" })
+        } else {
+            None
+        },
         stream: if stream { Some(true) } else { None },
     };
     let body = serde_json::to_vec(&req).map_err(|e| Error::Other {
@@ -446,4 +471,38 @@ fn do_request_streaming(
     }
 
     Ok(accumulator.finish())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::build_request_body;
+    use crate::llm::{Message, ToolChoicePolicy, ToolSpec};
+
+    #[test]
+    fn request_contains_any_tool_choice_when_forced() {
+        let body = build_request_body(
+            "m",
+            128,
+            "",
+            &[Message {
+                role: "user".to_string(),
+                content: "hi".to_string(),
+            }],
+            Some(&[ToolSpec {
+                name: "t".to_string(),
+                description: "d".to_string(),
+                parameters: serde_json::json!({"type":"object"}),
+            }]),
+            ToolChoicePolicy::Require,
+            false,
+        )
+        .expect("ok");
+        let v: serde_json::Value = serde_json::from_slice(&body).expect("json");
+        assert_eq!(
+            v.get("tool_choice")
+                .and_then(|x| x.get("type"))
+                .and_then(|x| x.as_str()),
+            Some("any")
+        );
+    }
 }

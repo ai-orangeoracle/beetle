@@ -8,7 +8,7 @@ use crate::error::{Error, Result};
 use crate::tools::http_bridge::ToolContextHttpClient;
 use crate::tools::{parse_tool_args, Tool, ToolContext};
 use crate::Platform;
-use serde_json::json;
+use serde_json::{json, Map, Value};
 use std::sync::Arc;
 
 pub struct VoiceOutputTool {
@@ -59,13 +59,7 @@ impl Tool for VoiceOutputTool {
         if !self.platform.audio_speaker_ready() {
             return Err(Error::config("tool_voice_output", "speaker not ready"));
         }
-        let obj = parse_tool_args(args, "tool_voice_output")?;
-        let text = obj
-            .get("text")
-            .and_then(|x| x.as_str())
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .ok_or_else(|| Error::config("tool_voice_output", "missing text"))?;
+        let text = parse_voice_output_text(args)?;
         if text.len() > AUDIO_TTS_MAX_TEXT_LEN {
             return Err(Error::config(
                 "tool_voice_output",
@@ -78,7 +72,7 @@ impl Tool for VoiceOutputTool {
             self.baidu_token.as_ref(),
             &self.audio_cfg.stt,
             &self.audio_cfg.tts,
-            text,
+            text.as_str(),
         )?;
         let played_samples =
             tts_baidu::play_wav_pcm16le_chunks(&wav, AUDIO_TTS_WRITE_CHUNK_SAMPLES, |chunk| {
@@ -93,9 +87,102 @@ impl Tool for VoiceOutputTool {
     }
 }
 
+/// 解析 `voice_output` 的 `text` 参数。优先标准 JSON；兼容 LLM 常犯的「键未加引号」、整段纯 JSON 字符串。
+fn parse_voice_output_text(args: &str) -> Result<String> {
+    const STAGE: &str = "tool_voice_output";
+    let trimmed = args.trim();
+
+    let strict = parse_tool_args(trimmed, STAGE);
+    if let Ok(ref obj) = strict {
+        if let Some(t) = text_from_tool_obj(obj) {
+            return Ok(t);
+        }
+    }
+
+    if let Ok(s) = serde_json::from_str::<String>(trimmed) {
+        let t = s.trim();
+        if !t.is_empty() {
+            return Ok(t.to_string());
+        }
+    }
+
+    if let Some(fixed) = try_fix_unquoted_top_level_json_object(trimmed) {
+        if let Ok(v) = serde_json::from_str::<Value>(&fixed) {
+            if let Some(obj) = v.as_object() {
+                if let Some(t) = text_from_tool_obj(obj) {
+                    return Ok(t);
+                }
+            }
+        }
+    }
+
+    // 终极兜底：任何非空纯文本直接当作要朗读的内容
+    if !trimmed.is_empty()
+        && !trimmed.starts_with('{')
+        && !trimmed.starts_with('[')
+        && !trimmed.starts_with('"')
+    {
+        return Ok(trimmed.to_string());
+    }
+
+    match strict {
+        Ok(_) => Err(Error::config(
+            STAGE,
+            "missing non-empty \"text\" field (expected JSON object with string \"text\")",
+        )),
+        Err(e) => Err(e),
+    }
+}
+
+fn text_from_tool_obj(obj: &Map<String, Value>) -> Option<String> {
+    for k in ["text", "content", "message"] {
+        if let Some(t) = obj
+            .get(k)
+            .and_then(|x| x.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            return Some(t.to_string());
+        }
+    }
+    None
+}
+
+/// 将 `{text: "..."}` 等转为 `{"text":...}`（仅处理顶层、键为 ASCII 标识符）。
+fn try_fix_unquoted_top_level_json_object(s: &str) -> Option<String> {
+    let t = s.trim();
+    if !t.starts_with('{') || !t.ends_with('}') {
+        return None;
+    }
+    let inner = t[1..t.len() - 1].trim();
+    if inner.is_empty() {
+        return None;
+    }
+    let (key, value_json) = split_unquoted_key_and_rest(inner)?;
+    if !matches!(key, "text" | "content" | "message") {
+        return None;
+    }
+    Some(format!("{{\"text\":{}}}", value_json))
+}
+
+fn split_unquoted_key_and_rest(s: &str) -> Option<(&str, &str)> {
+    let b = s.as_bytes();
+    let mut i = 0usize;
+    while i < b.len() && (b[i].is_ascii_alphanumeric() || b[i] == b'_') {
+        i += 1;
+    }
+    if i == 0 {
+        return None;
+    }
+    let key = &s[..i];
+    let rest = s[i..].trim_start();
+    let rest = rest.strip_prefix(':')?.trim_start();
+    Some((key, rest))
+}
+
 fn log_audio_resource_snapshot(stage: &str) {
     let snap = crate::orchestrator::snapshot();
-    log::info!(
+    log::debug!(
         "[tool_voice_output] {} heap_internal={} heap_spiram={} heap_largest={} pressure={:?}",
         stage,
         snap.heap_free_internal,
@@ -103,4 +190,27 @@ fn log_audio_resource_snapshot(stage: &str) {
         snap.heap_largest_block_internal,
         snap.pressure
     );
+}
+
+#[cfg(test)]
+mod parse_tests {
+    use super::parse_voice_output_text;
+
+    #[test]
+    fn accepts_strict_json() {
+        let t = parse_voice_output_text(r#"{"text":"你好"}"#).expect("ok");
+        assert_eq!(t, "你好");
+    }
+
+    #[test]
+    fn accepts_unquoted_key_like_llm() {
+        let t = parse_voice_output_text(r#"{text: "hello"}"#).expect("ok");
+        assert_eq!(t, "hello");
+    }
+
+    #[test]
+    fn accepts_json_string_body() {
+        let t = parse_voice_output_text(r#""plain""#).expect("ok");
+        assert_eq!(t, "plain");
+    }
 }

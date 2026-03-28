@@ -2,7 +2,7 @@
 //! Fallback LLM client: try each client in order, return first Ok or last Err.
 
 use crate::error::Result;
-use crate::llm::{LlmClient, LlmHttpClient, LlmResponse, Message, ToolSpec};
+use crate::llm::{LlmClient, LlmHttpClient, LlmResponse, Message, ToolChoicePolicy, ToolSpec};
 use std::sync::Mutex;
 
 /// 多源回退客户端；持有一组 LlmClient，chat 时按序尝试。
@@ -53,6 +53,7 @@ impl LlmClient for FallbackLlmClient {
         system: &str,
         messages: &[Message],
         tools: Option<&[ToolSpec]>,
+        tool_choice: ToolChoicePolicy,
     ) -> Result<LlmResponse> {
         if self.clients.is_empty() {
             let err = crate::error::Error::config("fallback_llm", "no LLM sources configured");
@@ -61,7 +62,7 @@ impl LlmClient for FallbackLlmClient {
         }
         let mut last_err = None;
         for (i, client) in self.clients.iter().enumerate() {
-            match client.chat(http, system, messages, tools) {
+            match client.chat(http, system, messages, tools, tool_choice) {
                 Ok(r) => {
                     crate::platform::task_wdt::feed_current_task();
                     return Ok(r);
@@ -88,6 +89,7 @@ impl LlmClient for FallbackLlmClient {
         system: &str,
         messages: &[Message],
         tools: Option<&[ToolSpec]>,
+        tool_choice: ToolChoicePolicy,
         on_progress: crate::llm::StreamProgressFn,
     ) -> Result<LlmResponse> {
         if self.clients.is_empty() {
@@ -96,8 +98,14 @@ impl LlmClient for FallbackLlmClient {
             return Err(err);
         }
         // 第一个源使用 progress 回调。
-        let first_result =
-            self.clients[0].chat_with_progress(http, system, messages, tools, on_progress);
+        let first_result = self.clients[0].chat_with_progress(
+            http,
+            system,
+            messages,
+            tools,
+            tool_choice,
+            on_progress,
+        );
         match first_result {
             Ok(r) => {
                 crate::platform::task_wdt::feed_current_task();
@@ -116,7 +124,7 @@ impl LlmClient for FallbackLlmClient {
         // 后续源降级为普通 chat。
         let mut last_err = None;
         for (i, client) in self.clients.iter().enumerate().skip(1) {
-            match client.chat(http, system, messages, tools) {
+            match client.chat(http, system, messages, tools, tool_choice) {
                 Ok(r) => {
                     crate::platform::task_wdt::feed_current_task();
                     return Ok(r);

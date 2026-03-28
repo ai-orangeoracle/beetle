@@ -13,7 +13,7 @@ use crate::constants::{
 };
 use crate::error::Result;
 use crate::i18n::{tr, Locale as UiLocale, Message as UiMessage};
-use crate::llm::{LlmClient, LlmHttpClient, Message, StopReason, ToolSpec};
+use crate::llm::{LlmClient, LlmHttpClient, Message, StopReason, ToolChoicePolicy, ToolSpec};
 use crate::memory::{
     EmotionSignalStore, ImportantMessageStore, MemoryStore, PendingRetryStore, SessionStore,
     SessionSummaryStore, TaskContinuationStore,
@@ -375,7 +375,7 @@ fn generate_session_summary(
         channel: Arc::from("system"),
         locale: loc,
     };
-    match llm.chat(&mut ctx, SUMMARY_SYSTEM, &messages, None) {
+    match llm.chat(&mut ctx, SUMMARY_SYSTEM, &messages, None, ToolChoicePolicy::Auto) {
         Ok(resp) => {
             let summary =
                 truncate_content_to_max(&resp.content, SESSION_SUMMARY_MAX_LEN).into_owned();
@@ -1058,6 +1058,8 @@ fn run_worker_path(
     loc: UiLocale,
 ) -> Result<(WorkerOutcome, Option<u32>, bool, WorkerLatency)> {
     let mut latency = WorkerLatency::default();
+    let runtime_tool_specs: Vec<ToolSpec> = config.tool_specs.iter().cloned().collect();
+    let llm_tool_choice = ToolChoicePolicy::Auto;
     let mut tool_ctx = AgentToolCtx {
         http,
         chat_id: msg.chat_id.clone(),
@@ -1227,11 +1229,18 @@ fn run_worker_path(
                 &mut tool_ctx,
                 &system,
                 &messages,
-                Some(config.tool_specs.as_ref()),
+                Some(runtime_tool_specs.as_ref()),
+                llm_tool_choice,
                 &mut progress_cb,
             )
         } else {
-            worker_llm.chat(&mut tool_ctx, &system, &messages, Some(config.tool_specs.as_ref()))
+            worker_llm.chat(
+                &mut tool_ctx,
+                &system,
+                &messages,
+                Some(runtime_tool_specs.as_ref()),
+                llm_tool_choice,
+            )
         };
         let response = match response {
             Ok(r) => {
@@ -1250,6 +1259,12 @@ fn run_worker_path(
         };
         crate::platform::task_wdt::feed_current_task();
         metrics::record_wdt_feed();
+
+        let tc_count = response.tool_calls.as_ref().map_or(0, |v| v.len());
+        log::debug!(
+            "[agent] llm round={} stop_reason={:?} tool_calls={} content_len={}",
+            round, response.stop_reason, tc_count, response.content.len()
+        );
 
         if response.stop_reason == StopReason::MaxTokens {
             let mut content = response.content;
@@ -1332,8 +1347,8 @@ fn run_worker_path(
                     }
                 }
                 // 工具执行门控
-                let needs_net = registry.is_network_tool(&tc.name);
-                let mut result =
+                let mut result = {
+                    let needs_net = registry.is_network_tool(&tc.name);
                     match crate::orchestrator::can_execute_tool_pub(&tc.name, needs_net) {
                         ToolDecision::Deny { reason } => {
                             log::info!("[agent_tool] {} denied: {}", tc.name, reason);
@@ -1356,17 +1371,18 @@ fn run_worker_path(
                                     metrics::record_tool_call(false);
                                     metrics::record_error_by_stage(e.stage());
                                     log::error!(
-                                        "[agent_tool] {} execute failed: {} (stage: {})",
+                                        "[agent_tool] {} execute failed: {} input={:?}",
                                         tc.name,
                                         e,
-                                        e.stage()
+                                        &tc.input[..tc.input.len().min(200)]
                                     );
                                     state::set_last_error(&e);
                                     format!("[tool error] {} (stage: {})", e, e.stage())
                                 }
                             }
                         }
-                    };
+                    }
+                };
                 let call_key = hash_tool_call(&tc.name, &tc.input);
                 let n = tool_call_repeat.entry(call_key).or_insert(0);
                 *n = (*n).saturating_add(1);
@@ -1482,3 +1498,4 @@ fn run_worker_path(
         latency,
     ))
 }
+
