@@ -281,6 +281,15 @@ impl ToolContext for AgentToolCtx<'_> {
     ) -> Result<(u16, crate::platform::ResponseBody)> {
         crate::platform::PlatformHttpClient::post(self.http, url, headers, body)
     }
+    fn post_streaming(
+        &mut self,
+        url: &str,
+        headers: &[(&str, &str)],
+        body: &[u8],
+        on_chunk: &mut dyn FnMut(&[u8]) -> Result<()>,
+    ) -> Result<u16> {
+        crate::platform::PlatformHttpClient::post_streaming(self.http, url, headers, body, on_chunk)
+    }
     fn patch_with_headers(
         &mut self,
         url: &str,

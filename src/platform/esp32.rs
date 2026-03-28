@@ -25,7 +25,7 @@ use crate::{
     },
 };
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 /// ESP32 平台实现。
@@ -44,7 +44,7 @@ pub struct Esp32Platform {
     wifi_scan_handle: Mutex<Option<Arc<dyn crate::platform::WifiScan + Send + Sync>>>,
     display_state: Mutex<Option<DisplayState>>,
     i2c_state: Mutex<Option<crate::platform::hardware_drivers::I2cBusState>>,
-    audio_state: Mutex<Option<crate::platform::audio_drivers::AudioPipelineState>>,
+    audio_state: RwLock<Option<Arc<crate::platform::audio_drivers::AudioPipelineState>>>,
 }
 
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
@@ -67,7 +67,7 @@ impl Esp32Platform {
             wifi_scan_handle: Mutex::new(None),
             display_state: Mutex::new(None),
             i2c_state: Mutex::new(None),
-            audio_state: Mutex::new(None),
+            audio_state: RwLock::new(None),
         }
     }
 }
@@ -241,16 +241,16 @@ impl Platform for Esp32Platform {
 
     fn init_audio(&self, config: &AudioSegment) -> crate::error::Result<()> {
         if !config.enabled {
-            *self.audio_state.lock().unwrap_or_else(|e| e.into_inner()) = None;
+            *self.audio_state.write().unwrap_or_else(|e| e.into_inner()) = None;
             return Ok(());
         }
         match crate::platform::audio_drivers::AudioPipelineState::from_config(config) {
             Ok(state) => {
-                *self.audio_state.lock().unwrap_or_else(|e| e.into_inner()) = Some(state);
+                *self.audio_state.write().unwrap_or_else(|e| e.into_inner()) = Some(Arc::new(state));
                 Ok(())
             }
             Err(e) => {
-                *self.audio_state.lock().unwrap_or_else(|e| e.into_inner()) = None;
+                *self.audio_state.write().unwrap_or_else(|e| e.into_inner()) = None;
                 Err(e)
             }
         }
@@ -258,7 +258,7 @@ impl Platform for Esp32Platform {
 
     fn audio_mic_ready(&self) -> bool {
         self.audio_state
-            .lock()
+            .read()
             .unwrap_or_else(|e| e.into_inner())
             .as_ref()
             .map(|s| s.mic_ready())
@@ -267,7 +267,7 @@ impl Platform for Esp32Platform {
 
     fn audio_speaker_ready(&self) -> bool {
         self.audio_state
-            .lock()
+            .read()
             .unwrap_or_else(|e| e.into_inner())
             .as_ref()
             .map(|s| s.speaker_ready())
@@ -275,18 +275,28 @@ impl Platform for Esp32Platform {
     }
 
     fn read_mic_pcm_i16(&self, out: &mut [i16]) -> crate::error::Result<usize> {
-        let mut guard = self.audio_state.lock().unwrap_or_else(|e| e.into_inner());
-        let state = guard.as_mut().ok_or_else(|| {
-            crate::error::Error::config("audio_mic", "audio pipeline not initialized")
-        })?;
+        let state = self
+            .audio_state
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+            .cloned()
+            .ok_or_else(|| {
+                crate::error::Error::config("audio_mic", "audio pipeline not initialized")
+            })?;
         state.read_mic_pcm_i16(out)
     }
 
     fn write_speaker_pcm_i16(&self, buf: &[i16]) -> crate::error::Result<()> {
-        let mut guard = self.audio_state.lock().unwrap_or_else(|e| e.into_inner());
-        let state = guard.as_mut().ok_or_else(|| {
-            crate::error::Error::config("audio_speaker", "audio pipeline not initialized")
-        })?;
+        let state = self
+            .audio_state
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+            .cloned()
+            .ok_or_else(|| {
+                crate::error::Error::config("audio_speaker", "audio pipeline not initialized")
+            })?;
         state.write_speaker_pcm_i16(buf)
     }
 

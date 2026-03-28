@@ -5,6 +5,16 @@
 use crate::config::AudioSegment;
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 use crate::error::{Error, Result};
+#[cfg(target_arch = "xtensa")]
+use crate::platform::heap::{alloc_spiram_buffer, free_spiram_buffer};
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+use std::sync::{Arc, Condvar, Mutex};
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+use std::thread::JoinHandle;
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+use std::time::Duration;
 
 // ---------------------------------------------------------------------------
 // I2S handle wrapper types
@@ -32,6 +42,13 @@ unsafe impl Send for MicState {}
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 unsafe impl Send for SpeakerState {}
 
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+const MIC_DEVICE_I2S_INMP441: &str = "i2s_inmp441";
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+const MIC_DEVICE_PDM: &str = "pdm";
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+const SPEAKER_DEVICE_I2S_MAX98357A: &str = "i2s_max98357a";
+
 // ---------------------------------------------------------------------------
 // Helper
 // ---------------------------------------------------------------------------
@@ -50,6 +67,69 @@ const PORT_TICK_PERIOD_MS: u32 = 10;
 fn check_esp(stage: &'static str, ret: i32) -> Result<()> {
     if ret != esp_idf_svc::sys::ESP_OK {
         return Err(Error::esp(stage, ret));
+    }
+    Ok(())
+}
+
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+fn read_mic_i2s_pcm16(mic: &mut MicState, out: &mut [i16]) -> Result<usize> {
+    if out.is_empty() {
+        return Ok(0);
+    }
+    let sample_count = out.len();
+    if mic.read_buf.len() < sample_count {
+        mic.read_buf.resize(sample_count, 0);
+    }
+    let buf32 = &mut mic.read_buf[..sample_count];
+    let byte_len = sample_count * 4;
+    let mut bytes_read: usize = 0;
+    let timeout_ticks: u32 = I2S_IO_TIMEOUT_MS / PORT_TICK_PERIOD_MS;
+    check_esp("i2s_mic_read", unsafe {
+        esp_idf_svc::sys::i2s_channel_read(
+            mic.rx_handle,
+            buf32.as_mut_ptr() as *mut core::ffi::c_void,
+            byte_len,
+            &mut bytes_read,
+            timeout_ticks,
+        )
+    })?;
+    let samples_read = bytes_read / 4;
+    for i in 0..samples_read {
+        out[i] = (buf32[i] >> 16) as i16;
+    }
+    Ok(samples_read)
+}
+
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+fn write_speaker_i2s_pcm16(speaker: &mut SpeakerState, buf: &[i16]) -> Result<()> {
+    if buf.is_empty() {
+        return Ok(());
+    }
+    if speaker.write_buf.len() < buf.len() {
+        speaker.write_buf.resize(buf.len(), 0);
+    }
+    let buf32 = &mut speaker.write_buf[..buf.len()];
+    for (i, &s) in buf.iter().enumerate() {
+        buf32[i] = (s as i32) << 16;
+    }
+    let byte_len = buf32.len() * 4;
+    let mut bytes_written: usize = 0;
+    let timeout_ticks: u32 = I2S_IO_TIMEOUT_MS / PORT_TICK_PERIOD_MS;
+    check_esp("i2s_spk_write", unsafe {
+        esp_idf_svc::sys::i2s_channel_write(
+            speaker.tx_handle,
+            buf32.as_ptr() as *const core::ffi::c_void,
+            byte_len,
+            &mut bytes_written,
+            timeout_ticks,
+        )
+    })?;
+    if bytes_written < byte_len {
+        log::warn!(
+            "[audio] speaker partial write: {}/{} bytes",
+            bytes_written,
+            byte_len,
+        );
     }
     Ok(())
 }
@@ -272,190 +352,47 @@ fn init_speaker_channel(seg: &AudioSegment) -> Result<SpeakerState> {
     })
 }
 
-// ---------------------------------------------------------------------------
-// AudioPipelineState
-// ---------------------------------------------------------------------------
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+trait AudioBackend: Send {
+    fn mic_ready(&self) -> bool;
+    fn speaker_ready(&self) -> bool;
+    fn read_mic_frame_pcm16(&mut self, out: &mut [i16]) -> Result<usize>;
+    fn write_speaker_frame_pcm16(&mut self, buf: &[i16]) -> Result<()>;
+}
 
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
-pub(crate) struct AudioPipelineState {
+struct I2sStdBackend {
     mic: Option<MicState>,
     speaker: Option<SpeakerState>,
 }
 
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
-impl AudioPipelineState {
-    pub fn from_config(seg: &AudioSegment) -> Result<Self> {
-        if !seg.enabled {
-            return Ok(Self {
-                mic: None,
-                speaker: None,
-            });
-        }
-
-        // -- Mic --------------------------------------------------------------
-        let mic = if seg.microphone.enabled {
-            if seg.microphone.device_type != "i2s_inmp441" {
-                return Err(Error::config(
-                    "audio_init",
-                    format!(
-                        "unsupported microphone device_type '{}', only i2s_inmp441 is supported now",
-                        seg.microphone.device_type
-                    ),
-                ));
-            }
-            if seg.microphone.bits_per_sample != 16 {
-                return Err(Error::config(
-                    "audio_init",
-                    format!(
-                        "only 16-bit microphone sampling is supported (got {})",
-                        seg.microphone.bits_per_sample
-                    ),
-                ));
-            }
-            Some(init_mic_channel(seg)?)
-        } else {
-            None
-        };
-
-        // -- Speaker ----------------------------------------------------------
-        let speaker = if seg.speaker.enabled {
-            if seg.speaker.device_type != "i2s_max98357a" {
-                return Err(Error::config(
-                    "audio_init",
-                    format!(
-                        "unsupported speaker device_type '{}', only i2s_max98357a is supported now",
-                        seg.speaker.device_type
-                    ),
-                ));
-            }
-            if seg.speaker.bits_per_sample != 16 {
-                return Err(Error::config(
-                    "audio_init",
-                    format!(
-                        "only 16-bit speaker output is supported (got {})",
-                        seg.speaker.bits_per_sample
-                    ),
-                ));
-            }
-            match init_speaker_channel(seg) {
-                Ok(s) => Some(s),
-                Err(e) => {
-                    // Rollback: tear down mic channel if speaker init fails
-                    if let Some(m) = mic {
-                        unsafe {
-                            let _ = esp_idf_svc::sys::i2s_channel_disable(m.rx_handle);
-                            let _ = esp_idf_svc::sys::i2s_del_channel(m.rx_handle);
-                        }
-                    }
-                    return Err(e);
-                }
-            }
-        } else {
-            None
-        };
-
-        Ok(Self { mic, speaker })
-    }
-
-    #[inline]
-    pub fn mic_ready(&self) -> bool {
+impl AudioBackend for I2sStdBackend {
+    fn mic_ready(&self) -> bool {
         self.mic.is_some()
     }
-
-    #[inline]
-    pub fn speaker_ready(&self) -> bool {
+    fn speaker_ready(&self) -> bool {
         self.speaker.is_some()
     }
-
-    /// 从 INMP441 麦克风读取 PCM16 样本。
-    /// I2S 以 32bit 帧传输，高 16 位为有效数据，读出后右移 16 位转为 i16。
-    pub fn read_mic_pcm_i16(&mut self, out: &mut [i16]) -> Result<usize> {
+    fn read_mic_frame_pcm16(&mut self, out: &mut [i16]) -> Result<usize> {
         let mic = self
             .mic
             .as_mut()
             .ok_or_else(|| Error::config("audio_mic", "microphone not initialized"))?;
-        if out.is_empty() {
-            return Ok(0);
-        }
-        // Reuse pre-allocated i32 buffer; grow only if caller requests more than DMA frame.
-        let sample_count = out.len();
-        if mic.read_buf.len() < sample_count {
-            mic.read_buf.resize(sample_count, 0);
-        }
-        let buf32 = &mut mic.read_buf[..sample_count];
-
-        let byte_len = sample_count * 4;
-        let mut bytes_read: usize = 0;
-        let timeout_ticks: u32 = I2S_IO_TIMEOUT_MS / PORT_TICK_PERIOD_MS;
-
-        check_esp("i2s_mic_read", unsafe {
-            esp_idf_svc::sys::i2s_channel_read(
-                mic.rx_handle,
-                buf32.as_mut_ptr() as *mut core::ffi::c_void,
-                byte_len,
-                &mut bytes_read,
-                timeout_ticks,
-            )
-        })?;
-
-        let samples_read = bytes_read / 4;
-        // INMP441 outputs 24-bit data left-aligned in 32-bit frame.
-        // Shift right 16 bits to get the top 16 bits as i16.
-        for i in 0..samples_read {
-            out[i] = (buf32[i] >> 16) as i16;
-        }
-
-        Ok(samples_read)
+        read_mic_i2s_pcm16(mic, out)
     }
-
-    /// 向 MAX98357A 喇叭写入 PCM16 样本。
-    /// 将 i16 左移 16 位扩展到 32bit I2S 帧后写入。
-    pub fn write_speaker_pcm_i16(&mut self, buf: &[i16]) -> Result<()> {
+    fn write_speaker_frame_pcm16(&mut self, buf: &[i16]) -> Result<()> {
         let speaker = self
             .speaker
             .as_mut()
             .ok_or_else(|| Error::config("audio_speaker", "speaker not initialized"))?;
-        if buf.is_empty() {
-            return Ok(());
-        }
-        // Reuse pre-allocated buffer; grow only if needed (stays at high-water mark).
-        if speaker.write_buf.len() < buf.len() {
-            speaker.write_buf.resize(buf.len(), 0);
-        }
-        let buf32 = &mut speaker.write_buf[..buf.len()];
-        for (i, &s) in buf.iter().enumerate() {
-            buf32[i] = (s as i32) << 16;
-        }
-
-        let byte_len = buf32.len() * 4;
-        let mut bytes_written: usize = 0;
-        let timeout_ticks: u32 = I2S_IO_TIMEOUT_MS / PORT_TICK_PERIOD_MS;
-
-        check_esp("i2s_spk_write", unsafe {
-            esp_idf_svc::sys::i2s_channel_write(
-                speaker.tx_handle,
-                buf32.as_ptr() as *const core::ffi::c_void,
-                byte_len,
-                &mut bytes_written,
-                timeout_ticks,
-            )
-        })?;
-
-        if bytes_written < byte_len {
-            log::warn!(
-                "[audio] speaker partial write: {}/{} bytes",
-                bytes_written,
-                byte_len,
-            );
-        }
-        Ok(())
+        write_speaker_i2s_pcm16(speaker, buf)
     }
 }
 
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
-impl Drop for AudioPipelineState {
+impl Drop for I2sStdBackend {
     fn drop(&mut self) {
-        // -- Mic cleanup ------------------------------------------------------
         if let Some(ref mic) = self.mic {
             unsafe {
                 let _ = esp_idf_svc::sys::i2s_channel_disable(mic.rx_handle);
@@ -463,13 +400,11 @@ impl Drop for AudioPipelineState {
             }
             log::debug!("[audio] mic I2S0 RX channel released");
         }
-        // -- Speaker cleanup --------------------------------------------------
         if let Some(ref spk) = self.speaker {
             unsafe {
                 let _ = esp_idf_svc::sys::i2s_channel_disable(spk.tx_handle);
                 let _ = esp_idf_svc::sys::i2s_del_channel(spk.tx_handle);
             }
-            // Pull SD pin low to shut down MAX98357A amplifier
             if let Some(pin) = spk.sd_pin {
                 unsafe {
                     let _ = esp_idf_svc::sys::gpio_set_level(
@@ -479,6 +414,458 @@ impl Drop for AudioPipelineState {
                 }
             }
             log::debug!("[audio] speaker I2S1 TX channel released");
+        }
+    }
+}
+
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+struct PdmStubBackend {
+    speaker: Option<SpeakerState>,
+}
+
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+impl AudioBackend for PdmStubBackend {
+    fn mic_ready(&self) -> bool {
+        false
+    }
+    fn speaker_ready(&self) -> bool {
+        self.speaker.is_some()
+    }
+    fn read_mic_frame_pcm16(&mut self, _out: &mut [i16]) -> Result<usize> {
+        Err(Error::config(
+            "audio_mic",
+            "pdm microphone backend is not implemented yet",
+        ))
+    }
+    fn write_speaker_frame_pcm16(&mut self, buf: &[i16]) -> Result<()> {
+        let speaker = self
+            .speaker
+            .as_mut()
+            .ok_or_else(|| Error::config("audio_speaker", "speaker not initialized"))?;
+        write_speaker_i2s_pcm16(speaker, buf)
+    }
+}
+
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+impl Drop for PdmStubBackend {
+    fn drop(&mut self) {
+        if let Some(ref spk) = self.speaker {
+            unsafe {
+                let _ = esp_idf_svc::sys::i2s_channel_disable(spk.tx_handle);
+                let _ = esp_idf_svc::sys::i2s_del_channel(spk.tx_handle);
+            }
+            if let Some(pin) = spk.sd_pin {
+                unsafe {
+                    let _ = esp_idf_svc::sys::gpio_set_level(
+                        pin as esp_idf_svc::sys::gpio_num_t,
+                        0,
+                    );
+                }
+            }
+            log::debug!("[audio] speaker I2S1 TX channel released (pdm-stub)");
+        }
+    }
+}
+
+/// PSRAM-backed circular buffer for audio samples.
+/// On xtensa (ESP32-S3) the backing memory is allocated from PSRAM via
+/// `heap_caps_malloc(MALLOC_CAP_SPIRAM)`, freeing ~128KB of internal SRAM.
+/// On riscv32 or when PSRAM is unavailable, falls back to standard heap.
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+struct AudioRingBuffer {
+    buf: *mut i16,
+    cap: usize,
+    head: usize, // read position
+    len: usize,  // valid sample count
+    spiram: bool, // true if buf was allocated from PSRAM
+}
+
+// SAFETY: The buffer pointer is exclusively owned and only accessed behind Mutex.
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+unsafe impl Send for AudioRingBuffer {}
+
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+impl Default for AudioRingBuffer {
+    fn default() -> Self {
+        Self {
+            buf: core::ptr::null_mut(),
+            cap: 0,
+            head: 0,
+            len: 0,
+            spiram: false,
+        }
+    }
+}
+
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+impl AudioRingBuffer {
+    fn with_capacity(cap: usize) -> Self {
+        if cap == 0 {
+            return Self::default();
+        }
+        let byte_size = cap * core::mem::size_of::<i16>();
+
+        // Try PSRAM first (xtensa only), fall back to standard heap.
+        #[cfg(target_arch = "xtensa")]
+        {
+            if let Some(ptr) = alloc_spiram_buffer(byte_size) {
+                // Zero-initialize
+                unsafe { core::ptr::write_bytes(ptr, 0, byte_size) };
+                log::debug!("[audio] ring buffer {}KB allocated in PSRAM", byte_size / 1024);
+                return Self {
+                    buf: ptr as *mut i16,
+                    cap,
+                    head: 0,
+                    len: 0,
+                    spiram: true,
+                };
+            }
+        }
+
+        // Fallback: standard heap (riscv32 or PSRAM unavailable)
+        let mut v = Vec::<i16>::with_capacity(cap);
+        v.resize(cap, 0);
+        let ptr = v.as_mut_ptr();
+        core::mem::forget(v); // ownership transferred to raw pointer
+        log::debug!("[audio] ring buffer {}KB allocated in internal heap", byte_size / 1024);
+        Self {
+            buf: ptr,
+            cap,
+            head: 0,
+            len: 0,
+            spiram: false,
+        }
+    }
+
+    #[inline]
+    fn len(&self) -> usize {
+        self.len
+    }
+
+    #[inline]
+    fn available(&self) -> usize {
+        self.cap.saturating_sub(self.len)
+    }
+
+    /// Write position (one past the last valid sample, wrapping).
+    #[inline]
+    fn tail(&self) -> usize {
+        let t = self.head + self.len;
+        if t >= self.cap { t - self.cap } else { t }
+    }
+
+    fn push_slice_drop_oldest(&mut self, input: &[i16]) {
+        if self.cap == 0 {
+            return;
+        }
+        for &sample in input {
+            let t = self.tail();
+            unsafe { *self.buf.add(t) = sample };
+            if self.len == self.cap {
+                // Buffer full — overwrite oldest, advance head
+                self.head += 1;
+                if self.head == self.cap {
+                    self.head = 0;
+                }
+            } else {
+                self.len += 1;
+            }
+        }
+    }
+
+    fn push_slice_blocking(&mut self, input: &[i16]) -> usize {
+        let take = input.len().min(self.available());
+        for &sample in &input[..take] {
+            let t = self.tail();
+            unsafe { *self.buf.add(t) = sample };
+            self.len += 1;
+        }
+        take
+    }
+
+    fn pop_into(&mut self, out: &mut [i16]) -> usize {
+        let n = out.len().min(self.len);
+        for i in 0..n {
+            unsafe { out[i] = *self.buf.add(self.head) };
+            self.head += 1;
+            if self.head == self.cap {
+                self.head = 0;
+            }
+        }
+        self.len -= n;
+        n
+    }
+}
+
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+impl Drop for AudioRingBuffer {
+    fn drop(&mut self) {
+        if self.buf.is_null() {
+            return;
+        }
+        if self.spiram {
+            #[cfg(target_arch = "xtensa")]
+            unsafe {
+                free_spiram_buffer(self.buf as *mut u8);
+            }
+        } else {
+            // Reconstruct Vec to free via standard allocator
+            unsafe {
+                let _ = Vec::from_raw_parts(self.buf, self.cap, self.cap);
+            }
+        }
+        self.buf = core::ptr::null_mut();
+    }
+}
+
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+struct SharedAudioBuffers {
+    mic: Mutex<AudioRingBuffer>,
+    mic_cv: Condvar,
+    speaker: Mutex<AudioRingBuffer>,
+    speaker_cv: Condvar,
+    stop: AtomicBool,
+}
+
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+pub(crate) struct AudioPipelineState {
+    mic_enabled: bool,
+    speaker_enabled: bool,
+    shared: Arc<SharedAudioBuffers>,
+    worker: Option<JoinHandle<()>>,
+}
+
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+impl AudioPipelineState {
+    pub fn from_config(seg: &AudioSegment) -> Result<Self> {
+        if !seg.enabled {
+            return Ok(Self {
+                mic_enabled: false,
+                speaker_enabled: false,
+                shared: Arc::new(SharedAudioBuffers {
+                    mic: Mutex::new(AudioRingBuffer::default()),
+                    mic_cv: Condvar::new(),
+                    speaker: Mutex::new(AudioRingBuffer::default()),
+                    speaker_cv: Condvar::new(),
+                    stop: AtomicBool::new(false),
+                }),
+                worker: None,
+            });
+        }
+        if seg.microphone.enabled && seg.microphone.bits_per_sample != 16 {
+            return Err(Error::config(
+                "audio_init",
+                format!(
+                    "only 16-bit microphone sampling is supported (got {})",
+                    seg.microphone.bits_per_sample
+                ),
+            ));
+        }
+        if seg.speaker.enabled && seg.speaker.bits_per_sample != 16 {
+            return Err(Error::config(
+                "audio_init",
+                format!(
+                    "only 16-bit speaker output is supported (got {})",
+                    seg.speaker.bits_per_sample
+                ),
+            ));
+        }
+        let mic_cap = (seg.microphone.sample_rate.max(8_000) as usize).saturating_mul(2);
+        let speaker_cap = (seg.speaker.sample_rate.max(8_000) as usize).saturating_mul(2);
+        let shared = Arc::new(SharedAudioBuffers {
+            mic: Mutex::new(AudioRingBuffer::with_capacity(mic_cap)),
+            mic_cv: Condvar::new(),
+            speaker: Mutex::new(AudioRingBuffer::with_capacity(speaker_cap)),
+            speaker_cv: Condvar::new(),
+            stop: AtomicBool::new(false),
+        });
+
+        let mut backend: Box<dyn AudioBackend> = if seg.microphone.enabled
+            && seg.microphone.device_type == MIC_DEVICE_PDM
+        {
+            if seg.speaker.enabled && seg.speaker.device_type != SPEAKER_DEVICE_I2S_MAX98357A {
+                return Err(Error::config(
+                    "audio_init",
+                    format!(
+                        "unsupported speaker device_type '{}', only {} is supported now",
+                        seg.speaker.device_type, SPEAKER_DEVICE_I2S_MAX98357A
+                    ),
+                ));
+            }
+            log::warn!("[audio] pdm microphone selected; running with pdm stub backend");
+            Box::new(PdmStubBackend {
+                speaker: if seg.speaker.enabled {
+                    Some(init_speaker_channel(seg)?)
+                } else {
+                    None
+                },
+            })
+        } else {
+            if seg.microphone.enabled && seg.microphone.device_type != MIC_DEVICE_I2S_INMP441 {
+                return Err(Error::config(
+                    "audio_init",
+                    format!(
+                        "unsupported microphone device_type '{}', supported: {}, {}",
+                        seg.microphone.device_type, MIC_DEVICE_I2S_INMP441, MIC_DEVICE_PDM
+                    ),
+                ));
+            }
+            if seg.speaker.enabled && seg.speaker.device_type != SPEAKER_DEVICE_I2S_MAX98357A {
+                return Err(Error::config(
+                    "audio_init",
+                    format!(
+                        "unsupported speaker device_type '{}', only {} is supported now",
+                        seg.speaker.device_type, SPEAKER_DEVICE_I2S_MAX98357A
+                    ),
+                ));
+            }
+            let mic = if seg.microphone.enabled {
+                Some(init_mic_channel(seg)?)
+            } else {
+                None
+            };
+            let speaker = if seg.speaker.enabled {
+                match init_speaker_channel(seg) {
+                    Ok(s) => Some(s),
+                    Err(e) => {
+                        drop(mic);
+                        return Err(e);
+                    }
+                }
+            } else {
+                None
+            };
+            Box::new(I2sStdBackend { mic, speaker })
+        };
+
+        let mic_enabled = backend.mic_ready();
+        let speaker_enabled = backend.speaker_ready();
+        let worker_shared = Arc::clone(&shared);
+        let worker = std::thread::Builder::new()
+            .name("audio_io_worker".to_string())
+            .spawn(move || {
+                let mut mic_frame = vec![0i16; 320];
+                let mut speaker_frame = vec![0i16; 1024];
+                loop {
+                    if worker_shared.stop.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    let mut progressed = false;
+                    if backend.mic_ready() {
+                        match backend.read_mic_frame_pcm16(&mut mic_frame) {
+                            Ok(n) if n > 0 => {
+                                let mut guard =
+                                    worker_shared.mic.lock().unwrap_or_else(|e| e.into_inner());
+                                guard.push_slice_drop_oldest(&mic_frame[..n]);
+                                worker_shared.mic_cv.notify_all();
+                                progressed = true;
+                            }
+                            Ok(_) => {}
+                            Err(e) => {
+                                log::debug!("[audio] mic read frame failed: {}", e);
+                            }
+                        }
+                    }
+                    if backend.speaker_ready() {
+                        let mut guard =
+                            worker_shared.speaker.lock().unwrap_or_else(|e| e.into_inner());
+                        let n = guard.pop_into(&mut speaker_frame);
+                        if n > 0 {
+                            worker_shared.speaker_cv.notify_all();
+                            drop(guard);
+                            if let Err(e) = backend.write_speaker_frame_pcm16(&speaker_frame[..n]) {
+                                log::warn!("[audio] speaker frame write failed: {}", e);
+                            } else {
+                                progressed = true;
+                            }
+                        }
+                    }
+                    if !progressed {
+                        crate::platform::task_wdt::feed_current_task();
+                        std::thread::sleep(Duration::from_millis(2));
+                    }
+                }
+            })
+            .map_err(|e| Error::config("audio_init", format!("spawn audio worker failed: {}", e)))?;
+
+        Ok(Self {
+            mic_enabled,
+            speaker_enabled,
+            shared,
+            worker: Some(worker),
+        })
+    }
+
+    #[inline]
+    pub fn mic_ready(&self) -> bool {
+        self.mic_enabled
+    }
+
+    #[inline]
+    pub fn speaker_ready(&self) -> bool {
+        self.speaker_enabled
+    }
+
+    pub fn read_mic_pcm_i16(&self, out: &mut [i16]) -> Result<usize> {
+        if !self.mic_enabled {
+            return Err(Error::config("audio_mic", "microphone not initialized"));
+        }
+        if out.is_empty() {
+            return Ok(0);
+        }
+        let mut guard = self.shared.mic.lock().unwrap_or_else(|e| e.into_inner());
+        if guard.len() == 0 {
+            let waited = self
+                .shared
+                .mic_cv
+                .wait_timeout(guard, Duration::from_millis(I2S_IO_TIMEOUT_MS as u64))
+                .unwrap_or_else(|e| e.into_inner());
+            guard = waited.0;
+        }
+        let n = guard.pop_into(out);
+        Ok(n)
+    }
+
+    pub fn write_speaker_pcm_i16(&self, buf: &[i16]) -> Result<()> {
+        if !self.speaker_enabled {
+            return Err(Error::config("audio_speaker", "speaker not initialized"));
+        }
+        if buf.is_empty() {
+            return Ok(());
+        }
+        let mut written = 0usize;
+        while written < buf.len() {
+            let mut guard = self.shared.speaker.lock().unwrap_or_else(|e| e.into_inner());
+            while guard.available() == 0 {
+                let waited = self
+                    .shared
+                    .speaker_cv
+                    .wait_timeout(guard, Duration::from_millis(I2S_IO_TIMEOUT_MS as u64))
+                    .unwrap_or_else(|e| e.into_inner());
+                guard = waited.0;
+                if waited.1.timed_out() && guard.available() == 0 {
+                    return Err(Error::config(
+                        "audio_speaker",
+                        "speaker ring buffer blocked",
+                    ));
+                }
+            }
+            let n = guard.push_slice_blocking(&buf[written..]);
+            written += n;
+            self.shared.speaker_cv.notify_all();
+        }
+        Ok(())
+    }
+}
+
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+impl Drop for AudioPipelineState {
+    fn drop(&mut self) {
+        self.shared.stop.store(true, Ordering::Relaxed);
+        self.shared.mic_cv.notify_all();
+        self.shared.speaker_cv.notify_all();
+        if let Some(handle) = self.worker.take() {
+            let _ = handle.join();
         }
     }
 }

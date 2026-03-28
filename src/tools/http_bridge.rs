@@ -29,6 +29,16 @@ impl PlatformHttpClient for ToolContextHttpClient<'_> {
         self.ctx.post_with_headers(url, headers, body)
     }
 
+    fn post_streaming(
+        &mut self,
+        url: &str,
+        headers: &[(&str, &str)],
+        body: &[u8],
+        on_chunk: &mut dyn FnMut(&[u8]) -> Result<()>,
+    ) -> Result<u16> {
+        self.ctx.post_streaming(url, headers, body, on_chunk)
+    }
+
     fn patch(
         &mut self,
         url: &str,

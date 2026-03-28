@@ -165,6 +165,7 @@ pub fn request_http_permit(
                 }
             }
         };
+        crate::metrics::record_http_permit_wait_ms(start.elapsed().as_millis());
         Some(guard)
     };
     #[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]

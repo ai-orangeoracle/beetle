@@ -279,6 +279,16 @@ pub trait Platform: Send + Sync {
         ))
     }
 
+    /// 语音前后处理硬件加速是否可用（如 PDM 专用路径/NPU/向量加速）。
+    fn speech_accel_available(&self) -> bool {
+        false
+    }
+
+    /// 当前语音加速后端标识（不可用时返回 None）。
+    fn speech_accel_backend(&self) -> Option<&'static str> {
+        None
+    }
+
     /// 显示器是否可用。默认 false。
     fn display_available(&self) -> bool {
         false

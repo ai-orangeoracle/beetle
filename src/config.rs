@@ -964,6 +964,9 @@ const AUDIO_STT_API_KEY_MAX_LEN: usize = 256;
 const AUDIO_STT_API_SECRET_MAX_LEN: usize = 256;
 const AUDIO_SOUND_EVENTS_MAX: usize = 16;
 const AUDIO_SOUND_EVENT_MAX_LEN: usize = 32;
+const AUDIO_MIC_DEVICE_I2S_INMP441: &str = "i2s_inmp441";
+const AUDIO_MIC_DEVICE_PDM: &str = "pdm";
+const AUDIO_SPEAKER_DEVICE_I2S_MAX98357A: &str = "i2s_max98357a";
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AudioMicPins {
@@ -1531,8 +1534,31 @@ fn validate_audio_segment(seg: &AudioSegment) -> Result<()> {
             "stt.api_key and stt.api_secret are required when stt.provider == baidu",
         ));
     }
+    if seg.enabled
+        && seg.speaker.enabled
+        && seg.tts.provider == "baidu"
+        && (seg.stt.provider != "baidu"
+            || seg.stt.api_key.trim().is_empty()
+            || seg.stt.api_secret.trim().is_empty())
+    {
+        return Err(Error::config(
+            "audio",
+            "tts.provider == baidu requires stt.provider == baidu and non-empty stt.api_key/stt.api_secret",
+        ));
+    }
 
     if seg.microphone.enabled {
+        if seg.microphone.device_type != AUDIO_MIC_DEVICE_I2S_INMP441
+            && seg.microphone.device_type != AUDIO_MIC_DEVICE_PDM
+        {
+            return Err(Error::config(
+                "audio",
+                format!(
+                    "microphone.device_type must be one of: {}, {}",
+                    AUDIO_MIC_DEVICE_I2S_INMP441, AUDIO_MIC_DEVICE_PDM
+                ),
+            ));
+        }
         validate_pin_range(seg.microphone.pins.ws)?;
         validate_pin_range(seg.microphone.pins.sck)?;
         validate_pin_range(seg.microphone.pins.din)?;
@@ -1552,6 +1578,15 @@ fn validate_audio_segment(seg: &AudioSegment) -> Result<()> {
         }
     }
     if seg.speaker.enabled {
+        if seg.speaker.device_type != AUDIO_SPEAKER_DEVICE_I2S_MAX98357A {
+            return Err(Error::config(
+                "audio",
+                format!(
+                    "speaker.device_type must be {}",
+                    AUDIO_SPEAKER_DEVICE_I2S_MAX98357A
+                ),
+            ));
+        }
         validate_pin_range(seg.speaker.pins.ws)?;
         validate_pin_range(seg.speaker.pins.sck)?;
         validate_pin_range(seg.speaker.pins.dout)?;

@@ -10,6 +10,7 @@ use crate::tools::{parse_tool_args, Tool, ToolContext};
 use crate::Platform;
 use serde_json::{json, Map, Value};
 use std::sync::Arc;
+use std::time::Instant;
 
 pub struct VoiceOutputTool {
     platform: Arc<dyn Platform>,
@@ -55,35 +56,80 @@ impl Tool for VoiceOutputTool {
     }
 
     fn execute(&self, args: &str, ctx: &mut dyn ToolContext) -> Result<String> {
-        log_audio_resource_snapshot("voice_output_start");
-        if !self.platform.audio_speaker_ready() {
-            return Err(Error::config("tool_voice_output", "speaker not ready"));
+        let result = (|| {
+            log_audio_resource_snapshot("voice_output_start");
+            if !self.platform.audio_speaker_ready() {
+                return Err(Error::config("tool_voice_output", "speaker not ready"));
+            }
+            let text = parse_voice_output_text(args)?;
+            if text.len() > AUDIO_TTS_MAX_TEXT_LEN {
+                return Err(Error::config(
+                    "tool_voice_output",
+                    format!("text too long (max {})", AUDIO_TTS_MAX_TEXT_LEN),
+                ));
+            }
+            let mut http = ToolContextHttpClient::new(ctx);
+            let tts_start = Instant::now();
+            let mut first_pcm_at: Option<Instant> = None;
+            let played_samples = match tts_baidu::stream_wav_pcm16le(
+                &mut http,
+                self.baidu_token.as_ref(),
+                &self.audio_cfg.stt,
+                &self.audio_cfg.tts,
+                text.as_str(),
+                AUDIO_TTS_WRITE_CHUNK_SAMPLES,
+                |chunk| {
+                    if first_pcm_at.is_none() {
+                        first_pcm_at = Some(Instant::now());
+                        log_audio_resource_snapshot("voice_output_first_pcm");
+                    }
+                    self.platform.write_speaker_pcm_i16(chunk)
+                },
+            ) {
+                Ok(samples) => samples,
+                Err(e) if e.stage() == "tts_baidu_wav" => {
+                    log::warn!(
+                        "[tool_voice_output] streaming wav parse failed, fallback to buffered path: {}",
+                        e
+                    );
+                    log_audio_resource_snapshot("voice_output_fallback_start");
+                    let wav = tts_baidu::synthesize_wav(
+                        &mut http,
+                        self.baidu_token.as_ref(),
+                        &self.audio_cfg.stt,
+                        &self.audio_cfg.tts,
+                        text.as_str(),
+                    )?;
+                    tts_baidu::play_wav_pcm16le_chunks(
+                        &wav,
+                        AUDIO_TTS_WRITE_CHUNK_SAMPLES,
+                        |chunk| {
+                            if first_pcm_at.is_none() {
+                                first_pcm_at = Some(Instant::now());
+                                log_audio_resource_snapshot("voice_output_first_pcm_fallback");
+                            }
+                            self.platform.write_speaker_pcm_i16(chunk)
+                        },
+                    )?
+                }
+                Err(e) => return Err(e),
+            };
+            crate::metrics::record_voice_output_tts_http_ms(tts_start.elapsed().as_millis());
+            let play_ms = first_pcm_at
+                .map(|t| t.elapsed().as_millis())
+                .unwrap_or(0);
+            crate::metrics::record_voice_output_play_ms(play_ms);
+            log_audio_resource_snapshot("voice_output_done");
+            Ok(json!({
+                "ok": true,
+                "played_samples": played_samples
+            })
+            .to_string())
+        })();
+        if result.is_err() {
+            crate::metrics::record_voice_tool_failure("voice_output");
         }
-        let text = parse_voice_output_text(args)?;
-        if text.len() > AUDIO_TTS_MAX_TEXT_LEN {
-            return Err(Error::config(
-                "tool_voice_output",
-                format!("text too long (max {})", AUDIO_TTS_MAX_TEXT_LEN),
-            ));
-        }
-        let mut http = ToolContextHttpClient::new(ctx);
-        let wav = tts_baidu::synthesize_wav(
-            &mut http,
-            self.baidu_token.as_ref(),
-            &self.audio_cfg.stt,
-            &self.audio_cfg.tts,
-            text.as_str(),
-        )?;
-        let played_samples =
-            tts_baidu::play_wav_pcm16le_chunks(&wav, AUDIO_TTS_WRITE_CHUNK_SAMPLES, |chunk| {
-                self.platform.write_speaker_pcm_i16(chunk)
-            })?;
-        log_audio_resource_snapshot("voice_output_done");
-        Ok(json!({
-            "ok": true,
-            "played_samples": played_samples
-        })
-        .to_string())
+        result
     }
 }
 

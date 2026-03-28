@@ -100,18 +100,12 @@ export const AUDIO_BITS_PER_SAMPLE_ALLOWED = [16, 24, 32] as const
 /** 与 voice-interaction-plan 及固件约定对齐的麦克风类型（device_type 为自由字符串，此处为常用枚举） */
 export const AUDIO_MIC_DEVICE_TYPES = [
   'i2s_inmp441',
-  'i2s_sph0645',
-  'i2s_mems',
-  'analog_max9814',
-  'analog_max4466',
+  'pdm',
 ] as const
 
 /** 常用功放 / DAC 类型 */
 export const AUDIO_SPEAKER_DEVICE_TYPES = [
   'i2s_max98357a',
-  'i2s_ns4168',
-  'analog_pam8403',
-  'internal_dac',
 ] as const
 
 export const AUDIO_SAMPLE_RATE_PRESETS = [8_000, 11_025, 16_000, 22_050, 44_100, 48_000] as const

@@ -54,12 +54,19 @@ impl BaiduTokenCache {
                 .map_err(|e| Error::config("baidu_token_lock", format!("mutex lock: {}", e)))?;
             if let Some(ref c) = *guard {
                 if c.api_key == key && now < c.expires_at {
+                    log::debug!("[baidu_token] cache hit");
                     return Ok(c.token.clone());
                 }
             }
         }
 
+        log::debug!("[baidu_token] cache miss, fetching oauth token");
+        let fetch_start = Instant::now();
         let (token, expires_in_secs) = fetch_access_token(http, key, secret)?;
+        log::debug!(
+            "[baidu_token] oauth fetch done in {} ms",
+            fetch_start.elapsed().as_millis()
+        );
         let ttl_secs = expires_in_secs
             .unwrap_or(DEFAULT_EXPIRES_IN_SECS)
             .saturating_sub(EXPIRY_SAFETY_SECS)
