@@ -31,10 +31,10 @@ fn parse_at_to_unix_secs(v: &Value) -> Result<u64> {
 }
 
 impl Tool for RemindAtTool {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "remind_at"
     }
-    fn description(&self) -> &str {
+    fn description(&self) -> &'static str {
         "Schedule a reminder. Args: at (ISO8601 string or Unix seconds), context (string). At the given time the user will receive a message with the context."
     }
     fn schema(&self) -> serde_json::Value {
@@ -83,11 +83,11 @@ impl RemindListTool {
 }
 
 impl Tool for RemindListTool {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "remind_list"
     }
 
-    fn description(&self) -> &str {
+    fn description(&self) -> &'static str {
         "List upcoming reminders for current chat. Args: limit (optional, default 10, max 20)."
     }
 

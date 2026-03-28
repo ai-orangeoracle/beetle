@@ -33,10 +33,10 @@ impl ProxyConfigTool {
 }
 
 impl Tool for ProxyConfigTool {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "proxy_config"
     }
-    fn description(&self) -> &str {
+    fn description(&self) -> &'static str {
         "Manage HTTP proxy configuration. Op: get (show current proxy, redacted), set (set proxy URL), clear (remove proxy). Changes take effect after restart."
     }
     fn schema(&self) -> serde_json::Value {

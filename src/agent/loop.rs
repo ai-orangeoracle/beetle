@@ -2,7 +2,7 @@
 //! 仅依赖 trait；HTTP/Tool 由 main 注入同一实现（如 EspHttpClient）。
 use crate::agent::context::build_context;
 use crate::bus::{
-    IngressKind, OutboundTx, PcMsg, SystemInboundRx, SystemInboundTx, UserInboundRx, UserInboundTx,
+    InboundRx, IngressKind, OutboundTx, PcMsg, SystemInboundTx, UserInboundRx, UserInboundTx,
     MAX_CONTENT_LEN,
 };
 use crate::constants::{
@@ -29,6 +29,7 @@ use crate::PlatformHttpClient;
 use std::borrow::Cow;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
+use std::fmt::Write as _;
 use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc::RecvTimeoutError;
@@ -46,6 +47,12 @@ const REACT_FULL_MSGS_KEPT: usize = REACT_FULL_ROUNDS_KEPT * 2;
 
 /// 早期轮次工具结果摘要：每条结果保留的首行预览字符数（UTF-8 安全截断）。
 const TOOL_RESULT_PREVIEW_CHARS: usize = 80;
+const TOOL_REPEAT_NOTE_2: &str =
+    "[NOTE: identical tool call #2 - if the outcome is unchanged, try another strategy.]\n";
+const TOOL_REPEAT_NOTE_3: &str =
+    "[NOTE: identical tool call #3 - try a different approach or explain the blocker to the user.]\n";
+const TOOL_REPEAT_NOTE_MANY: &str =
+    "[NOTE: identical tool call (repeated) - try a different approach or explain the blocker to the user.]\n";
 
 /// 程序性会话摘要：单次轻量 LLM 调用的 system 提示。
 const SUMMARY_SYSTEM: &str = "You are a conversation summarizer. Compress the following conversation into a concise summary (max 800 chars) preserving key facts, user preferences and pending tasks. Reply with the summary only.";
@@ -53,7 +60,6 @@ const SUMMARY_SYSTEM: &str = "You are a conversation summarizer. Compress the fo
 /// 同一 chat_id 的 "low memory, defer" 日志最少间隔，避免刷屏。
 const LOW_MEM_DEFER_LOG_INTERVAL: Duration = Duration::from_secs(60);
 static REQ_SEQ: AtomicU32 = AtomicU32::new(1);
-const USER_QUEUE_WEIGHT: usize = 3;
 
 fn next_req_id(channel: &str, chat_id: &str) -> String {
     let seq = REQ_SEQ.fetch_add(1, Ordering::Relaxed);
@@ -65,7 +71,9 @@ fn next_req_id(channel: &str, chat_id: &str) -> String {
     channel.hash(&mut hasher);
     chat_id.hash(&mut hasher);
     let short = (hasher.finish() & 0xffff) as u16;
-    format!("r{}-{}-{:04x}", ts_ms, seq, short)
+    let mut s = String::with_capacity(40);
+    let _ = write!(&mut s, "r{}-{}-{:04x}", ts_ms, seq, short);
+    s
 }
 
 fn now_unix_ms() -> u64 {
@@ -86,45 +94,18 @@ fn choose_inbound_tx<'a>(
     }
 }
 
-fn recv_weighted(
-    user_inbound_rx: &UserInboundRx,
-    system_inbound_rx: &SystemInboundRx,
-    slot: &mut usize,
-    timeout: Duration,
-) -> std::result::Result<PcMsg, RecvTimeoutError> {
-    let prefer_user = *slot < USER_QUEUE_WEIGHT;
-    let (primary, secondary) = if prefer_user {
-        (user_inbound_rx, system_inbound_rx)
-    } else {
-        (system_inbound_rx, user_inbound_rx)
-    };
-    if let Ok(m) = primary.try_recv() {
-        *slot = (*slot + 1) % (USER_QUEUE_WEIGHT + 1);
-        return Ok(m);
-    }
-    if let Ok(m) = secondary.try_recv() {
-        *slot = (*slot + 1) % (USER_QUEUE_WEIGHT + 1);
-        return Ok(m);
-    }
-    match primary.recv_timeout(timeout) {
-        Ok(m) => {
-            *slot = (*slot + 1) % (USER_QUEUE_WEIGHT + 1);
-            Ok(m)
+#[derive(Clone, Copy)]
+enum AgentWorkerLane {
+    User,
+    System,
+}
+
+impl AgentWorkerLane {
+    fn as_str(self) -> &'static str {
+        match self {
+            AgentWorkerLane::User => "user",
+            AgentWorkerLane::System => "system",
         }
-        Err(RecvTimeoutError::Timeout) => match secondary.try_recv() {
-            Ok(m) => {
-                *slot = (*slot + 1) % (USER_QUEUE_WEIGHT + 1);
-                Ok(m)
-            }
-            Err(_) => Err(RecvTimeoutError::Timeout),
-        },
-        Err(RecvTimeoutError::Disconnected) => match secondary.recv_timeout(timeout) {
-            Ok(m) => {
-                *slot = (*slot + 1) % (USER_QUEUE_WEIGHT + 1);
-                Ok(m)
-            }
-            Err(e) => Err(e),
-        },
     }
 }
 
@@ -175,45 +156,36 @@ fn hash_tool_call(name: &str, args: &str) -> u64 {
 
 /// 将早期轮次的工具结果压缩为「预览 + 总字节数」摘要，保留语义锚点、不丢轮次结构。
 fn summarize_tool_results(content: &str) -> String {
-    use std::fmt::Write;
-
     let body = content.strip_prefix(TOOL_RESULTS_PREFIX).unwrap_or(content);
-    let lines: Vec<&str> = body.lines().collect();
     let mut out = String::with_capacity(512);
     out.push_str("Tool results (prior round):\n");
-    let mut i = 0usize;
     let mut wrote_any = false;
-    while i < lines.len() {
-        let line = lines[i];
+    let mut lines = body.lines().peekable();
+    while let Some(line) = lines.next() {
         if let Some(idx) = line.find("]: ") {
             let id_part = &line[..idx + 3];
             let first_val = &line[idx + 3..];
             let mut extra_bytes = 0usize;
-            i += 1;
-            while i < lines.len() {
-                let next = lines[i];
+            while let Some(next) = lines.peek().copied() {
                 if next.contains("]: ") && next.starts_with('[') {
                     break;
                 }
                 extra_bytes = extra_bytes.saturating_add(1).saturating_add(next.len());
-                i += 1;
+                let _ = lines.next();
             }
             let total_bytes = first_val.len().saturating_add(extra_bytes);
-            let preview = if first_val.len() > TOOL_RESULT_PREVIEW_CHARS {
+            if first_val.len() > TOOL_RESULT_PREVIEW_CHARS {
                 let mut end = TOOL_RESULT_PREVIEW_CHARS;
                 while end > 0 && !first_val.is_char_boundary(end) {
                     end -= 1;
                 }
-                format!("{}…[{} bytes]", &first_val[..end], total_bytes)
+                let _ = writeln!(out, "{}{}…[{} bytes]", id_part, &first_val[..end], total_bytes);
             } else if extra_bytes > 0 {
-                format!("{}…[{} bytes]", first_val, total_bytes)
+                let _ = writeln!(out, "{}{}…[{} bytes]", id_part, first_val, total_bytes);
             } else {
-                first_val.to_string()
-            };
-            let _ = writeln!(out, "{}{}", id_part, preview);
+                let _ = writeln!(out, "{}{}", id_part, first_val);
+            }
             wrote_any = true;
-        } else {
-            i += 1;
         }
     }
     if !wrote_any {
@@ -446,12 +418,9 @@ pub struct AgentLoopConfig {
 
 pub type TypingNotifier = Box<dyn FnMut(&str, &str, &mut dyn PlatformHttpClient) + Send>;
 
-/// 从 inbound_rx 取一条 PcMsg，构建 context，多轮 chat（含 tool 执行），写会话并发送一条出站。
-/// worker_llm：执行完整 context + tools 的客户端（可为 FallbackLlmClient）。
-/// NOTE: 主调路径需要显式传递总线、stores、notifier 与线程角色相关上下文；本阶段保持签名稳定，
-/// 避免在多核与准入治理周期内引入行为性拆分。
+/// User worker：只消费 user inbound 队列。
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
-pub fn run_agent_loop(
+pub fn run_user_agent_loop(
     http: &mut dyn PlatformHttpClient,
     worker_llm: &(dyn LlmClient + Send + Sync),
     registry: &crate::tools::ToolRegistry,
@@ -459,10 +428,67 @@ pub fn run_agent_loop(
     user_inbound_tx: UserInboundTx,
     user_inbound_rx: UserInboundRx,
     system_inbound_tx: SystemInboundTx,
-    system_inbound_rx: SystemInboundRx,
+    outbound_tx: OutboundTx,
+    typing_notifier: Option<TypingNotifier>,
+) -> Result<()> {
+    run_agent_loop_lane(
+        http,
+        worker_llm,
+        registry,
+        config,
+        user_inbound_tx,
+        user_inbound_rx,
+        system_inbound_tx,
+        outbound_tx,
+        typing_notifier,
+        AgentWorkerLane::User,
+        true,
+    )
+}
+
+/// System worker：只消费 system inbound 队列。
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+pub fn run_system_agent_loop(
+    http: &mut dyn PlatformHttpClient,
+    worker_llm: &(dyn LlmClient + Send + Sync),
+    registry: &crate::tools::ToolRegistry,
+    config: &AgentLoopConfig,
+    user_inbound_tx: UserInboundTx,
+    system_inbound_tx: SystemInboundTx,
+    system_inbound_rx: InboundRx,
+    outbound_tx: OutboundTx,
+) -> Result<()> {
+    run_agent_loop_lane(
+        http,
+        worker_llm,
+        registry,
+        config,
+        user_inbound_tx,
+        system_inbound_rx,
+        system_inbound_tx,
+        outbound_tx,
+        None,
+        AgentWorkerLane::System,
+        false,
+    )
+}
+
+/// 单队列 worker 主循环：由 user/system 两个入口复用同一处理逻辑。
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+fn run_agent_loop_lane(
+    http: &mut dyn PlatformHttpClient,
+    worker_llm: &(dyn LlmClient + Send + Sync),
+    registry: &crate::tools::ToolRegistry,
+    config: &AgentLoopConfig,
+    user_inbound_tx: UserInboundTx,
+    inbound_rx: InboundRx,
+    system_inbound_tx: SystemInboundTx,
     outbound_tx: OutboundTx,
     mut typing_notifier: Option<TypingNotifier>,
+    worker_lane: AgentWorkerLane,
+    bootstrap_pending_retry: bool,
 ) -> Result<()> {
+    let worker_lane_tag = worker_lane.as_str();
     let tool_descriptions = registry.format_descriptions_for_system_prompt(8 * 1024);
     let skill_descriptions = (config.get_skill_descriptions)();
 
@@ -470,6 +496,8 @@ pub fn run_agent_loop(
     // Key: u64 hash of (channel, chat_id, content) — avoids per-message format! String alloc.
     // Value: (failure count, last failure time) — entries expire after 5 minutes.
     let mut llm_failure_count: HashMap<u64, (u8, Instant)> = HashMap::new();
+    // Reuse per-request tool repeat map to reduce heap churn.
+    let mut tool_call_repeat_buf: HashMap<u64, u8> = HashMap::with_capacity(16);
     // Track consecutive defer count per message key to break infinite defer loops.
     let mut defer_tracker: HashMap<u64, (u8, Instant)> = HashMap::new();
     // Throttle "low memory, defer" log per chat_id to avoid log spam.
@@ -481,21 +509,17 @@ pub fn run_agent_loop(
     const DEFER_EXPIRY: Duration = Duration::from_secs(300);
     const LATENCY_WARN_MS: u128 = 3000;
 
-    if let Ok(Some(m)) = config.pending_retry.load_pending_retry() {
-        let _ = config.pending_retry.clear_pending_retry();
-        let inbound_tx = choose_inbound_tx(m.ingress, &user_inbound_tx, &system_inbound_tx);
-        let _ = inbound_tx.send(m);
+    if bootstrap_pending_retry {
+        if let Ok(Some(m)) = config.pending_retry.load_pending_retry() {
+            let _ = config.pending_retry.clear_pending_retry();
+            let inbound_tx = choose_inbound_tx(m.ingress, &user_inbound_tx, &system_inbound_tx);
+            let _ = inbound_tx.send(m);
+        }
     }
 
     let recv_timeout = Duration::from_secs(INBOUND_RECV_TIMEOUT_SECS);
-    let mut sched_slot = 0usize;
     loop {
-        let mut msg = match recv_weighted(
-            &user_inbound_rx,
-            &system_inbound_rx,
-            &mut sched_slot,
-            recv_timeout,
-        ) {
+        let mut msg = match inbound_rx.recv_timeout(recv_timeout) {
             Ok(m) => m,
             Err(RecvTimeoutError::Timeout) => {
                 crate::platform::task_wdt::feed_current_task();
@@ -712,6 +736,7 @@ pub fn run_agent_loop(
                 config,
                 &tool_descriptions,
                 &skill_descriptions,
+                &mut tool_call_repeat_buf,
                 loc,
             )
         } else {
@@ -764,6 +789,7 @@ pub fn run_agent_loop(
                 config,
                 &tool_descriptions,
                 &skill_descriptions,
+                &mut tool_call_repeat_buf,
                 loc,
             )
         };
@@ -775,9 +801,10 @@ pub fn run_agent_loop(
                 let total_ms = msg_start.elapsed().as_millis();
                 crate::platform::task_wdt::feed_current_task();
                 metrics::record_error_by_stage(e.stage());
-                log::warn!("[agent] chat loop failed: {}", e);
+                log::warn!("[agent:{}] chat loop failed: {}", worker_lane_tag, e);
                 log::warn!(
-                    "[latency][agent] req_id={} channel={} chat_id={} admission_ms={} llm_ms={} total_ms={} status=llm_error",
+                    "[latency][agent:{}] req_id={} channel={} chat_id={} admission_ms={} llm_ms={} total_ms={} status=llm_error",
+                    worker_lane_tag,
                     req_id,
                     msg.channel,
                     msg.chat_id,
@@ -1007,7 +1034,8 @@ pub fn run_agent_loop(
         }
         if total_ms >= LATENCY_WARN_MS {
             log::warn!(
-                "[latency][agent] req_id={} channel={} chat_id={} admission_ms={} context_ms={} llm_round_total_ms={} tool_exec_ms={} session_write_ms={} llm_ms={} outbound_enqueue_ms={} total_ms={} react_rounds={} tool_calls={} ttft_ms={} streamed={} delivered={} level=slow",
+                "[latency][agent:{}] req_id={} channel={} chat_id={} admission_ms={} context_ms={} llm_round_total_ms={} tool_exec_ms={} session_write_ms={} llm_ms={} outbound_enqueue_ms={} total_ms={} react_rounds={} tool_calls={} ttft_ms={} streamed={} delivered={} level=slow",
+                worker_lane_tag,
                 req_id,
                 msg.channel,
                 msg.chat_id,
@@ -1027,7 +1055,8 @@ pub fn run_agent_loop(
             );
         } else {
             log::info!(
-                "[latency][agent] req_id={} channel={} chat_id={} admission_ms={} context_ms={} llm_round_total_ms={} tool_exec_ms={} session_write_ms={} llm_ms={} outbound_enqueue_ms={} total_ms={} react_rounds={} tool_calls={} ttft_ms={} streamed={} delivered={}",
+                "[latency][agent:{}] req_id={} channel={} chat_id={} admission_ms={} context_ms={} llm_round_total_ms={} tool_exec_ms={} session_write_ms={} llm_ms={} outbound_enqueue_ms={} total_ms={} react_rounds={} tool_calls={} ttft_ms={} streamed={} delivered={}",
+                worker_lane_tag,
                 req_id,
                 msg.channel,
                 msg.chat_id,
@@ -1061,6 +1090,7 @@ fn run_worker_path(
     config: &AgentLoopConfig,
     tool_descriptions: &str,
     skill_descriptions: &str,
+    tool_call_repeat: &mut HashMap<u64, u8>,
     loc: UiLocale,
 ) -> Result<(WorkerOutcome, Option<u32>, bool, WorkerLatency)> {
     let mut latency = WorkerLatency::default();
@@ -1077,10 +1107,8 @@ fn run_worker_path(
                 let _ = config
                     .task_continuation
                     .clear_task_continuation(&msg.chat_id);
-                let s = format!(
-                    "上一轮产出（第{}轮）：\n{}\n\n本轮请在此基础上继续。",
-                    r, out
-                );
+                let mut s = String::with_capacity(out.len().saturating_add(48));
+                let _ = write!(&mut s, "上一轮产出（第{}轮）：\n{}\n\n本轮请在此基础上继续。", r, out);
                 (Some(s), Some(r))
             }
             _ => (None, None),
@@ -1125,9 +1153,10 @@ fn run_worker_path(
 
     // ReAct 追加消息起始下标；用于滑动窗口压缩早期轮次。
     let initial_msg_count = messages.len();
-    // 跨轮次检测相同 (tool, args) 重复调用，在结果中注入提示而非硬中断。
-    let mut tool_call_repeat: HashMap<u64, u8> = HashMap::new();
-
+    // 跨请求复用容器，每次新请求清空；跨轮次仍保留本请求内状态。
+    tool_call_repeat.clear();
+    // 复用工具错误消息缓冲区，避免错误路径反复分配。
+    let mut tool_error_buf = String::with_capacity(256);
     let mut final_content = String::with_capacity(4096);
     // 流式编辑状态（跨 ReAct 轮次共享）。
     let editor = if config.llm_stream {
@@ -1209,12 +1238,14 @@ fn run_worker_path(
                     if let Some(ref mid) = stream_msg_id {
                         if let Err(e) = ed.edit(&chat_id_for_cb, mid, accumulated) {
                             stream_edit_fail_count += 1;
-                            log::debug!(
-                                "[agent_stream] edit failed ({}/{}): {}",
-                                stream_edit_fail_count,
-                                MAX_EDIT_FAILURES,
-                                e
-                            );
+                            if log::log_enabled!(log::Level::Debug) {
+                                log::debug!(
+                                    "[agent_stream] edit failed ({}/{}): {}",
+                                    stream_edit_fail_count,
+                                    MAX_EDIT_FAILURES,
+                                    e
+                                );
+                            }
                             if stream_edit_fail_count >= MAX_EDIT_FAILURES {
                                 log::warn!(
                                     "[agent_stream] edit failed {} times, disabling stream edit",
@@ -1265,10 +1296,15 @@ fn run_worker_path(
         metrics::record_wdt_feed();
 
         let tc_count = response.tool_calls.as_ref().map_or(0, |v| v.len());
-        log::debug!(
-            "[agent] llm round={} stop_reason={:?} tool_calls={} content_len={}",
-            round, response.stop_reason, tc_count, response.content.len()
-        );
+        if log::log_enabled!(log::Level::Debug) {
+            log::debug!(
+                "[agent] llm round={} stop_reason={:?} tool_calls={} content_len={}",
+                round,
+                response.stop_reason,
+                tc_count,
+                response.content.len()
+            );
+        }
 
         if response.stop_reason == StopReason::MaxTokens {
             let mut content = response.content;
@@ -1351,12 +1387,14 @@ fn run_worker_path(
                     }
                 }
                 // 工具执行门控
-                let mut result = {
+                let mut result_owned: Option<String> = None;
+                let mut result_view: &str = "";
+                {
                     let needs_net = registry.is_network_tool(&tc.name);
                     match crate::orchestrator::can_execute_tool_pub(&tc.name, needs_net) {
                         ToolDecision::Deny { reason } => {
                             log::info!("[agent_tool] {} denied: {}", tc.name, reason);
-                            serde_json::json!({ "error": reason }).to_string()
+                            result_owned = Some(serde_json::json!({ "error": reason }).to_string());
                         }
                         ToolDecision::Allow => {
                             let tool_exec_start = Instant::now();
@@ -1366,7 +1404,7 @@ fn run_worker_path(
                                         .tool_exec_ms
                                         .saturating_add(tool_exec_start.elapsed().as_millis());
                                     metrics::record_tool_call(true);
-                                    crate::util::scrub_credentials(&s)
+                                    result_owned = Some(crate::util::scrub_credentials(&s));
                                 }
                                 Err(e) => {
                                     latency.tool_exec_ms = latency
@@ -1381,29 +1419,34 @@ fn run_worker_path(
                                         &tc.input[..tc.input.len().min(200)]
                                     );
                                     state::set_last_error(&e);
-                                    format!("[tool error] {} (stage: {})", e, e.stage())
+                                    tool_error_buf.clear();
+                                    let _ = write!(
+                                        &mut tool_error_buf,
+                                        "[tool error] {} (stage: {})",
+                                        e,
+                                        e.stage()
+                                    );
+                                    result_view = tool_error_buf.as_str();
                                 }
                             }
                         }
                     }
-                };
+                }
+                if let Some(ref owned) = result_owned {
+                    result_view = owned.as_str();
+                }
                 let call_key = hash_tool_call(&tc.name, &tc.input);
                 let n = tool_call_repeat.entry(call_key).or_insert(0);
                 *n = (*n).saturating_add(1);
-                if *n >= 2 {
-                    let note = if *n >= 3 {
-                        format!(
-                            "[NOTE: identical tool call #{} — try a different approach or explain the blocker to the user.]\n",
-                            n
-                        )
-                    } else {
-                        format!(
-                            "[NOTE: identical tool call #{} — if the outcome is unchanged, try another strategy.]\n",
-                            n
-                        )
-                    };
-                    result = format!("{}{}", note, result);
-                }
+                let repeat_note = if *n >= 2 {
+                    Some(match *n {
+                        2 => TOOL_REPEAT_NOTE_2,
+                        3 => TOOL_REPEAT_NOTE_3,
+                        _ => TOOL_REPEAT_NOTE_MANY,
+                    })
+                } else {
+                    None
+                };
                 crate::platform::task_wdt::feed_current_task();
                 if i > 0
                     && push_bounded_utf8(
@@ -1427,9 +1470,11 @@ fn run_worker_path(
                     &mut user_content_raw,
                     "]: ",
                     MAX_TOOL_RESULTS_USER_MESSAGE_LEN,
-                ) || push_bounded_utf8(
+                ) || repeat_note.is_some_and(|note| {
+                    push_bounded_utf8(&mut user_content_raw, note, MAX_TOOL_RESULTS_USER_MESSAGE_LEN)
+                }) || push_bounded_utf8(
                     &mut user_content_raw,
-                    &result,
+                    result_view,
                     MAX_TOOL_RESULTS_USER_MESSAGE_LEN,
                 ) {
                     truncated = true;

@@ -29,10 +29,10 @@ impl FileWriteTool {
 }
 
 impl Tool for FileWriteTool {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "file_write"
     }
-    fn description(&self) -> &str {
+    fn description(&self) -> &'static str {
         "Write content to a file in storage (SPIFFS). Supports overwrite and append modes. Protected system files cannot be written. Max content size: 16KB."
     }
     fn schema(&self) -> serde_json::Value {

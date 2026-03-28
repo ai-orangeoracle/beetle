@@ -26,10 +26,10 @@ impl WebSearchTool {
 }
 
 impl Tool for WebSearchTool {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "web_search"
     }
-    fn description(&self) -> &str {
+    fn description(&self) -> &'static str {
         "Search the web for a query. Returns a short summary."
     }
     fn schema(&self) -> serde_json::Value {

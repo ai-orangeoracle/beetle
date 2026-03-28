@@ -8,4 +8,6 @@ pub use context::{
     build_context, ContextParams, DEFAULT_MESSAGES_MAX_LEN, DEFAULT_SYSTEM_MAX_LEN,
     SESSION_RECENT_N,
 };
-pub use r#loop::{run_agent_loop, AgentLoopConfig, StreamEditor, TypingNotifier};
+pub use r#loop::{
+    run_system_agent_loop, run_user_agent_loop, AgentLoopConfig, StreamEditor, TypingNotifier,
+};

@@ -7,11 +7,12 @@ use crate::llm::ToolSpec as LlmToolSpec;
 use crate::tools::{Tool, MAX_TOOL_ARGS_LEN, MAX_TOOL_RESULT_LEN};
 use crate::util::truncate_to_byte_len;
 use indexmap::IndexMap;
+use std::fmt::Write as _;
 use std::sync::Arc;
 
 /// 按 name 注册与派发工具；可生成带总长度上界的 tool specs。IndexMap 保证工具顺序稳定。
 pub struct ToolRegistry {
-    tools: IndexMap<String, Box<dyn Tool>>,
+    tools: IndexMap<&'static str, Box<dyn Tool>>,
 }
 
 impl Default for ToolRegistry {
@@ -28,7 +29,7 @@ impl ToolRegistry {
     }
 
     pub fn register(&mut self, tool: Box<dyn Tool>) {
-        let name = tool.name().to_string();
+        let name = tool.name();
         self.tools.insert(name, tool);
     }
 
@@ -45,34 +46,36 @@ impl ToolRegistry {
     /// 生成供 LLM API 使用的 tool specs，总描述长度不超过 max_total_len（字符数）。
     /// 超限时从尾部丢弃工具。
     pub fn tool_specs_for_api(&self, max_total_len: usize) -> Vec<LlmToolSpec> {
-        let mut out = Vec::new();
+        let mut out = Vec::with_capacity(self.tools.len());
         let mut len = 0usize;
         for tool in self.tools.values() {
-            let spec = LlmToolSpec {
-                name: tool.name().to_string(),
-                description: tool.description().to_string(),
-                parameters: tool.schema(),
-            };
-            let add_len =
-                spec.name.len() + spec.description.len() + spec.parameters.to_string().len() + 2;
+            let name = tool.name();
+            let description = tool.description();
+            let parameters = tool.schema();
+            let add_len = name.len() + description.len() + parameters.to_string().len() + 2;
             if len + add_len > max_total_len && !out.is_empty() {
                 break;
             }
             len += add_len;
-            out.push(spec);
+            out.push(LlmToolSpec {
+                name: name.to_string(),
+                description: description.to_string(),
+                parameters,
+            });
         }
         out
     }
 
     /// 供阶段 7 注入系统提示：格式化为工具说明文本，总长度不超过 max_chars。
     pub fn format_descriptions_for_system_prompt(&self, max_chars: usize) -> String {
-        let mut s = String::new();
+        let mut s = String::with_capacity(max_chars.min(4096));
         for tool in self.tools.values() {
-            let line = format!("- {}: {}\n", tool.name(), tool.description());
-            if s.len() + line.len() > max_chars {
+            let before = s.len();
+            let _ = writeln!(&mut s, "- {}: {}", tool.name(), tool.description());
+            if s.len() > max_chars {
+                s.truncate(before);
                 break;
             }
-            s.push_str(&line);
         }
         s
     }

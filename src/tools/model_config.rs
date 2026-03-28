@@ -20,10 +20,10 @@ impl ModelConfigTool {
 }
 
 impl Tool for ModelConfigTool {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "model_config"
     }
-    fn description(&self) -> &str {
+    fn description(&self) -> &'static str {
         "View or update LLM model configuration. Op: get (show current config, api_key excluded), set (update provider/model/api_url/max_tokens). Changes take effect after restart."
     }
     fn schema(&self) -> serde_json::Value {

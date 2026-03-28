@@ -18,10 +18,10 @@ impl SessionManageTool {
 }
 
 impl Tool for SessionManageTool {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "session_manage"
     }
-    fn description(&self) -> &str {
+    fn description(&self) -> &'static str {
         "Manage chat sessions. Op: list (all session IDs), info (load recent messages for a chat_id), clear (clear a session), delete (delete a session)."
     }
     fn schema(&self) -> serde_json::Value {

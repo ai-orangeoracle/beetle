@@ -18,10 +18,10 @@ impl BoardInfoTool {
 }
 
 impl Tool for BoardInfoTool {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "board_info"
     }
-    fn description(&self) -> &str {
+    fn description(&self) -> &'static str {
         "Return device/system status JSON. ESP: chip, heap, IDF, SPIFFS. Linux: platform \"linux\" plus cpu_model, cpu_cores, mem_*, distro_pretty/distro_id, kernel_release, hostname, arch, storage, os (/proc/version), uptime, pressure, WiFi STA. Non-Linux: platform is the OS name (e.g. macos, windows) with fewer fields. Use for device status, distro, CPU/RAM, disk."
     }
     fn schema(&self) -> serde_json::Value {

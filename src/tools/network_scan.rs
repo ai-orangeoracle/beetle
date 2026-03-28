@@ -112,11 +112,11 @@ impl NetworkScanTool {
 }
 
 impl Tool for NetworkScanTool {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "network_scan"
     }
 
-    fn description(&self) -> &str {
+    fn description(&self) -> &'static str {
         "WiFi scanning and network diagnostics. Op: wifi_scan (scan nearby APs), wifi_status (current connection info), connectivity_check (HTTP reachability test with latency)."
     }
 

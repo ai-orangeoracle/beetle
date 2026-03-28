@@ -155,7 +155,7 @@ pub trait ToolContext {
 
 /// 工具 trait；Agent 按 name 派发，execute 时传入 ctx 以发 HTTP 等。
 pub trait Tool: Send + Sync {
-    fn name(&self) -> &str;
+    fn name(&self) -> &'static str;
     fn description(&self) -> &str;
     fn schema(&self) -> Value;
     fn execute(&self, args: &str, ctx: &mut dyn ToolContext) -> Result<String>;

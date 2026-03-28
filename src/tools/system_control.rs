@@ -18,10 +18,10 @@ impl SystemControlTool {
 }
 
 impl Tool for SystemControlTool {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "system_control"
     }
-    fn description(&self) -> &str {
+    fn description(&self) -> &'static str {
         "System control operations. Op: restart (requires confirm=true), spiffs_usage (storage usage)."
     }
     fn schema(&self) -> serde_json::Value {

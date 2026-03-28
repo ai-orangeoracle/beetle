@@ -95,11 +95,11 @@ impl SensorWatchTool {
 }
 
 impl Tool for SensorWatchTool {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "sensor_watch"
     }
 
-    fn description(&self) -> &str {
+    fn description(&self) -> &'static str {
         "Manage sensor monitoring watches with threshold alerts. Op: add (create watch on adc_in/gpio_in/dht or configured i2c_sensors except raw), list, remove (by id), update (toggle enabled or change threshold). Max 8 watches. Watches are checked by cron loop."
     }
 

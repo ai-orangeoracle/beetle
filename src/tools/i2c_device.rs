@@ -180,7 +180,7 @@ impl I2cDeviceTool {
 }
 
 impl Tool for I2cDeviceTool {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "i2c_device"
     }
 

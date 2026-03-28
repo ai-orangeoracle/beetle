@@ -24,7 +24,7 @@ pub const DEFAULT_MESSAGES_MAX_LEN: usize = 24 * 1024;
 
 /// TLS 准入：有 PSRAM 时允许发起单次 TLS（HTTP/WSS）要求的最小 internal 空闲（字节）。
 /// 有 PSRAM 时 mbedTLS 大部分分配走 SPIRAM，internal 仅需 ~15KB 给硬件加密/DMA。
-/// 实测稳态 internal ~47KB，38KB 阈值留 ~23KB 给硬件加密+DMA，避免边缘误拒。
+/// 实测稳态 internal ~47KB，38KB 阈值留 ~18KB 给硬件加密+DMA，避免边缘误拒。
 pub const TLS_ADMISSION_MIN_INTERNAL_BYTES: usize = 38 * 1024;
 /// TLS 准入：要求 internal 最大连续块不低于此值，避免碎片化导致 mbedTLS 分配失败。
 pub const TLS_ADMISSION_MIN_LARGEST_BLOCK_BYTES: usize = 24 * 1024;
@@ -79,7 +79,7 @@ pub const CHANNEL_FAIL_THRESHOLD: u32 = 3;
 
 /// SSE 流式响应行缓冲区大小（字节）；单行 SSE data 不应超此值。
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
-pub const SSE_LINE_BUF_SIZE: usize = 4096;
+pub const SSE_LINE_BUF_SIZE: usize = 6 * 1024;
 #[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
 pub const SSE_LINE_BUF_SIZE: usize = 16 * 1024;
 
@@ -91,13 +91,13 @@ pub const MAX_CONCURRENT_HTTP: usize = 16;
 
 /// 压力判级（ESP32）：Normal 阈值的 internal 空闲下限（字节）。
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
-pub const PRESSURE_NORMAL_INTERNAL_MIN_BYTES: usize = 70 * 1024;
+pub const PRESSURE_NORMAL_INTERNAL_MIN_BYTES: usize = 65 * 1024;
 /// 压力判级（Linux）：Normal 阈值的可用内存下限（字节）。64MB 以下视为紧张。
 #[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
 pub const PRESSURE_NORMAL_INTERNAL_MIN_BYTES: usize = 64 * 1024 * 1024;
 
 /// 压力判级：Normal 阈值的 PSRAM 空闲下限（字节）。Linux 无 PSRAM，此值不参与判定。
-pub const PRESSURE_NORMAL_PSRAM_MIN_BYTES: usize = 4 * 1024 * 1024;
+pub const PRESSURE_NORMAL_PSRAM_MIN_BYTES: usize = 3 * 1024 * 1024;
 
 /// 压力判级（ESP32）：Cautious 阈值的 internal 空闲下限（字节）。
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
@@ -107,7 +107,7 @@ pub const PRESSURE_CAUTIOUS_INTERNAL_MIN_BYTES: usize = 48 * 1024;
 pub const PRESSURE_CAUTIOUS_INTERNAL_MIN_BYTES: usize = 32 * 1024 * 1024;
 
 /// 压力判级：Cautious 阈值的 PSRAM 空闲下限（字节）。Linux 无 PSRAM，此值不参与判定。
-pub const PRESSURE_CAUTIOUS_PSRAM_MIN_BYTES: usize = 1024 * 1024;
+pub const PRESSURE_CAUTIOUS_PSRAM_MIN_BYTES: usize = 768 * 1024;
 /// 压力判级：队列拥塞阈值（入站+出站总深度），默认容量下为 75%。
 pub const PRESSURE_QUEUE_CONGESTION_THRESHOLD: u32 = (DEFAULT_CAPACITY as u32) * 2 * 3 / 4;
 

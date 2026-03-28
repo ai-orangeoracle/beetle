@@ -9,19 +9,69 @@ use crate::platform::ResponseBody;
 use embedded_svc::http::client::Client as HttpClient;
 use embedded_svc::http::Method;
 use embedded_svc::io::{Read, Write};
+use esp_idf_svc::io::EspIOError;
 use esp_idf_svc::http::client::{Configuration as HttpConfig, EspHttpConnection};
+use std::time::{Duration, Instant};
 
 const TAG: &str = "platform::http_client";
 /// 单次请求超时（毫秒）。
 const REQUEST_TIMEOUT_MS: i32 = 30_000;
 /// 读响应体时的块大小；放栈上，不宜过大以免在 httpd 等小栈任务中溢出（如 GET /api/channel_connectivity 会多次 HTTP）。
 const RESPONSE_READ_CHUNK: usize = 1024;
+/// `ESP_ERR_HTTP_EAGAIN` = `ESP_ERR_HTTP_BASE + 7` (0x7007).
+/// `esp-idf-svc` 在 HTTP body 未完成但暂时无数据时会返回它，语义是“稍后重读”。
+const ESP_HTTP_EAGAIN_CODE: i32 = 0x7007;
+/// 可恢复读的轮询等待间隔；短等待即可避免把瞬时 EAGAIN 放大成整请求失败。
+const HTTP_READ_RETRY_SLEEP_MS: u64 = 20;
 
 /// 喂任务看门狗；长时间 HTTP/LLM 请求前调用，避免 TWDT 复位。
 /// 统一使用 `task_wdt::feed_current_task()`，不再维护重复实现。
 #[inline]
 fn feed_task_watchdog() {
     crate::platform::task_wdt::feed_current_task();
+}
+
+#[inline]
+fn is_http_eagain(err: &(dyn std::error::Error + 'static)) -> bool {
+    err.downcast_ref::<EspIOError>()
+        .map(|e| e.0.code().abs() == ESP_HTTP_EAGAIN_CODE)
+        .unwrap_or(false)
+}
+
+fn map_http_read_error(
+    err: impl std::error::Error + 'static,
+    stage: &'static str,
+) -> Error {
+    Error::Other {
+        source: Box::new(std::io::Error::other(format!("{:?}", err))),
+        stage,
+    }
+}
+
+fn read_with_retry<R: Read>(r: &mut R, buf: &mut [u8]) -> Result<usize>
+where
+    R::Error: std::error::Error + 'static,
+{
+    let deadline = Instant::now() + Duration::from_millis(REQUEST_TIMEOUT_MS as u64);
+    loop {
+        feed_task_watchdog();
+        match r.read(buf) {
+            Ok(n) => return Ok(n),
+            Err(e) if is_http_eagain(&e) => {
+                if Instant::now() >= deadline {
+                    return Err(Error::io(
+                        "http_read",
+                        std::io::Error::new(
+                            std::io::ErrorKind::TimedOut,
+                            "http_read retry exceeded timeout waiting for response body",
+                        ),
+                    ));
+                }
+                std::thread::sleep(Duration::from_millis(HTTP_READ_RETRY_SLEEP_MS));
+            }
+            Err(e) => return Err(map_http_read_error(e, "http_read")),
+        }
+    }
 }
 
 /// ESP 上单次 TLS 准入等待最长时间（与请求超时同量级，避免长时间占锁）。
@@ -285,11 +335,7 @@ impl EspHttpClient {
             let mut total = 0usize;
             let mut buf = [0u8; RESPONSE_READ_CHUNK];
             loop {
-                feed_task_watchdog();
-                let n = response.read(&mut buf).map_err(|e| Error::Other {
-                    source: Box::new(std::io::Error::other(format!("{:?}", e))),
-                    stage: "http_read",
-                })?;
+                let n = read_with_retry(&mut response, &mut buf)?;
                 if n == 0 {
                     break;
                 }
@@ -318,11 +364,14 @@ const INITIAL_RESPONSE_BODY_CAP: usize = 8 * 1024;
 const MAX_DRAIN_BYTES: usize = 512 * 1024;
 
 /// 将响应体读空（最多 MAX_DRAIN_BYTES），便于连接回到 initial 状态供下次请求使用。
-fn drain_response<R: Read>(r: &mut R) {
+fn drain_response<R: Read>(r: &mut R)
+where
+    R::Error: std::error::Error + 'static,
+{
     let mut buf = [0u8; 512];
     let mut total = 0usize;
     loop {
-        match r.read(&mut buf) {
+        match read_with_retry(r, &mut buf) {
             Ok(0) => break,
             Ok(n) => {
                 total += n;
@@ -337,37 +386,44 @@ fn drain_response<R: Read>(r: &mut R) {
 
 /// S3 上优先从 PSRAM 分配整块读入，返回 ResponseBody（Drop 时释放 PSRAM），无堆拷贝；否则用 Vec 按块增长。
 /// 最大长度由 orchestrator::current_budget().response_body_max 决定，压力高时自动缩减。
-fn read_response_body<R: Read>(r: &mut R) -> Result<ResponseBody> {
-    let max_len = crate::orchestrator::current_budget().response_body_max;
-    #[cfg(target_arch = "xtensa")]
-    if let Some(psram_ptr) = alloc_spiram_buffer(max_len) {
-        return read_response_body_into_psram(psram_ptr, max_len, r);
+fn read_response_body<R: Read>(r: &mut R) -> Result<ResponseBody>
+where
+    R::Error: std::error::Error + 'static,
+{
+    fn inner<R: Read>(r: &mut R) -> Result<ResponseBody>
+    where
+        R::Error: std::error::Error + 'static,
+    {
+        let max_len = crate::orchestrator::current_budget().response_body_max;
+        #[cfg(target_arch = "xtensa")]
+        if let Some(psram_ptr) = alloc_spiram_buffer(max_len) {
+            return read_response_body_into_psram(psram_ptr, max_len, r);
+        }
+
+        let mut out = Vec::with_capacity(INITIAL_RESPONSE_BODY_CAP.min(max_len));
+        let mut buf = [0u8; RESPONSE_READ_CHUNK];
+        loop {
+            let n = read_with_retry(r, &mut buf)?;
+            if n == 0 {
+                break;
+            }
+            let remain = max_len.saturating_sub(out.len());
+            if remain == 0 {
+                log::warn!("[{}] response body truncated at {} bytes", TAG, max_len);
+                drain_response(r);
+                break;
+            }
+            let take = n.min(remain);
+            out.extend_from_slice(&buf[..take]);
+            if take < n {
+                drain_response(r);
+                break;
+            }
+        }
+        Ok(ResponseBody::Heap(out))
     }
 
-    let mut out = Vec::with_capacity(INITIAL_RESPONSE_BODY_CAP.min(max_len));
-    let mut buf = [0u8; RESPONSE_READ_CHUNK];
-    loop {
-        let n = r.read(&mut buf).map_err(|e| Error::Other {
-            source: Box::new(std::io::Error::other(format!("{:?}", e))),
-            stage: "http_read",
-        })?;
-        if n == 0 {
-            break;
-        }
-        let remain = max_len.saturating_sub(out.len());
-        if remain == 0 {
-            log::warn!("[{}] response body truncated at {} bytes", TAG, max_len);
-            drain_response(r);
-            break;
-        }
-        let take = n.min(remain);
-        out.extend_from_slice(&buf[..take]);
-        if take < n {
-            drain_response(r);
-            break;
-        }
-    }
-    Ok(ResponseBody::Heap(out))
+    inner(r)
 }
 
 /// 将响应体读入 PSRAM 块，返回 ResponseBody（Drop 时 free），不 to_vec。仅 xtensa。
@@ -377,20 +433,20 @@ fn read_response_body_into_psram<R: Read>(
     ptr: *mut u8,
     max_len: usize,
     r: &mut R,
-) -> Result<ResponseBody> {
+) -> Result<ResponseBody>
+where
+    R::Error: std::error::Error + 'static,
+{
     let mut len = 0usize;
     let mut buf = [0u8; RESPONSE_READ_CHUNK];
     loop {
-        let n = match r.read(&mut buf) {
+        let n = match read_with_retry(r, &mut buf) {
             Ok(n) => n,
             Err(e) => {
                 unsafe {
                     crate::platform::heap::free_spiram_buffer(ptr);
                 }
-                return Err(Error::Other {
-                    source: Box::new(std::io::Error::other(format!("{:?}", e))),
-                    stage: "http_read",
-                });
+                return Err(e);
             }
         };
         if n == 0 {

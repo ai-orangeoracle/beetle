@@ -24,10 +24,10 @@ impl UpdateSessionSummaryTool {
 }
 
 impl Tool for UpdateSessionSummaryTool {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "update_session_summary"
     }
-    fn description(&self) -> &str {
+    fn description(&self) -> &'static str {
         "Update the session summary for long conversations. Call this when the conversation has reached a natural break or topic change and you want to persist a brief summary for future context. Argument: summary (string), one paragraph."
     }
     fn schema(&self) -> serde_json::Value {

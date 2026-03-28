@@ -52,11 +52,11 @@ impl VoiceInputTool {
 }
 
 impl Tool for VoiceInputTool {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "voice_input"
     }
 
-    fn description(&self) -> &str {
+    fn description(&self) -> &'static str {
         "Listen through the device microphone and transcribe speech to text. Use when user asks to listen/hear/record voice."
     }
 
@@ -106,6 +106,7 @@ impl Tool for VoiceInputTool {
         let mut started = false;
         let mut elapsed = 0u32;
         let mut dbg_next_log_ms = 0u32;
+        let debug_enabled = log::log_enabled!(log::Level::Debug);
         let max_pcm_samples = (max_ms as usize)
             .saturating_mul(mic_sr as usize)
             .min(AUDIO_STT_MAX_PCM_BYTES)
@@ -121,7 +122,7 @@ impl Tool for VoiceInputTool {
                 continue;
             }
             let chunk = &frame[..n.min(frame.len())];
-            if elapsed >= dbg_next_log_ms {
+            if debug_enabled && elapsed >= dbg_next_log_ms {
                 let rms = crate::audio::energy::normalized_rms(chunk);
                 let (mn, mx) = chunk.iter().fold((i16::MAX, i16::MIN), |(lo, hi), &v| {
                     (lo.min(v), hi.max(v))
@@ -168,6 +169,9 @@ impl Tool for VoiceInputTool {
 }
 
 fn log_audio_resource_snapshot(stage: &str) {
+    if !log::log_enabled!(log::Level::Info) {
+        return;
+    }
     let snap = crate::orchestrator::snapshot();
     log::info!(
         "[tool_voice_input] {} heap_internal={} heap_spiram={} heap_largest={} pressure={:?}",

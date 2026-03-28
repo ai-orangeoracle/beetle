@@ -8,10 +8,10 @@ use serde_json::json;
 pub struct HttpRequestTool;
 
 impl Tool for HttpRequestTool {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "http_request"
     }
-    fn description(&self) -> &str {
+    fn description(&self) -> &'static str {
         "Make HTTP requests. Supports GET, POST, PUT, DELETE, PATCH methods with custom headers and body. Private IPs are blocked (SSRF protection)."
     }
     fn schema(&self) -> serde_json::Value {

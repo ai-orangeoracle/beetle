@@ -194,11 +194,11 @@ impl AnalyzeImageTool {
 }
 
 impl Tool for AnalyzeImageTool {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "analyze_image"
     }
 
-    fn description(&self) -> &str {
+    fn description(&self) -> &'static str {
         "Analyze an image from a URL using vision AI. Use this when a user sends an image URL and you need to understand its content."
     }
 

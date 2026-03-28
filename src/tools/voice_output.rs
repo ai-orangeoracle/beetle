@@ -32,11 +32,11 @@ impl VoiceOutputTool {
 }
 
 impl Tool for VoiceOutputTool {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "voice_output"
     }
 
-    fn description(&self) -> &str {
+    fn description(&self) -> &'static str {
         "Speak text aloud through the device speaker (text-to-speech). Use when user asks to say/speak/read something aloud."
     }
 
@@ -178,6 +178,9 @@ fn split_unquoted_key_and_rest(s: &str) -> Option<(&str, &str)> {
 }
 
 fn log_audio_resource_snapshot(stage: &str) {
+    if !log::log_enabled!(log::Level::Debug) {
+        return;
+    }
     let snap = crate::orchestrator::snapshot();
     log::debug!(
         "[tool_voice_output] {} heap_internal={} heap_spiram={} heap_largest={} pressure={:?}",

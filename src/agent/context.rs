@@ -7,7 +7,6 @@ use crate::llm::Message;
 use crate::memory::{build_system_prompt, ImportantMessageStore, MemoryStore, SessionStore};
 use crate::state;
 use std::borrow::Cow;
-use std::collections::HashSet;
 use std::fmt::Write as _;
 
 pub use crate::constants::{DEFAULT_MESSAGES_MAX_LEN, DEFAULT_SYSTEM_MAX_LEN};
@@ -250,11 +249,15 @@ fn truncate_messages_to_len(
         total = total.saturating_sub(sz);
         indices_to_remove.push(i);
     }
-    let remove: HashSet<usize> = indices_to_remove.into_iter().collect();
+    let remove_indices = indices_to_remove;
     let drained = std::mem::take(messages);
-    let mut kept = Vec::with_capacity(drained.len().saturating_sub(remove.len()));
+    let mut kept = Vec::with_capacity(drained.len().saturating_sub(remove_indices.len()));
+    let mut remove_cursor = 0usize;
     for (i, m) in drained.into_iter().enumerate() {
-        if !remove.contains(&i) {
+        let should_remove = remove_cursor < remove_indices.len() && remove_indices[remove_cursor] == i;
+        if should_remove {
+            remove_cursor += 1;
+        } else {
             kept.push(m);
         }
     }

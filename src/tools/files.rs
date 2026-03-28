@@ -22,10 +22,10 @@ impl FilesTool {
 }
 
 impl Tool for FilesTool {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "files"
     }
-    fn description(&self) -> &str {
+    fn description(&self) -> &'static str {
         "List or read files from storage (SPIFFS). Args: path (string), mode (optional: 'list' or 'read', default 'read'). Read returns content truncated to limit; list returns entry names, max 256."
     }
     fn schema(&self) -> serde_json::Value {

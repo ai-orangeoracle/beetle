@@ -52,10 +52,10 @@ impl CronManageTool {
 }
 
 impl Tool for CronManageTool {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "cron_manage"
     }
-    fn description(&self) -> &str {
+    fn description(&self) -> &'static str {
         "Manage persistent cron tasks. Op: add (create a scheduled task), list, remove (by id), update (toggle enabled or change expr/action). Max 16 tasks. Tasks are checked every 60s by the cron loop."
     }
     fn schema(&self) -> serde_json::Value {

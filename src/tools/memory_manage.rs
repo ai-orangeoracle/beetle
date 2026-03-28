@@ -18,10 +18,10 @@ impl MemoryManageTool {
 }
 
 impl Tool for MemoryManageTool {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "memory_manage"
     }
-    fn description(&self) -> &str {
+    fn description(&self) -> &'static str {
         "Manage persistent memory, soul/user config, and daily notes. Op: get_memory, set_memory, get_soul, set_soul, get_user, set_user, list_daily_notes, get_daily_note, write_daily_note."
     }
     fn schema(&self) -> serde_json::Value {

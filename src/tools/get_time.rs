@@ -20,10 +20,10 @@ fn unix_secs_to_utc_string(secs: u64) -> String {
 }
 
 impl Tool for GetTimeTool {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "get_time"
     }
-    fn description(&self) -> &str {
+    fn description(&self) -> &'static str {
         "Get current UTC time in YYYY-MM-DD Weekday HH:MM:SS UTC format. On device, ensure SNTP or RTC is synced first."
     }
     fn schema(&self) -> serde_json::Value {

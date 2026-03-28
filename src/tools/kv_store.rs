@@ -64,10 +64,10 @@ impl KvStoreTool {
 }
 
 impl Tool for KvStoreTool {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "kv_store"
     }
-    fn description(&self) -> &str {
+    fn description(&self) -> &'static str {
         "Persistent key-value store for cross-session memory (user preferences, state, notes). \
          Operations: \
          'get' — read a value by key; \

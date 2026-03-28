@@ -210,7 +210,7 @@ impl DeviceControlTool {
 }
 
 impl Tool for DeviceControlTool {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "device_control"
     }
 

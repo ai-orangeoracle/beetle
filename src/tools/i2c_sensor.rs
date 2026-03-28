@@ -157,7 +157,7 @@ impl I2cSensorTool {
 }
 
 impl Tool for I2cSensorTool {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "i2c_sensor"
     }
 
