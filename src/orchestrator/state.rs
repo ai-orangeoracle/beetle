@@ -66,6 +66,9 @@ pub struct OrchestratorState {
     /// 麦克风录音中标志（0=idle, 1=recording）。voice_input 工具设置，显示循环读取。
     /// Microphone recording flag (0=idle, 1=recording). Set by voice_input tool, read by display loop.
     pub audio_recording: AtomicU8,
+    /// 喇叭播放中标志（0=idle, 1=playing）。voice_output 工具设置，显示循环读取。
+    /// Speaker playing flag (0=idle, 1=playing). Set by voice_output tool, read by display loop.
+    pub audio_playing: AtomicU8,
 }
 
 impl Default for OrchestratorState {
@@ -96,6 +99,7 @@ impl OrchestratorState {
             storage_used_kb: AtomicU32::new(0),
             storage_total_kb: AtomicU32::new(0),
             audio_recording: AtomicU8::new(0),
+            audio_playing: AtomicU8::new(0),
         }
     }
 
@@ -150,6 +154,8 @@ pub struct ResourceSnapshot {
     pub storage_total_kb: u32,
     /// 麦克风是否正在录音。
     pub audio_recording: bool,
+    /// 喇叭是否正在播放。
+    pub audio_playing: bool,
 }
 
 impl ResourceSnapshot {
@@ -187,6 +193,7 @@ impl ResourceSnapshot {
             storage_used_kb: state.storage_used_kb.load(Ordering::Relaxed),
             storage_total_kb: state.storage_total_kb.load(Ordering::Relaxed),
             audio_recording: state.audio_recording.load(Ordering::Relaxed) != 0,
+            audio_playing: state.audio_playing.load(Ordering::Relaxed) != 0,
         }
     }
 }

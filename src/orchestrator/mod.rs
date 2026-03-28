@@ -248,6 +248,24 @@ pub fn is_audio_recording() -> bool {
         != 0
 }
 
+/// 设置喇叭播放标志（voice_output 工具调用）。
+/// Set speaker playing flag (called by voice_output tool).
+pub fn set_audio_playing(active: bool) {
+    STATE.audio_playing.store(
+        if active { 1 } else { 0 },
+        std::sync::atomic::Ordering::Relaxed,
+    );
+}
+
+/// 喇叭是否正在播放。
+/// Whether speaker is currently playing.
+pub fn is_audio_playing() -> bool {
+    STATE
+        .audio_playing
+        .load(std::sync::atomic::Ordering::Relaxed)
+        != 0
+}
+
 /// 启动时打印 TLS 准入基线。
 /// Log TLS admission baseline at startup.
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]

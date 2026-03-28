@@ -12,6 +12,7 @@ pub use build_info::{build_board_id, ota_manifest_url};
 pub use platform::PlatformHttpClient;
 pub mod agent;
 pub mod audio;
+pub mod bg_timer;
 pub mod bus;
 pub mod channels;
 pub mod config;

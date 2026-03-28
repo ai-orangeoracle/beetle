@@ -783,7 +783,7 @@ impl DisplayState {
 use embedded_graphics::{
     mono_font::{ascii::FONT_6X13, ascii::FONT_9X18_BOLD, MonoTextStyle},
     prelude::*,
-    primitives::{Circle, Line, PrimitiveStyle, Rectangle},
+    primitives::{Circle, Ellipse, Line, PrimitiveStyle, Rectangle},
     text::Text,
 };
 use embedded_graphics_core::pixelcolor::Rgb565;
@@ -799,7 +799,7 @@ struct BeetleOpts {
 }
 
 /// RGB565 color helpers.
-fn rgb565(r: u8, g: u8, b: u8) -> Rgb565 {
+const fn rgb565(r: u8, g: u8, b: u8) -> Rgb565 {
     Rgb565::new(r >> 3, g >> 2, b >> 3)
 }
 
@@ -813,7 +813,8 @@ fn darken(c: Rgb565, amt: u8) -> Rgb565 {
 /// Dim fill for beetle body/head glow halo on dark dashboard background.
 /// 深色底上的甲壳虫光晕填充色（高对比下的柔和外圈）。
 fn beetle_glow_fill(base: Rgb565) -> Rgb565 {
-    darken(base, 180)
+    // Dim to 1/4 intensity for a subtle glow
+    Rgb565::new(base.r() >> 2, base.g() >> 2, base.b() >> 2)
 }
 
 /// Draw a beetle icon using embedded-graphics primitives.
@@ -831,8 +832,16 @@ fn draw_beetle<D: DrawTarget<Color = Rgb565>>(
     let cx = x + size / 2;
     let dir: i32 = if opts.flipped { -1 } else { 1 };
 
+    // Logical radii for external overlays (like busy dots, mic, etc.)
     let body_r = size * 28 / 100;
     let head_r = size * 14 / 100;
+    
+    // Mecha/Stag beetle proportions (elongated body, wider head)
+    let body_rx = size * 24 / 100;
+    let body_ry = size * 32 / 100;
+    let head_rx = size * 16 / 100;
+    let head_ry = size * 11 / 100;
+
     let head_cy = if opts.flipped {
         y + size * 72 / 100
     } else {
@@ -846,8 +855,7 @@ fn draw_beetle<D: DrawTarget<Color = Rgb565>>(
 
     let line_style = PrimitiveStyle::with_stroke(color, 2);
 
-    // --- Antennae (simplified as 2 straight lines) ---
-    // listening 态：触角更大张开（"竖起耳朵"）
+    // --- Antennae (Radar style) ---
     let ant_tip_dy = if opts.listening {
         dir * size * 28 / 100
     } else {
@@ -858,36 +866,31 @@ fn draw_beetle<D: DrawTarget<Color = Rgb565>>(
     } else {
         size * 20 / 100
     };
-    let ant_base_dy = dir * head_r * 8 / 10;
-    // Left antenna
-    let _ = Line::new(
-        Point::new(cx - head_r / 2, head_cy - ant_base_dy),
-        Point::new(cx - ant_spread, head_cy - ant_tip_dy),
-    )
-    .into_styled(line_style)
-    .draw(target);
-    // Right antenna
-    let _ = Line::new(
-        Point::new(cx + head_r / 2, head_cy - ant_base_dy),
-        Point::new(cx + ant_spread, head_cy - ant_tip_dy),
-    )
-    .into_styled(line_style)
-    .draw(target);
+    let ant_base_dy = dir * head_ry * 8 / 10;
+    
+    for &sx in &[-1i32, 1] {
+        let ant_base = Point::new(cx + sx * head_rx / 2, head_cy - ant_base_dy);
+        let ant_tip = Point::new(cx + sx * ant_spread, head_cy - ant_tip_dy);
+        let _ = Line::new(ant_base, ant_tip).into_styled(line_style).draw(target);
+        // Radar cross at tip
+        let _ = Line::new(Point::new(ant_tip.x - 2, ant_tip.y), Point::new(ant_tip.x + 2, ant_tip.y))
+            .into_styled(line_style)
+            .draw(target);
+    }
 
-    // --- Legs (3 pairs, each with 2 segments) ---
-    let leg_attach_fracs: [i32; 3] = [-25, 0, 25]; // percent of body_r
+    // --- Legs (Mechanical joints) ---
+    let leg_attach_fracs: [i32; 3] = [-25, 0, 25]; // percent of body_ry
     let leg_angles_deg: [i32; 3] = [-20, 5, 25];
     let leg_len1 = size * 10 / 100;
     let leg_len2 = size * 7 / 100;
 
     for (i, &frac) in leg_attach_fracs.iter().enumerate() {
-        let leg_y = body_cy + body_r * frac / 100;
+        let leg_y = body_cy + body_ry * frac / 100;
         let ang_deg = leg_angles_deg[i] * dir;
-        // Simplified: approximate cos/sin with fixed ratios for small angles
         let (cos_a, sin_a) = approx_cos_sin(ang_deg);
 
         for &side in &[-1i32, 1] {
-            let ax = cx + side * body_r * 95 / 100;
+            let ax = cx + side * body_rx * 95 / 100;
             let kx = ax + side * leg_len1 * cos_a / 100;
             let ky = leg_y + leg_len1 * sin_a / 100;
             let fx = kx + side * leg_len2 * 50 / 100;
@@ -899,6 +902,11 @@ fn draw_beetle<D: DrawTarget<Color = Rgb565>>(
             let _ = Line::new(Point::new(kx, ky), Point::new(fx, fy))
                 .into_styled(line_style)
                 .draw(target);
+                
+            // Mechanical joint dot
+            let _ = Rectangle::new(Point::new(kx - 1, ky - 1), Size::new(3, 3))
+                .into_styled(PrimitiveStyle::with_fill(color))
+                .draw(target);
         }
     }
 
@@ -907,35 +915,27 @@ fn draw_beetle<D: DrawTarget<Color = Rgb565>>(
         let wing_color = darken(color, 30);
         let wing_style = PrimitiveStyle::with_stroke(wing_color, 1);
 
-        // Wing shape: elongated oval approximated by a filled region + outline arcs.
-        // Each wing extends from the body edge outward and slightly upward.
-        let wing_span = size * 18 / 100; // horizontal extent from body edge
-        let wing_h = size * 22 / 100; // vertical height of wing
-        let wing_top = body_cy - wing_h * 6 / 10; // wings start above body center
+        let wing_span = size * 18 / 100;
+        let wing_h = size * 22 / 100;
+        let wing_top = body_cy - wing_h * 6 / 10;
 
         for &side in &[-1i32, 1] {
-            let base_x = cx + side * body_r; // wing root at body edge
-            let tip_x = base_x + side * wing_span; // wing tip
-            let mid_x = base_x + side * wing_span * 7 / 10; // control point x
+            let base_x = cx + side * body_rx;
+            let tip_x = base_x + side * wing_span;
+            let mid_x = base_x + side * wing_span * 7 / 10;
 
-            // Wing outline: 5-segment curve (top arc + bottom arc)
-            // Top edge: gentle upward curve from root to tip
             let t0 = Point::new(base_x, wing_top + wing_h * 2 / 10);
             let t1 = Point::new(mid_x, wing_top);
             let t2 = Point::new(tip_x, wing_top + wing_h * 3 / 10);
-            // Bottom edge: curves back to root
             let b1 = Point::new(mid_x, wing_top + wing_h);
             let b0 = Point::new(base_x, wing_top + wing_h * 7 / 10);
 
-            // Fill: draw horizontal lines between top and bottom edges (simple scanline fill)
-            // For minimal overhead, just draw the outline — looks like translucent membrane wings
             let _ = Line::new(t0, t1).into_styled(wing_style).draw(target);
             let _ = Line::new(t1, t2).into_styled(wing_style).draw(target);
             let _ = Line::new(t2, b1).into_styled(wing_style).draw(target);
             let _ = Line::new(b1, b0).into_styled(wing_style).draw(target);
             let _ = Line::new(b0, t0).into_styled(wing_style).draw(target);
 
-            // Wing vein (central line for realism)
             let vein_style = PrimitiveStyle::with_stroke(wing_color, 1);
             let vein_mid = Point::new(mid_x - side * wing_span / 10, wing_top + wing_h / 2);
             let _ = Line::new(Point::new(base_x, wing_top + wing_h * 4 / 10), vein_mid)
@@ -952,19 +952,20 @@ fn draw_beetle<D: DrawTarget<Color = Rgb565>>(
 
     // --- Body glow halo (dim ring behind filled body) ---
     let glow_fill = PrimitiveStyle::with_fill(beetle_glow_fill(color));
-    let body_glow_r = body_r + 4;
-    let _ = Circle::new(
-        Point::new(cx - body_glow_r, body_cy - body_glow_r),
-        (body_glow_r * 2) as u32,
+    let body_glow_rx = body_rx + 4;
+    let body_glow_ry = body_ry + 4;
+    let _ = Ellipse::new(
+        Point::new(cx - body_glow_rx, body_cy - body_glow_ry),
+        Size::new((body_glow_rx * 2) as u32, (body_glow_ry * 2) as u32),
     )
     .into_styled(glow_fill)
     .draw(target);
 
-    // --- Body (large filled circle) ---
+    // --- Body (large filled ellipse) ---
     let body_fill = PrimitiveStyle::with_fill(color);
-    let _ = Circle::new(
-        Point::new(cx - body_r, body_cy - body_r),
-        (body_r * 2) as u32,
+    let _ = Ellipse::new(
+        Point::new(cx - body_rx, body_cy - body_ry),
+        Size::new((body_rx * 2) as u32, (body_ry * 2) as u32),
     )
     .into_styled(body_fill)
     .draw(target);
@@ -973,94 +974,107 @@ fn draw_beetle<D: DrawTarget<Color = Rgb565>>(
     let seam_color = darken(color, 50);
     let seam_style = PrimitiveStyle::with_stroke(seam_color, 1);
     let _ = Line::new(
-        Point::new(cx, body_cy - body_r + 3),
-        Point::new(cx, body_cy + body_r - 3),
+        Point::new(cx, body_cy - body_ry + 3),
+        Point::new(cx, body_cy + body_ry - 3),
     )
     .into_styled(seam_style)
     .draw(target);
 
-    // --- Elytra ridges (longitudinal lines, typical beetle texture) ---
+    // Energy core (small diamond on the upper back)
+    let core_y = body_cy - body_ry * 30 / 100;
+    let _ = Line::new(Point::new(cx, core_y - 3), Point::new(cx - 3, core_y)).into_styled(seam_style).draw(target);
+    let _ = Line::new(Point::new(cx - 3, core_y), Point::new(cx, core_y + 3)).into_styled(seam_style).draw(target);
+    let _ = Line::new(Point::new(cx, core_y + 3), Point::new(cx + 3, core_y)).into_styled(seam_style).draw(target);
+    let _ = Line::new(Point::new(cx + 3, core_y), Point::new(cx, core_y - 3)).into_styled(seam_style).draw(target);
+
+    // --- Elytra ridges (Mecha panel lines) ---
     let ridge_color = darken(color, 30);
     let ridge_style = PrimitiveStyle::with_stroke(ridge_color, 1);
-    // 2 ridges per side, running along the body length
     for &sx in &[-1i32, 1] {
-        for &frac in &[30i32, 60] {
-            let rx = cx + sx * body_r * frac / 100;
-            // Ridge runs from upper body to lower body, following the curvature
-            let ry_top = body_cy - body_r * 70 / 100;
-            let ry_bot = body_cy + body_r * 70 / 100;
-            let _ = Line::new(Point::new(rx, ry_top), Point::new(rx, ry_bot))
-                .into_styled(ridge_style)
-                .draw(target);
-        }
+        let rx_top = cx + sx * body_rx * 40 / 100;
+        let ry_top = body_cy - body_ry * 60 / 100;
+        let rx_mid = cx + sx * body_rx * 70 / 100;
+        let ry_mid = body_cy - body_ry * 10 / 100;
+        let rx_bot = cx + sx * body_rx * 50 / 100;
+        let ry_bot = body_cy + body_ry * 70 / 100;
+
+        let _ = Line::new(Point::new(rx_top, ry_top), Point::new(rx_mid, ry_mid))
+            .into_styled(ridge_style)
+            .draw(target);
+        let _ = Line::new(Point::new(rx_mid, ry_mid), Point::new(rx_bot, ry_bot))
+            .into_styled(ridge_style)
+            .draw(target);
     }
 
     // --- Head glow halo ---
-    let head_glow_r = head_r + 3;
-    let _ = Circle::new(
-        Point::new(cx - head_glow_r, head_cy - head_glow_r),
-        (head_glow_r * 2) as u32,
+    let head_glow_rx = head_rx + 3;
+    let head_glow_ry = head_ry + 3;
+    let _ = Ellipse::new(
+        Point::new(cx - head_glow_rx, head_cy - head_glow_ry),
+        Size::new((head_glow_rx * 2) as u32, (head_glow_ry * 2) as u32),
     )
     .into_styled(PrimitiveStyle::with_fill(beetle_glow_fill(color)))
     .draw(target);
 
-    // --- Head (smaller filled circle, slightly darker) ---
+    // --- Head (smaller filled ellipse, slightly darker) ---
     let head_color = darken(color, 20);
     let head_fill = PrimitiveStyle::with_fill(head_color);
-    let _ = Circle::new(
-        Point::new(cx - head_r, head_cy - head_r),
-        (head_r * 2) as u32,
+    let _ = Ellipse::new(
+        Point::new(cx - head_rx, head_cy - head_ry),
+        Size::new((head_rx * 2) as u32, (head_ry * 2) as u32),
     )
     .into_styled(head_fill)
     .draw(target);
 
-    // --- Eyes (compound eyes on sides of head) ---
-    let eye_r = (head_r * 4 / 10).max(2);
-    let eye_spread = head_r * 8 / 10;
-    let eye_y = head_cy;
+    // --- Eyes (Sensor visors on sides of head) ---
+    let eye_w = (head_rx * 5 / 10).max(3) as u32;
+    let eye_h = (head_ry * 4 / 10).max(2) as u32;
+    let eye_spread = head_rx * 7 / 10;
+    let eye_y = head_cy - (eye_h as i32 / 2);
 
     if opts.x_eyes {
         // X eyes (fault state)
         let x_style = PrimitiveStyle::with_stroke(Rgb565::WHITE, 2);
         for &sx in &[-1i32, 1] {
             let ex = cx + sx * eye_spread;
-            let _ = Line::new(Point::new(ex - 2, eye_y - 2), Point::new(ex + 2, eye_y + 2))
+            let _ = Line::new(Point::new(ex - 2, eye_y - 1), Point::new(ex + 2, eye_y + 3))
                 .into_styled(x_style)
                 .draw(target);
-            let _ = Line::new(Point::new(ex + 2, eye_y - 2), Point::new(ex - 2, eye_y + 2))
+            let _ = Line::new(Point::new(ex + 2, eye_y - 1), Point::new(ex - 2, eye_y + 3))
                 .into_styled(x_style)
                 .draw(target);
         }
     } else {
-        // Compound eyes (small circles on head sides)
-        let eye_color = darken(color, 60);
-        let eye_fill = PrimitiveStyle::with_fill(eye_color);
-        let eye_highlight = PrimitiveStyle::with_fill(Rgb565::WHITE);
+        // Sensor visors (glowing rectangles)
+        let eye_fill = PrimitiveStyle::with_fill(Rgb565::WHITE);
         for &sx in &[-1i32, 1] {
             let ex = cx + sx * eye_spread;
-            let _ = Circle::new(Point::new(ex - eye_r, eye_y - eye_r), (eye_r * 2) as u32)
+            let _ = Rectangle::new(Point::new(ex - (eye_w as i32 / 2), eye_y), Size::new(eye_w, eye_h))
                 .into_styled(eye_fill)
-                .draw(target);
-            // Highlight dot
-            let _ = Circle::new(Point::new(ex - 1, eye_y - eye_r + 1), 2)
-                .into_styled(eye_highlight)
                 .draw(target);
         }
     }
 
-    // --- Mandibles (V-shaped jaws extending from front of head) ---
-    let mandible_style = PrimitiveStyle::with_stroke(darken(color, 40), 2);
-    let jaw_base_y = head_cy - dir * head_r * 8 / 10;
-    let jaw_tip_y = head_cy - dir * (head_r + size * 8 / 100);
-    let jaw_spread = head_r * 5 / 10;
-    let jaw_tip_spread = head_r * 9 / 10;
+    // --- Mandibles (Mecha pincers extending from front of head) ---
+    let mandible_style = PrimitiveStyle::with_stroke(darken(color, 10), 2);
+    let jaw_base_y = head_cy - dir * head_ry * 8 / 10;
+    let jaw_mid_y = head_cy - dir * (head_ry + size * 4 / 100);
+    let jaw_tip_y = head_cy - dir * (head_ry + size * 10 / 100);
+    
+    let jaw_spread = head_rx * 4 / 10;
+    let jaw_mid_spread = head_rx * 8 / 10;
+    let jaw_tip_spread = head_rx * 6 / 10;
+    
     for &sx in &[-1i32, 1] {
-        let _ = Line::new(
-            Point::new(cx + sx * jaw_spread, jaw_base_y),
-            Point::new(cx + sx * jaw_tip_spread, jaw_tip_y),
-        )
-        .into_styled(mandible_style)
-        .draw(target);
+        let p_base = Point::new(cx + sx * jaw_spread, jaw_base_y);
+        let p_mid = Point::new(cx + sx * jaw_mid_spread, jaw_mid_y);
+        let p_tip = Point::new(cx + sx * jaw_tip_spread, jaw_tip_y);
+        
+        let _ = Line::new(p_base, p_mid).into_styled(mandible_style).draw(target);
+        let _ = Line::new(p_mid, p_tip).into_styled(mandible_style).draw(target);
+        
+        let tooth_tip = Point::new(cx + sx * jaw_spread * 2 / 10, jaw_mid_y - dir * 2);
+        let _ = Line::new(p_mid, tooth_tip).into_styled(PrimitiveStyle::with_stroke(darken(color, 10), 1)).draw(target);
     }
 
     (cx, body_cy, body_r, head_cy, head_r)
@@ -1203,15 +1217,16 @@ fn render_dashboard<D: DrawTarget<Color = Rgb565>>(target: &mut D, p: &Dashboard
     let div_style = PrimitiveStyle::with_stroke(DIVIDER, 1);
     let mid_div_y = layout.middle_top.saturating_sub(6) as i32;
     let foot_div_y = layout.footer_top.saturating_sub(6) as i32;
+    let div_margin = layout.margin_x as i32;
     let _ = Line::new(
-        Point::new(0, mid_div_y),
-        Point::new(p.width as i32, mid_div_y),
+        Point::new(div_margin, mid_div_y),
+        Point::new(p.width as i32 - div_margin, mid_div_y),
     )
     .into_styled(div_style)
     .draw(target);
     let _ = Line::new(
-        Point::new(0, foot_div_y),
-        Point::new(p.width as i32, foot_div_y),
+        Point::new(div_margin, foot_div_y),
+        Point::new(p.width as i32 - div_margin, foot_div_y),
     )
     .into_styled(div_style)
     .draw(target);
@@ -1399,8 +1414,8 @@ fn render_dashboard<D: DrawTarget<Color = Rgb565>>(target: &mut D, p: &Dashboard
             for layer in 1..=3i32 {
                 let r = head_r + layer * 5;
                 // 左侧弧线（向左的短弧）
-                let arc_pts = 5;
-                for j in 0..arc_pts {
+                let arc_pts = 6;
+                for j in (0..arc_pts).step_by(2) {
                     let a0 = 120 + j * (60 / arc_pts);
                     let a1 = 120 + (j + 1) * (60 / arc_pts);
                     let (c0, s0) = approx_cos_sin(a0 - 180);
@@ -1413,7 +1428,7 @@ fn render_dashboard<D: DrawTarget<Color = Rgb565>>(target: &mut D, p: &Dashboard
                     .draw(target);
                 }
                 // 右侧弧线（向右的短弧，对称）
-                for j in 0..arc_pts {
+                for j in (0..arc_pts).step_by(2) {
                     let a0 = 120 + j * (60 / arc_pts);
                     let a1 = 120 + (j + 1) * (60 / arc_pts);
                     let (c0, s0) = approx_cos_sin(a0 - 180);
@@ -1421,6 +1436,55 @@ fn render_dashboard<D: DrawTarget<Color = Rgb565>>(target: &mut D, p: &Dashboard
                     let _ = Line::new(
                         Point::new(cx + r * c0 / 100, head_cy + r * s0 / 100),
                         Point::new(cx + r * c1 / 100, head_cy + r * s1 / 100),
+                    )
+                    .into_styled(wave_style)
+                    .draw(target);
+                }
+            }
+        }
+        DisplaySystemState::Playing => {
+            // 喇叭图标：梯形喇叭口 + 向右的声波弧线
+            let speaker_style = PrimitiveStyle::with_stroke(Rgb565::WHITE, 2);
+            let horn_w = body_r * 25 / 100; // 喇叭口宽度
+            let horn_h = body_r * 50 / 100; // 喇叭高度
+            let horn_left = cx - horn_w;
+            let horn_right = cx;
+            let horn_top = body_cy - horn_h / 2;
+            let horn_bot = body_cy + horn_h / 2;
+            // 喇叭梯形（左窄右宽）
+            let narrow_w = horn_w * 40 / 100;
+            let _ = Line::new(
+                Point::new(horn_left, body_cy - narrow_w / 2),
+                Point::new(horn_right, horn_top),
+            )
+            .into_styled(speaker_style)
+            .draw(target);
+            let _ = Line::new(
+                Point::new(horn_left, body_cy + narrow_w / 2),
+                Point::new(horn_right, horn_bot),
+            )
+            .into_styled(speaker_style)
+            .draw(target);
+            let _ = Line::new(
+                Point::new(horn_left, body_cy - narrow_w / 2),
+                Point::new(horn_left, body_cy + narrow_w / 2),
+            )
+            .into_styled(speaker_style)
+            .draw(target);
+
+            // 向右的声波弧线（3层，虚线科技感）
+            let wave_style = PrimitiveStyle::with_stroke(beetle_color, 1);
+            for layer in 1..=3i32 {
+                let r = body_r * 20 / 100 + layer * 6;
+                let arc_pts = 8;
+                for j in (0..arc_pts).step_by(2) {
+                    let a0 = 60 + j * (60 / arc_pts);
+                    let a1 = 60 + (j + 1) * (60 / arc_pts);
+                    let (c0, s0) = approx_cos_sin(a0 - 180);
+                    let (c1, s1) = approx_cos_sin(a1 - 180);
+                    let _ = Line::new(
+                        Point::new(cx + r * c0 / 100, body_cy + r * s0 / 100),
+                        Point::new(cx + r * c1 / 100, body_cy + r * s1 / 100),
                     )
                     .into_styled(wave_style)
                     .draw(target);
@@ -1438,6 +1502,7 @@ fn render_dashboard<D: DrawTarget<Color = Rgb565>>(target: &mut D, p: &Dashboard
         DisplaySystemState::Busy => "BUSY",
         DisplaySystemState::Fault => "FAULT",
         DisplaySystemState::Recording => "LISTEN",
+        DisplaySystemState::Playing => "SPEAK",
     };
     let _ = Text::new(
         state_name,
@@ -1514,35 +1579,35 @@ fn render_dashboard<D: DrawTarget<Color = Rgb565>>(target: &mut D, p: &Dashboard
 
 /// Dashboard base background.
 /// 仪表盘主背景色。
-const DISPLAY_BG: Rgb565 = Rgb565::new(1, 2, 2);
+const DISPLAY_BG: Rgb565 = rgb565(11, 14, 20); // #0B0E14
 /// Panel surface color (header/channels/footer cards).
 /// 面板背景色（头部/通道/底部卡片）。
-const PANEL_BG: Rgb565 = Rgb565::new(2, 4, 5);
+const PANEL_BG: Rgb565 = rgb565(21, 26, 34); // #151A22
 /// Thin border color for panels.
 /// 面板细边框色。
-const PANEL_BORDER: Rgb565 = Rgb565::new(5, 8, 9);
+const PANEL_BORDER: Rgb565 = rgb565(42, 50, 65); // #2A3241
 /// Section divider color.
 /// 分区分割线颜色。
-const DIVIDER: Rgb565 = Rgb565::new(4, 7, 8);
+const DIVIDER: Rgb565 = rgb565(30, 37, 50); // #1E2532
 /// Subtle title strip in header panel.
 /// 头部标题条背景色。
-const TITLE_STRIP_BG: Rgb565 = Rgb565::new(3, 6, 7);
+const TITLE_STRIP_BG: Rgb565 = rgb565(26, 33, 45); // #1A212D
 /// Primary text color.
 /// 主文本色。
-const TEXT_PRIMARY: Rgb565 = Rgb565::new(25, 51, 56);
+const TEXT_PRIMARY: Rgb565 = rgb565(226, 232, 240); // #E2E8F0
 /// Secondary text color.
 /// 次文本色。
-const TEXT_SECONDARY: Rgb565 = Rgb565::new(16, 35, 42);
+const TEXT_SECONDARY: Rgb565 = rgb565(148, 163, 184); // #94A3B8
 /// Weak text color.
 /// 弱文本色。
-const TEXT_WEAK: Rgb565 = Rgb565::new(10, 22, 29);
+const TEXT_WEAK: Rgb565 = rgb565(71, 85, 105); // #475569
 /// Status colors.
 /// 状态强调色。
-const STATUS_SUCCESS: Rgb565 = Rgb565::new(0, 59, 12);
-const STATUS_WARNING: Rgb565 = Rgb565::new(27, 42, 0);
-const STATUS_DANGER: Rgb565 = Rgb565::new(31, 12, 8);
-const STATUS_INFO: Rgb565 = Rgb565::new(4, 42, 31);
-const STATUS_OFF: Rgb565 = Rgb565::new(8, 17, 10);
+const STATUS_SUCCESS: Rgb565 = rgb565(16, 185, 129); // #10B981
+const STATUS_WARNING: Rgb565 = rgb565(245, 158, 11); // #F59E0B
+const STATUS_DANGER: Rgb565 = rgb565(239, 68, 68); // #EF4444
+const STATUS_INFO: Rgb565 = rgb565(59, 130, 246); // #3B82F6
+const STATUS_OFF: Rgb565 = rgb565(51, 65, 85); // #334155
 /// 宽屏阈值（px）：通道三列、副标题 IP 与 `Up:` 分两行，避免窄屏单行截断。
 const DISPLAY_WIDE_LAYOUT_MIN_PX: u16 = 200;
 
@@ -1567,11 +1632,12 @@ fn subtitle_ip_flush_rows(width: u16, uptime_secs: u64) -> u16 {
 fn state_accent_color(state: DisplaySystemState) -> Rgb565 {
     match state {
         DisplaySystemState::Booting => STATUS_WARNING,
-        DisplaySystemState::NoWifi => rgb565(0x88, 0x99, 0xbb),
+        DisplaySystemState::NoWifi => rgb565(100, 116, 139), // #64748B
         DisplaySystemState::Idle => STATUS_SUCCESS,
         DisplaySystemState::Busy => STATUS_INFO,
         DisplaySystemState::Fault => STATUS_DANGER,
-        DisplaySystemState::Recording => rgb565(0x44, 0xcc, 0x44),
+        DisplaySystemState::Recording => rgb565(34, 197, 94), // #22C55E
+        DisplaySystemState::Playing => rgb565(14, 165, 233), // #0EA5E9
     }
 }
 
@@ -1602,6 +1668,14 @@ fn draw_panel_fill<D: DrawTarget<Color = Rgb565>>(
     let _ = Rectangle::new(Point::new(x, y), Size::new(w, h))
         .into_styled(PrimitiveStyle::with_stroke(border, 1))
         .draw(target);
+        
+    // Add a subtle top highlight for 3D HUD effect
+    if h > 2 && w > 2 {
+        let highlight = rgb565(35, 43, 56); // slightly brighter than PANEL_BG
+        let _ = Line::new(Point::new(x + 1, y + 1), Point::new(x + w as i32 - 2, y + 1))
+            .into_styled(PrimitiveStyle::with_stroke(highlight, 1))
+            .draw(target);
+    }
 }
 
 fn render_status_badge<D: DrawTarget<Color = Rgb565>>(
@@ -1788,9 +1862,23 @@ fn render_channels_inner<D: DrawTarget<Color = Rgb565>>(
             STATUS_OFF
         };
         let dot_y = py - (dot_d as i32 / 2);
+        
+        // Bullseye style: hollow outer circle, solid inner dot
         let _ = Circle::new(Point::new(px, dot_y), dot_d)
-            .into_styled(PrimitiveStyle::with_fill(dot_color))
+            .into_styled(PrimitiveStyle::with_stroke(dot_color, 1))
             .draw(target);
+            
+        if dot_d > 4 {
+            let inner_d = dot_d - 4;
+            let _ = Circle::new(Point::new(px + 2, dot_y + 2), inner_d)
+                .into_styled(PrimitiveStyle::with_fill(dot_color))
+                .draw(target);
+        } else if dot_d > 2 {
+            let inner_d = dot_d - 2;
+            let _ = Circle::new(Point::new(px + 1, dot_y + 1), inner_d)
+                .into_styled(PrimitiveStyle::with_fill(dot_color))
+                .draw(target);
+        }
 
         let name_style = if ch.enabled { text_style } else { weak_style };
         let label = channel_display_label(ch.name, &mut label_scratch);
@@ -2026,12 +2114,33 @@ fn render_footer<D: DrawTarget<Color = Rgb565>>(
 
     let fill_w = ((heap_percent as u32).min(100) * (bar_w - 2)) / 100;
     if fill_w > 0 {
+        // Heap bar color based on percentage, not orchestrator pressure level.
+        let heap_bar_color = if heap_percent < 70 {
+            STATUS_SUCCESS // green: 0-69%
+        } else if heap_percent < 85 {
+            STATUS_WARNING // yellow: 70-84%
+        } else {
+            STATUS_DANGER // red: 85-100%
+        };
         let _ = Rectangle::new(
             Point::new(bar_x + 1, bar_y + 1),
             Size::new(fill_w, bar_h - 2),
         )
-        .into_styled(PrimitiveStyle::with_fill(pressure_color))
+        .into_styled(PrimitiveStyle::with_fill(heap_bar_color))
         .draw(target);
+
+        // HUD Segmented effect: draw vertical background lines to cut the bar
+        let seg_style = PrimitiveStyle::with_stroke(PANEL_BG, 1);
+        let mut sx = bar_x + 4;
+        while sx < bar_x + 1 + fill_w as i32 {
+            let _ = Line::new(
+                Point::new(sx, bar_y + 1),
+                Point::new(sx, bar_y + bar_h as i32 - 2),
+            )
+            .into_styled(seg_style)
+            .draw(target);
+            sx += 4;
+        }
     }
 
     let text_style = MonoTextStyle::new(&FONT_6X13, TEXT_PRIMARY);
@@ -2049,16 +2158,15 @@ fn render_footer<D: DrawTarget<Color = Rgb565>>(
 
     // Stats line.
     let stats_y = bar_y + bar_h as i32 + stats_gap;
-    let dim_style = MonoTextStyle::new(&FONT_6X13, TEXT_SECONDARY);
-    let mut stats_buf = [0u8; 40]; // F6: 扩大到 40 字节
-    let stats_str = format_msg_stats(
+    draw_stats_line(
+        target,
+        margin_x,
+        stats_y,
         messages_in,
         messages_out,
         last_active_epoch_secs,
         llm_last_ms,
-        &mut stats_buf,
     );
-    let _ = Text::new(stats_str, Point::new(margin_x, stats_y), dim_style).draw(target);
 }
 
 /// F8: 启动进度条渲染。4 段：WiFi → SNTP → Channels → Agent。
@@ -2114,74 +2222,67 @@ fn render_boot_progress<D: DrawTarget<Color = Rgb565>>(
     }
 }
 
-/// Format message stats line: "In:NNN Out:NNN L:X.Xs HH:MM" (no heap alloc).
-/// F6: 含 LLM 延迟显示。
-fn format_msg_stats(
+/// Draw message stats line with separated label and value colors for better typography.
+fn draw_stats_line<D: DrawTarget<Color = Rgb565>>(
+    target: &mut D,
+    x: i32,
+    y: i32,
     msg_in: u32,
     msg_out: u32,
     epoch_secs: u32,
     llm_ms: u32,
-    buf: &mut [u8; 40],
-) -> &str {
-    let mut pos = 0;
-    let len = buf.len();
+) {
+    let label_style = MonoTextStyle::new(&FONT_6X13, TEXT_WEAK);
+    let value_style = MonoTextStyle::new(&FONT_6X13, TEXT_PRIMARY);
+    let mut cx = x;
 
-    macro_rules! put {
-        ($b:expr) => {
-            if pos < len {
-                buf[pos] = $b;
-                pos += 1;
-            }
-        };
-    }
+    let mut draw_part = |label: &str, val: &str| {
+        if !label.is_empty() {
+            let _ = Text::new(label, Point::new(cx, y), label_style).draw(target);
+            cx += label.len() as i32 * 6;
+        }
+        let _ = Text::new(val, Point::new(cx, y), value_style).draw(target);
+        cx += val.len() as i32 * 6;
+        cx += 6; // space
+    };
 
-    // "In:"
-    put!(b'I');
-    put!(b'n');
-    put!(b':');
-    pos = write_u32_to_buf(msg_in, buf, pos);
+    // In
+    let mut buf_in = [0u8; 10];
+    let len_in = write_u32_to_buf(msg_in, &mut buf_in, 0);
+    draw_part("In:", core::str::from_utf8(&buf_in[..len_in]).unwrap());
 
-    put!(b' ');
+    // Out
+    let mut buf_out = [0u8; 10];
+    let len_out = write_u32_to_buf(msg_out, &mut buf_out, 0);
+    draw_part("Out:", core::str::from_utf8(&buf_out[..len_out]).unwrap());
 
-    // "Out:"
-    put!(b'O');
-    put!(b'u');
-    put!(b't');
-    put!(b':');
-    pos = write_u32_to_buf(msg_out, buf, pos);
-
-    // F6: " L:X.Xs" or " L:XXXms" (only if llm_ms > 0)
+    // L
     if llm_ms > 0 {
-        put!(b' ');
-        put!(b'L');
-        put!(b':');
+        let mut buf_l = [0u8; 10];
+        let mut pos = 0;
         if llm_ms >= 1000 {
-            // Show as seconds with 1 decimal: "1.2s"
             let secs = llm_ms / 1000;
             let tenths = (llm_ms % 1000) / 100;
-            pos = write_u32_to_buf(secs, buf, pos);
-            put!(b'.');
-            put!(b'0' + tenths as u8);
-            put!(b's');
+            pos = write_u32_to_buf(secs, &mut buf_l, pos);
+            buf_l[pos] = b'.';
+            buf_l[pos + 1] = b'0' + tenths as u8;
+            buf_l[pos + 2] = b's';
+            pos += 3;
         } else {
-            // Show as milliseconds: "XXXms"
-            pos = write_u32_to_buf(llm_ms, buf, pos);
-            put!(b'm');
-            put!(b's');
+            pos = write_u32_to_buf(llm_ms, &mut buf_l, pos);
+            buf_l[pos] = b'm';
+            buf_l[pos + 1] = b's';
+            pos += 2;
         }
+        draw_part("L:", core::str::from_utf8(&buf_l[..pos]).unwrap());
     }
 
-    // " HH:MM"
-    put!(b' ');
-
+    // Time
+    let mut buf_t = [0u8; 5];
     if epoch_secs == 0 {
-        put!(b'-');
-        put!(b'-');
-        put!(b':');
-        put!(b'-');
-        put!(b'-');
+        buf_t.copy_from_slice(b"--:--");
+        draw_part("", "--:--");
     } else {
-        // ESP32: use esp_idf_svc::sys::localtime_r for timezone-aware conversion (SNTP).
         #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
         {
             use esp_idf_svc::sys::{localtime_r, time_t};
@@ -2190,31 +2291,29 @@ fn format_msg_stats(
             unsafe { localtime_r(&time_val, &mut tm) };
             let h = (tm.tm_hour as u8).min(23);
             let m = (tm.tm_min as u8).min(59);
-            put!(b'0' + h / 10);
-            put!(b'0' + h % 10);
-            put!(b':');
-            put!(b'0' + m / 10);
-            put!(b'0' + m % 10);
+            buf_t[0] = b'0' + h / 10;
+            buf_t[1] = b'0' + h % 10;
+            buf_t[2] = b':';
+            buf_t[3] = b'0' + m / 10;
+            buf_t[4] = b'0' + m % 10;
         }
         #[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
         {
-            // Non-ESP fallback: simple UTC calculation.
             let secs_of_day = epoch_secs % 86400;
             let h = ((secs_of_day / 3600) % 24) as u8;
             let m = ((secs_of_day % 3600) / 60) as u8;
-            put!(b'0' + h / 10);
-            put!(b'0' + h % 10);
-            put!(b':');
-            put!(b'0' + m / 10);
-            put!(b'0' + m % 10);
+            buf_t[0] = b'0' + h / 10;
+            buf_t[1] = b'0' + h % 10;
+            buf_t[2] = b':';
+            buf_t[3] = b'0' + m / 10;
+            buf_t[4] = b'0' + m % 10;
         }
+        draw_part("", core::str::from_utf8(&buf_t).unwrap());
     }
-
-    core::str::from_utf8(&buf[..pos]).unwrap_or("--")
 }
 
 /// Write a u32 value into a byte buffer at `pos`, return new pos.
-fn write_u32_to_buf(val: u32, buf: &mut [u8; 40], mut pos: usize) -> usize {
+fn write_u32_to_buf(val: u32, buf: &mut [u8], mut pos: usize) -> usize {
     if val == 0 {
         if pos < buf.len() {
             buf[pos] = b'0';

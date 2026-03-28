@@ -81,6 +81,7 @@ impl Tool for VoiceOutputTool {
                 |chunk| {
                     if first_pcm_at.is_none() {
                         first_pcm_at = Some(Instant::now());
+                        crate::orchestrator::set_audio_playing(true);
                         log_audio_resource_snapshot("voice_output_first_pcm");
                     }
                     self.platform.write_speaker_pcm_i16(chunk)
@@ -106,6 +107,7 @@ impl Tool for VoiceOutputTool {
                         |chunk| {
                             if first_pcm_at.is_none() {
                                 first_pcm_at = Some(Instant::now());
+                                crate::orchestrator::set_audio_playing(true);
                                 log_audio_resource_snapshot("voice_output_first_pcm_fallback");
                             }
                             self.platform.write_speaker_pcm_i16(chunk)
@@ -120,6 +122,7 @@ impl Tool for VoiceOutputTool {
                 .unwrap_or(0);
             crate::metrics::record_voice_output_play_ms(play_ms);
             log_audio_resource_snapshot("voice_output_done");
+            crate::orchestrator::set_audio_playing(false);
             Ok(json!({
                 "ok": true,
                 "played_samples": played_samples
@@ -127,6 +130,7 @@ impl Tool for VoiceOutputTool {
             .to_string())
         })();
         if result.is_err() {
+            crate::orchestrator::set_audio_playing(false);
             crate::metrics::record_voice_tool_failure("voice_output");
         }
         result

@@ -105,6 +105,8 @@ pub enum DisplaySystemState {
     Fault,
     /// 麦克风录音中（voice_input 工具采集时）。
     Recording,
+    /// 喇叭播放中（voice_output 工具播放时）。
+    Playing,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]

@@ -203,7 +203,7 @@ where
 }
 
 /// 从 orchestrator snapshot 的 internal 堆空闲字节数估算已用百分比。
-/// 以运行时首次观测到的空闲值作为动态基线（≈ 所有业务线程启动前的空闲量），
+/// 以运行时首次观测到的空闲值作为动态基线（首次调用时的空闲量，此时大部分业务线程已启动），
 /// 反映业务层实际消耗，而非 ESP-IDF 框架本身的固有开销。非 ESP 返回 0。
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 fn heap_used_percent(snapshot: &beetle::orchestrator::ResourceSnapshot) -> u8 {
@@ -212,7 +212,7 @@ fn heap_used_percent(snapshot: &beetle::orchestrator::ResourceSnapshot) -> u8 {
     static INTERNAL_BASELINE: AtomicU32 = AtomicU32::new(0);
 
     let free = snapshot.heap_free_internal;
-    let mut baseline = INTERNAL_BASELINE.load(Ordering::Relaxed);
+    let baseline = INTERNAL_BASELINE.load(Ordering::Relaxed);
     if baseline == 0 {
         // First observation — use it as our 100% reference point.
         // This is typically the orchestrator baseline (~219KB), before
@@ -406,8 +406,7 @@ fn esp_boot_audio_after_wifi(platform: &Arc<dyn Platform>, config: &Arc<AppConfi
 }
 
 /// HTTP 工厂：与 `Platform::create_http_client` 一致（含代理），供流式编辑等独立连接使用。
-type HttpFactory =
-    Box<dyn Fn() -> beetle::Result<Box<dyn PlatformHttpClient>> + Send + Sync>;
+type HttpFactory = Box<dyn Fn() -> beetle::Result<Box<dyn PlatformHttpClient>> + Send + Sync>;
 
 /// Telegram 流式编辑器：复用同一 TLS 连接，避免每次 edit 重新握手。
 struct TelegramStreamEditor {
@@ -454,8 +453,7 @@ impl FeishuStreamEditor {
             None => true,
         };
         if need_refresh {
-            let t = beetle::feishu_acquire_token(http, &self.app_id, &self.app_secret)
-                .ok_or_else(
+            let t = beetle::feishu_acquire_token(http, &self.app_id, &self.app_secret).ok_or_else(
                 || beetle::Error::config("feishu_stream", "failed to acquire tenant_token"),
             )?;
             state.token = Some((t.clone(), Instant::now()));
@@ -671,29 +669,25 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
         );
     }
 
-    beetle::cron::run_cron_loop(
-        system_inbound_tx.clone(),
-        beetle::cron::DEFAULT_CRON_INTERVAL_SECS,
-        Some(Arc::clone(&memory_store)),
-        Some(beetle::cron::SensorWatchContext {
+    beetle::bg_timer::run_bg_timer(beetle::bg_timer::BgTimerContext {
+        system_inbound_tx: system_inbound_tx.clone(),
+        resolve_locale: Arc::clone(&resolve_locale_ui),
+        platform: Arc::clone(&platform),
+        version: VERSION,
+        read_heartbeat: Box::new(|| beetle::platform::read_heartbeat_file().unwrap_or_default()),
+        user_inbound_depth: Arc::clone(&user_inbound_depth),
+        system_inbound_depth: Arc::clone(&system_inbound_depth),
+        outbound_depth: Arc::clone(&outbound_depth),
+        session_store: Arc::clone(&session_store),
+        memory_store: Some(Arc::clone(&memory_store)),
+        sensor_watch: Some(beetle::cron::SensorWatchContext {
             platform: Arc::clone(&platform),
             devices: config.hardware_devices.clone(),
             i2c_sensors: config.i2c_sensors.clone(),
         }),
-        Arc::clone(&resolve_locale_ui),
-    );
-    beetle::heartbeat::run_heartbeat_loop_with_tasks(
-        VERSION,
-        30,
-        system_inbound_tx.clone(),
-        || beetle::platform::read_heartbeat_file().unwrap_or_default(),
-        Arc::clone(&user_inbound_depth),
-        Arc::clone(&system_inbound_depth),
-        Arc::clone(&outbound_depth),
-        Arc::clone(&session_store),
-        Arc::clone(&platform),
-        Arc::clone(&resolve_locale_ui),
-    );
+        remind_store: Arc::clone(&remind_at_store),
+    });
+    // bg_timer: merged cron + heartbeat + remind into one thread (saves ~20KB SRAM).
 
     // 出站前等待 STA + 编排器初始化：须在 `create_http_client` 成功判定之前，以便 Linux 在 HTTP 桩返回 Err 时仍能 init orchestrator。
     beetle::platform::wait_for_network_ready();
@@ -706,7 +700,7 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
         let plan = thread_plan("display");
         let _ = beetle::util::spawn_guarded_with_profile_handle(
             "display",
-            6144,
+            4096,
             plan.core,
             plan.role,
             move || {
@@ -767,6 +761,8 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
                             DisplaySystemState::NoWifi
                         } else if snapshot.audio_recording {
                             DisplaySystemState::Recording
+                        } else if snapshot.audio_playing {
+                            DisplaySystemState::Playing
                         } else if busy {
                             DisplaySystemState::Busy
                         } else {
@@ -987,13 +983,6 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
         );
     }
 
-    beetle::memory::run_remind_loop(
-        Arc::clone(&remind_at_store),
-        system_inbound_tx.clone(),
-        60,
-        Arc::clone(&resolve_locale_ui),
-    );
-
     let (sinks, mut channel_rx_set) =
         beetle::channels::build_channel_sinks(config.as_ref(), &qq_msg_id_cache);
     // F8: 启动进度条 stage=3（channel sinks 后）
@@ -1123,8 +1112,9 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
             }
         }
 
-        let worker_llm: Arc<dyn beetle::LlmClient + Send + Sync> =
-            Arc::from(beetle::build_llm_clients(&config, Arc::clone(&resolve_locale_ui)));
+        let worker_llm: Arc<dyn beetle::LlmClient + Send + Sync> = Arc::from(
+            beetle::build_llm_clients(&config, Arc::clone(&resolve_locale_ui)),
+        );
         let registry = Arc::new(beetle::build_default_registry(
             &config,
             Arc::clone(&platform),
@@ -1157,33 +1147,33 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
         });
 
         // 流式编辑器：根据 enabled_channel 选择对应通道的 StreamEditor 实现。
-        let stream_editor: Option<Arc<dyn beetle::StreamEditor + Send + Sync>> = if config.llm_stream
-        {
-            let pf = Arc::clone(&platform);
-            let cfg = Arc::clone(&config);
-            let make_http: HttpFactory = Box::new(move || pf.create_http_client(cfg.as_ref()));
-            match config.enabled_channel.as_str() {
-                "telegram" if !config.tg_token.trim().is_empty() => Some(Arc::new(
-                    TelegramStreamEditor {
-                        token: config.tg_token.clone(),
-                        create_http: make_http,
-                    },
-                ) as Arc<dyn beetle::StreamEditor + Send + Sync>),
-                "feishu" if !config.feishu_app_id.trim().is_empty() => Some(Arc::new(
-                    FeishuStreamEditor {
-                        app_id: config.feishu_app_id.clone(),
-                        app_secret: config.feishu_app_secret.clone(),
-                        create_http: make_http,
-                        state: Mutex::new(FeishuStreamState {
-                            token: None,
-                        }),
-                    },
-                ) as Arc<dyn beetle::StreamEditor + Send + Sync>),
-                _ => None,
-            }
-        } else {
-            None
-        };
+        let stream_editor: Option<Arc<dyn beetle::StreamEditor + Send + Sync>> =
+            if config.llm_stream {
+                let pf = Arc::clone(&platform);
+                let cfg = Arc::clone(&config);
+                let make_http: HttpFactory = Box::new(move || pf.create_http_client(cfg.as_ref()));
+                match config.enabled_channel.as_str() {
+                    "telegram" if !config.tg_token.trim().is_empty() => {
+                        Some(Arc::new(TelegramStreamEditor {
+                            token: config.tg_token.clone(),
+                            create_http: make_http,
+                        })
+                            as Arc<dyn beetle::StreamEditor + Send + Sync>)
+                    }
+                    "feishu" if !config.feishu_app_id.trim().is_empty() => {
+                        Some(Arc::new(FeishuStreamEditor {
+                            app_id: config.feishu_app_id.clone(),
+                            app_secret: config.feishu_app_secret.clone(),
+                            create_http: make_http,
+                            state: Mutex::new(FeishuStreamState { token: None }),
+                        })
+                            as Arc<dyn beetle::StreamEditor + Send + Sync>)
+                    }
+                    _ => None,
+                }
+            } else {
+                None
+            };
         let agent_config = Arc::new(beetle::AgentLoopConfig {
             memory_store: Arc::clone(&memory_store),
             session_store: Arc::clone(&session_store),
@@ -1303,7 +1293,11 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
                 {
                     Ok(c) => c,
                     Err(e) => {
-                        log::error!("[{}] agent_system_loop create_http_client failed: {}", tag, e);
+                        log::error!(
+                            "[{}] agent_system_loop create_http_client failed: {}",
+                            tag,
+                            e
+                        );
                         beetle::state::set_last_error(&e);
                         system_agent_platform.request_restart();
                         return;
