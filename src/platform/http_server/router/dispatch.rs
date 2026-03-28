@@ -20,6 +20,19 @@ fn path_only(uri: &str) -> &str {
     uri.split('?').next().unwrap_or("/")
 }
 
+/// Extract `chat_id` query parameter from URI (case-insensitive key match).
+#[inline(never)]
+fn chat_id_from_uri(uri: &str) -> Option<String> {
+    let query = uri.find('?').map(|i| &uri[i + 1..]).unwrap_or("");
+    for pair in query.split('&') {
+        let mut it = pair.splitn(2, '=');
+        if it.next().is_some_and(|k| k.eq_ignore_ascii_case("chat_id")) {
+            return it.next().filter(|s| !s.is_empty()).map(String::from);
+        }
+    }
+    None
+}
+
 #[inline(never)]
 fn api_to_out(r: ApiResponse) -> OutgoingResponse {
     OutgoingResponse {
@@ -420,16 +433,7 @@ pub fn dispatch(
             if let Some(r) = auth::require_activated(store) {
                 return Ok(api_to_out(r));
             }
-            let chat_id = common::name_from_uri(uri).or_else(|| {
-                let query = uri.find('?').map(|i| &uri[i + 1..]).unwrap_or("");
-                for pair in query.split('&') {
-                    let mut it = pair.splitn(2, '=');
-                    if it.next().is_some_and(|k| k.eq_ignore_ascii_case("chat_id")) {
-                        return it.next().filter(|s| !s.is_empty()).map(String::from);
-                    }
-                }
-                None
-            });
+            let chat_id = common::name_from_uri(uri).or_else(|| chat_id_from_uri(uri));
             let result = match chat_id {
                 Some(id) => handlers::sessions::detail(ctx, &id),
                 None => handlers::sessions::body(ctx),
@@ -456,18 +460,7 @@ pub fn dispatch(
             if let Some(o) = guard_pairing_csrf(store, uri, &incoming.headers) {
                 return Ok(o);
             }
-            let chat_id = {
-                let query = uri.find('?').map(|i| &uri[i + 1..]).unwrap_or("");
-                let mut found = None;
-                for pair in query.split('&') {
-                    let mut it = pair.splitn(2, '=');
-                    if it.next().is_some_and(|k| k.eq_ignore_ascii_case("chat_id")) {
-                        found = it.next().filter(|s| !s.is_empty()).map(String::from);
-                        break;
-                    }
-                }
-                found
-            };
+            let chat_id = chat_id_from_uri(uri);
             match chat_id {
                 Some(id) => match handlers::sessions::delete(ctx, &id) {
                     Ok(body) => Ok(OutgoingResponse::json(
@@ -590,7 +583,7 @@ pub fn dispatch(
             }
             let is_json = incoming
                 .header_ci("Content-Type")
-                .map(|ct| ct.contains("application/json"))
+                .map(|ct| ct.starts_with("application/json"))
                 .unwrap_or(false);
             let body_str = utf8_body(&incoming.body)?;
             let r = handlers::soul::post(ctx, body_str.to_string(), is_json);
@@ -602,7 +595,7 @@ pub fn dispatch(
             }
             let is_json = incoming
                 .header_ci("Content-Type")
-                .map(|ct| ct.contains("application/json"))
+                .map(|ct| ct.starts_with("application/json"))
                 .unwrap_or(false);
             let body_str = utf8_body(&incoming.body)?;
             let r = handlers::user::post(ctx, body_str.to_string(), is_json);
@@ -635,7 +628,6 @@ pub fn dispatch(
             let body_str = utf8_body(&incoming.body)?;
             let token = incoming
                 .header_ci("X-Webhook-Token")
-                .or_else(|| incoming.header_ci("x-webhook-token"))
                 .or_else(|| common::token_from_uri(uri));
             let provided = token.unwrap_or("");
             let r = handlers::webhook::post(ctx, &env.inbound_tx, body_str.to_string(), provided)
@@ -682,12 +674,8 @@ pub fn dispatch(
                     br#"{"error":"not found"}"#.to_vec(),
                 ));
             }
-            let ts = incoming
-                .header_ci("X-Signature-Timestamp")
-                .or_else(|| incoming.header_ci("x-signature-timestamp"));
-            let sig = incoming
-                .header_ci("X-Signature-Ed25519")
-                .or_else(|| incoming.header_ci("x-signature-ed25519"));
+            let ts = incoming.header_ci("X-Signature-Timestamp");
+            let sig = incoming.header_ci("X-Signature-Ed25519");
             match handlers::qq_webhook::post(
                 store,
                 &incoming.body,
