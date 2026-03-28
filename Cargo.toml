@@ -11,7 +11,7 @@ repository = ""
 # Board overlay (last) is written by build.sh/build.ps1 from BOARD; default 16MB in repo.
 esp_idf_sdkconfig_defaults = ["sdkconfig.defaults", "sdkconfig.defaults.esp32s3", "sdkconfig.defaults.esp32s3.board"]
 # esp-idf-sys 默认 v5.2.3；升级到 5.4.x 以匹配 esp-idf-svc 0.52 与 Component Registry（含 esp_websocket_client）。
-esp_idf_version = "v5.4.2"
+esp_idf_version = "v6.0"
 
 [[package.metadata.esp-idf-sys.extra_components]]
 # 飞书长连接入站 WSS 客户端

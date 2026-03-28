@@ -30,6 +30,7 @@ pub struct SensorWatchContext {
 }
 
 /// Cron tick 的可变状态，供 bg_timer 跨轮次复用。
+#[derive(Default)]
 pub struct CronTickState {
     pub(crate) persisted_cron_cache: Vec<CronTask>,
 }

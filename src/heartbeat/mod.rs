@@ -64,6 +64,7 @@ pub fn run_heartbeat_loop(version: &'static str, interval_secs: u64) {
 }
 
 /// Heartbeat tick 的可变状态，供 bg_timer 跨轮次复用。
+#[derive(Default)]
 pub struct HeartbeatTickState {
     pub(crate) round: u32,
 }
