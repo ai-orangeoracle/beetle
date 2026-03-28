@@ -203,28 +203,31 @@ where
 }
 
 /// 从 orchestrator snapshot 的 internal 堆空闲字节数估算已用百分比。
-/// 以运行时观测到的峰值空闲作为动态基线，减少固定常量带来的观测失真。非 ESP 返回 0。
+/// 以运行时首次观测到的空闲值作为动态基线（≈ 所有业务线程启动前的空闲量），
+/// 反映业务层实际消耗，而非 ESP-IDF 框架本身的固有开销。非 ESP 返回 0。
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 fn heap_used_percent(snapshot: &beetle::orchestrator::ResourceSnapshot) -> u8 {
     use std::sync::atomic::{AtomicU32, Ordering};
-    const INTERNAL_TOTAL_APPROX: u32 = 400 * 1024;
-    const INTERNAL_TOTAL_MIN: u32 = 256 * 1024;
-    const INTERNAL_TOTAL_MAX: u32 = 1024 * 1024;
-    static INTERNAL_TOTAL_ESTIMATE: AtomicU32 = AtomicU32::new(INTERNAL_TOTAL_APPROX);
+    // 0 means "not yet calibrated"; first call sets the baseline.
+    static INTERNAL_BASELINE: AtomicU32 = AtomicU32::new(0);
 
     let free = snapshot.heap_free_internal;
-    let mut total = INTERNAL_TOTAL_ESTIMATE.load(Ordering::Relaxed);
-    if free > total {
-        let candidate = free.clamp(INTERNAL_TOTAL_MIN, INTERNAL_TOTAL_MAX);
-        INTERNAL_TOTAL_ESTIMATE.store(candidate, Ordering::Relaxed);
-        total = candidate;
+    let mut baseline = INTERNAL_BASELINE.load(Ordering::Relaxed);
+    if baseline == 0 {
+        // First observation — use it as our 100% reference point.
+        // This is typically the orchestrator baseline (~219KB), before
+        // threads/TLS connections consume their share.
+        INTERNAL_BASELINE.store(free, Ordering::Relaxed);
+        return 0; // first call: nothing consumed yet relative to baseline
     }
-    if total == 0 || free >= total {
-        0
-    } else {
-        let used = total.saturating_sub(free);
-        ((used as u64 * 100) / total as u64).min(100) as u8
+    // If current free exceeds baseline (e.g. after TLS session teardown),
+    // update baseline upward so percentage never goes negative.
+    if free > baseline {
+        INTERNAL_BASELINE.store(free, Ordering::Relaxed);
+        return 0;
     }
+    let used = baseline - free;
+    ((used as u64 * 100) / baseline as u64).min(100) as u8
 }
 
 /// 启动自检：存储可读（memory 或 soul 至少其一成功）。失败返回 false，调用方应 log 并 return。

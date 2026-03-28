@@ -511,7 +511,7 @@ impl AudioRingBuffer {
             if let Some(ptr) = alloc_spiram_buffer(byte_size) {
                 // Zero-initialize
                 unsafe { core::ptr::write_bytes(ptr, 0, byte_size) };
-                log::debug!("[audio] ring buffer {}KB allocated in PSRAM", byte_size / 1024);
+                log::info!("[audio] ring buffer {}KB allocated in PSRAM", byte_size / 1024);
                 return Self {
                     buf: ptr as *mut i16,
                     cap,
@@ -527,7 +527,7 @@ impl AudioRingBuffer {
         v.resize(cap, 0);
         let ptr = v.as_mut_ptr();
         core::mem::forget(v); // ownership transferred to raw pointer
-        log::debug!("[audio] ring buffer {}KB allocated in internal heap", byte_size / 1024);
+        log::info!("[audio] ring buffer {}KB allocated in internal heap (PSRAM unavailable)", byte_size / 1024);
         Self {
             buf: ptr,
             cap,
