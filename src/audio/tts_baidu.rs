@@ -113,7 +113,7 @@ where
     let mut played = 0usize;
     let mut idx = start;
     let end = start + data_len;
-    let mut chunk = vec![0i16; chunk_samples.max(1)];
+    let mut chunk = crate::platform::psram_vec::PsramVecI16::new(chunk_samples.max(1));
     while idx < end {
         let remain_bytes = end - idx;
         let take_samples = (remain_bytes / 2).min(chunk.len());
@@ -121,10 +121,10 @@ where
             break;
         }
         let src = &bytes[idx..idx + take_samples * 2];
-        for (sample, pair) in chunk.iter_mut().take(take_samples).zip(src.chunks_exact(2)) {
+        for (sample, pair) in chunk.as_mut_slice().iter_mut().take(take_samples).zip(src.chunks_exact(2)) {
             *sample = i16::from_le_bytes([pair[0], pair[1]]);
         }
-        on_chunk(&chunk[..take_samples])?;
+        on_chunk(&chunk.as_mut_slice()[..take_samples])?;
         played += take_samples;
         idx += take_samples * 2;
     }
@@ -228,7 +228,7 @@ fn append_preview(dst: &mut Vec<u8>, src: &[u8], max: usize) {
 
 struct WavPcmStreamDecoder {
     pending: Vec<u8>,
-    chunk: Vec<i16>,
+    chunk: crate::platform::psram_vec::PsramVecI16,
     chunk_fill: usize,
     data_bytes_remaining: Option<usize>,
     played_samples: usize,
@@ -238,7 +238,7 @@ impl WavPcmStreamDecoder {
     fn new(chunk_samples: usize) -> Self {
         Self {
             pending: Vec::with_capacity(256),
-            chunk: vec![0i16; chunk_samples],
+            chunk: crate::platform::psram_vec::PsramVecI16::new(chunk_samples),
             chunk_fill: 0,
             data_bytes_remaining: None,
             played_samples: 0,
@@ -304,10 +304,10 @@ impl WavPcmStreamDecoder {
         let pcm = &self.pending[..bytes_len];
         for pair in pcm.chunks_exact(2) {
             let sample = i16::from_le_bytes([pair[0], pair[1]]);
-            self.chunk[self.chunk_fill] = sample;
+            self.chunk.as_mut_slice()[self.chunk_fill] = sample;
             self.chunk_fill += 1;
             if self.chunk_fill == self.chunk.len() {
-                on_chunk(&self.chunk)?;
+                on_chunk(self.chunk.as_mut_slice())?;
                 self.played_samples += self.chunk_fill;
                 self.chunk_fill = 0;
             }
@@ -317,7 +317,7 @@ impl WavPcmStreamDecoder {
 
     fn flush_chunk(&mut self, on_chunk: &mut dyn FnMut(&[i16]) -> Result<()>) -> Result<()> {
         if self.chunk_fill > 0 {
-            on_chunk(&self.chunk[..self.chunk_fill])?;
+            on_chunk(&self.chunk.as_mut_slice()[..self.chunk_fill])?;
             self.played_samples += self.chunk_fill;
             self.chunk_fill = 0;
         }
