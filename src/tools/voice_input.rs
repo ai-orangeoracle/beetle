@@ -57,7 +57,7 @@ impl Tool for VoiceInputTool {
     }
 
     fn description(&self) -> &str {
-        "Capture microphone audio, detect endpoint by energy, and transcribe via Baidu STT."
+        "Listen through the device microphone and transcribe speech to text. Use when user asks to listen/hear/record voice."
     }
 
     fn schema(&self) -> serde_json::Value {

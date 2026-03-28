@@ -1126,7 +1126,7 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
             Arc::clone(&memory_store),
             platform.config_store(),
         ));
-        let tool_specs: Arc<[beetle::llm::ToolSpec]> = registry.tool_specs_for_api(4096).into();
+        let tool_specs: Arc<[beetle::llm::ToolSpec]> = registry.tool_specs_for_api(8192).into();
         let skill_meta_store_fn = Arc::clone(&skill_meta_store);
         let skill_storage_fn = Arc::clone(&skill_storage);
         let get_skill_descriptions: Arc<dyn Fn() -> String + Send + Sync> = Arc::new(move || {

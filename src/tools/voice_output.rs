@@ -37,7 +37,7 @@ impl Tool for VoiceOutputTool {
     }
 
     fn description(&self) -> &str {
-        "Synthesize text with Baidu TTS and play via speaker."
+        "Speak text aloud through the device speaker (text-to-speech). Use when user asks to say/speak/read something aloud."
     }
 
     fn schema(&self) -> serde_json::Value {
@@ -106,14 +106,8 @@ fn parse_voice_output_text(args: &str) -> Result<String> {
         }
     }
 
-    if let Some(fixed) = try_fix_unquoted_top_level_json_object(trimmed) {
-        if let Ok(v) = serde_json::from_str::<Value>(&fixed) {
-            if let Some(obj) = v.as_object() {
-                if let Some(t) = text_from_tool_obj(obj) {
-                    return Ok(t);
-                }
-            }
-        }
+    if let Some(text) = extract_bare_value_from_js_object(trimmed) {
+        return Ok(text);
     }
 
     // 终极兜底：任何非空纯文本直接当作要朗读的内容
@@ -148,21 +142,24 @@ fn text_from_tool_obj(obj: &Map<String, Value>) -> Option<String> {
     None
 }
 
-/// 将 `{text: "..."}` 等转为 `{"text":...}`（仅处理顶层、键为 ASCII 标识符）。
-fn try_fix_unquoted_top_level_json_object(s: &str) -> Option<String> {
+/// 提取 `{text: ...}` / `{content: ...}` 中冒号后的裸文本值。
+/// 处理模型返回键和值均无引号的 JS 风格对象：`{text: 你好}` → `"你好"`。
+fn extract_bare_value_from_js_object(s: &str) -> Option<String> {
     let t = s.trim();
     if !t.starts_with('{') || !t.ends_with('}') {
         return None;
     }
     let inner = t[1..t.len() - 1].trim();
-    if inner.is_empty() {
-        return None;
-    }
-    let (key, value_json) = split_unquoted_key_and_rest(inner)?;
+    let (key, rest) = split_unquoted_key_and_rest(inner)?;
     if !matches!(key, "text" | "content" | "message") {
         return None;
     }
-    Some(format!("{{\"text\":{}}}", value_json))
+    // rest 就是裸文本值，去掉可能的首尾引号
+    let val = rest.trim().trim_matches('"').trim();
+    if val.is_empty() {
+        return None;
+    }
+    Some(val.to_string())
 }
 
 fn split_unquoted_key_and_rest(s: &str) -> Option<(&str, &str)> {
@@ -203,14 +200,27 @@ mod parse_tests {
     }
 
     #[test]
-    fn accepts_unquoted_key_like_llm() {
+    fn accepts_unquoted_key_quoted_value() {
         let t = parse_voice_output_text(r#"{text: "hello"}"#).expect("ok");
         assert_eq!(t, "hello");
+    }
+
+    #[test]
+    fn accepts_unquoted_key_and_value() {
+        // 模型实际输出的格式：键和值都没引号
+        let t = parse_voice_output_text("{text: 你好，这是测试语音功能}").expect("ok");
+        assert_eq!(t, "你好，这是测试语音功能");
     }
 
     #[test]
     fn accepts_json_string_body() {
         let t = parse_voice_output_text(r#""plain""#).expect("ok");
         assert_eq!(t, "plain");
+    }
+
+    #[test]
+    fn accepts_bare_text_fallback() {
+        let t = parse_voice_output_text("你好世界").expect("ok");
+        assert_eq!(t, "你好世界");
     }
 }
