@@ -102,6 +102,14 @@ impl LlmResponse {
             }
         }
         let stop_reason = r.stop_reason.unwrap_or(StopReason::Other);
+        let has_tool_calls = !tool_calls.is_empty();
+        // If tool_calls present but stop_reason is not ToolUse (e.g. null from API),
+        // force ToolUse so the agent loop executes them instead of returning text.
+        let stop_reason = if has_tool_calls && stop_reason != StopReason::ToolUse {
+            StopReason::ToolUse
+        } else {
+            stop_reason
+        };
         LlmResponse {
             content,
             stop_reason,

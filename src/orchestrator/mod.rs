@@ -230,6 +230,24 @@ pub fn background_outbound_yield_ms_pub() -> u64 {
     admission::background_outbound_yield_ms(&STATE)
 }
 
+/// 设置麦克风录音标志（voice_input 工具调用）。
+/// Set microphone recording flag (called by voice_input tool).
+pub fn set_audio_recording(active: bool) {
+    STATE.audio_recording.store(
+        if active { 1 } else { 0 },
+        std::sync::atomic::Ordering::Relaxed,
+    );
+}
+
+/// 麦克风是否正在录音。
+/// Whether microphone is currently recording.
+pub fn is_audio_recording() -> bool {
+    STATE
+        .audio_recording
+        .load(std::sync::atomic::Ordering::Relaxed)
+        != 0
+}
+
 /// 启动时打印 TLS 准入基线。
 /// Log TLS admission baseline at startup.
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]

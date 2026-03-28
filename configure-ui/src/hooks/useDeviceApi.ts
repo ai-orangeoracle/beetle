@@ -32,7 +32,7 @@ export function useDeviceApi() {
   const api = useMemo(
     () => ({
       config: {
-        get: () => configApi.getConfig(baseUrl ?? ''),
+        get: () => configApi.getConfig(baseUrl ?? '', (pairingCode ?? '').trim()),
         saveLlm: (body: LlmConfigSegment) =>
           configApi.saveLlm(baseUrl ?? '', (pairingCode ?? '').trim(), body),
         saveChannels: (body: ChannelsConfigSegment) =>
@@ -41,17 +41,17 @@ export function useDeviceApi() {
           configApi.saveSystem(baseUrl ?? '', (pairingCode ?? '').trim(), body),
       },
       display: {
-        get: () => displayApi.getDisplayConfig(baseUrl ?? ''),
+        get: () => displayApi.getDisplayConfig(baseUrl ?? '', (pairingCode ?? '').trim()),
         save: (body: DisplayConfig) =>
           displayApi.saveDisplayConfig(baseUrl ?? '', (pairingCode ?? '').trim(), body),
       },
       audio: {
-        get: () => audioApi.getAudioConfig(baseUrl ?? ''),
+        get: () => audioApi.getAudioConfig(baseUrl ?? '', (pairingCode ?? '').trim()),
         save: (body: AudioConfig) =>
           audioApi.saveAudioConfig(baseUrl ?? '', (pairingCode ?? '').trim(), body),
       },
       hardware: {
-        get: () => hardwareApi.getHardwareConfig(baseUrl ?? ''),
+        get: () => hardwareApi.getHardwareConfig(baseUrl ?? '', (pairingCode ?? '').trim()),
         save: (body: HardwareSegment) =>
           hardwareApi.saveHardwareConfig(baseUrl ?? '', (pairingCode ?? '').trim(), body),
       },

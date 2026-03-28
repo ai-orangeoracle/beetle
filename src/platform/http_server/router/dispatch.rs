@@ -169,7 +169,7 @@ pub fn dispatch(
             Ok(api_to_out(r))
         }
         ("GET", "/api/config") => {
-            if let Some(r) = auth::require_activated(store) {
+            if let Some(r) = auth::require_pairing_code(store, uri, &incoming.headers) {
                 return Ok(api_to_out(r));
             }
             let body = handlers::config::get_body(ctx)
@@ -224,7 +224,7 @@ pub fn dispatch(
             Ok(api_to_out(r))
         }
         ("GET", "/api/config/hardware") => {
-            if let Some(r) = auth::require_activated(store) {
+            if let Some(r) = auth::require_pairing_code(store, uri, &incoming.headers) {
                 return Ok(api_to_out(r));
             }
             let body = handlers::config::get_hardware_body(ctx)
@@ -246,7 +246,7 @@ pub fn dispatch(
             Ok(api_to_out(r))
         }
         ("GET", "/api/config/audio") => {
-            if let Some(r) = auth::require_activated(store) {
+            if let Some(r) = auth::require_pairing_code(store, uri, &incoming.headers) {
                 return Ok(api_to_out(r));
             }
             let body = handlers::config::get_audio_body(ctx)
@@ -274,7 +274,7 @@ pub fn dispatch(
             Ok(out)
         }
         ("GET", "/api/config/display") => {
-            if let Some(r) = auth::require_activated(store) {
+            if let Some(r) = auth::require_pairing_code(store, uri, &incoming.headers) {
                 return Ok(api_to_out(r));
             }
             let body = handlers::config::get_display_body(ctx)

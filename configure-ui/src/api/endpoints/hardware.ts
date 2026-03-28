@@ -3,9 +3,12 @@ import type { HardwareSegment } from '../../types/hardwareConfig'
 
 export async function getHardwareConfig(
   baseUrl: string,
+  pairingCode?: string,
 ): Promise<ApiResult<HardwareSegment>> {
   if (!baseUrl?.trim()) return { ok: false, error: API_ERROR.NO_BASE_URL }
-  return request<HardwareSegment>(baseUrl, '/api/config/hardware')
+  return request<HardwareSegment>(baseUrl, '/api/config/hardware', {
+    pairingCode: pairingCode?.trim(),
+  })
 }
 
 export async function saveHardwareConfig(

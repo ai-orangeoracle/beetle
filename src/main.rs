@@ -499,7 +499,7 @@ fn compute_refresh_secs(
         return DISPLAY_REFRESH_SLEEP_SECS;
     }
     match state {
-        DisplaySystemState::Busy => DISPLAY_REFRESH_BUSY_SECS,
+        DisplaySystemState::Busy | DisplaySystemState::Recording => DISPLAY_REFRESH_BUSY_SECS,
         DisplaySystemState::Idle | DisplaySystemState::NoWifi => {
             if last_activity_at.elapsed().as_secs() >= DISPLAY_IDLE_LONG_THRESHOLD_SECS {
                 DISPLAY_REFRESH_IDLE_LONG_SECS
@@ -758,6 +758,8 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
                             DisplaySystemState::Fault
                         } else if !sta_connected {
                             DisplaySystemState::NoWifi
+                        } else if snapshot.audio_recording {
+                            DisplaySystemState::Recording
                         } else if busy {
                             DisplaySystemState::Busy
                         } else {

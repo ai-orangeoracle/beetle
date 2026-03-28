@@ -1,9 +1,11 @@
 import { API_ERROR, request, type ApiResult } from '../client'
 import type { AudioConfig } from '../../types/audioConfig'
 
-export async function getAudioConfig(baseUrl: string): Promise<ApiResult<AudioConfig>> {
+export async function getAudioConfig(baseUrl: string, pairingCode?: string): Promise<ApiResult<AudioConfig>> {
   if (!baseUrl?.trim()) return { ok: false, error: API_ERROR.NO_BASE_URL }
-  return request<AudioConfig>(baseUrl, '/api/config/audio')
+  return request<AudioConfig>(baseUrl, '/api/config/audio', {
+    pairingCode: pairingCode?.trim(),
+  })
 }
 
 export async function saveAudioConfig(

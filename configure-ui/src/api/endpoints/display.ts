@@ -1,9 +1,11 @@
 import { API_ERROR, request, type ApiResult } from '../client'
 import type { DisplayConfig } from '../../types/displayConfig'
 
-export async function getDisplayConfig(baseUrl: string): Promise<ApiResult<DisplayConfig>> {
+export async function getDisplayConfig(baseUrl: string, pairingCode?: string): Promise<ApiResult<DisplayConfig>> {
   if (!baseUrl?.trim()) return { ok: false, error: API_ERROR.NO_BASE_URL }
-  return request<DisplayConfig>(baseUrl, '/api/config/display')
+  return request<DisplayConfig>(baseUrl, '/api/config/display', {
+    pairingCode: pairingCode?.trim(),
+  })
 }
 
 export async function saveDisplayConfig(

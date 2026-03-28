@@ -24,6 +24,7 @@ import {
 } from '../components/form'
 import { SettingsSection } from '../components/SettingsSection'
 import { useConfig } from '../hooks/useConfig'
+import { useRevealedPasswordFields } from '../hooks/useRevealedPassword'
 import { useSaveFeedback } from '../hooks/useSaveFeedback'
 import { useUnsaved } from '../hooks/useUnsaved'
 import {
@@ -186,6 +187,7 @@ export function AudioConfigPanel() {
   } = useConfig()
   const saveFeedback = useSaveFeedback(t)
   const { setDirty } = useUnsaved()
+  const { isRevealed, getRevealHandlers } = useRevealedPasswordFields()
   const [draft, setDraft] = useState<AudioConfig | null>(null)
   const form = draft ?? audioConfig ?? defaultAudioConfig()
 
@@ -865,17 +867,23 @@ export function AudioConfigPanel() {
                       <TextField
                         size="small"
                         label={t('audioConfig.sttApiKey')}
-                        type="password"
+                        type={isRevealed('audio_stt_api_key') ? 'text' : 'password'}
                         value={form.stt.api_key}
                         onChange={(e) =>
                           setDraftSafe({ ...form, stt: { ...form.stt, api_key: e.target.value } })
                         }
+                        slotProps={{
+                          htmlInput: {
+                            style: { fontFamily: 'var(--font-mono)' },
+                            ...getRevealHandlers('audio_stt_api_key'),
+                          },
+                        }}
                       />
                       {form.stt.provider === 'baidu' ? (
                         <TextField
                           size="small"
                           label={t('audioConfig.sttApiSecret')}
-                          type="password"
+                          type={isRevealed('audio_stt_api_secret') ? 'text' : 'password'}
                           value={form.stt.api_secret}
                           onChange={(e) =>
                             setDraftSafe({
@@ -883,6 +891,12 @@ export function AudioConfigPanel() {
                               stt: { ...form.stt, api_secret: e.target.value },
                             })
                           }
+                          slotProps={{
+                            htmlInput: {
+                              style: { fontFamily: 'var(--font-mono)' },
+                              ...getRevealHandlers('audio_stt_api_secret'),
+                            },
+                          }}
                         />
                       ) : null}
                       {form.stt.provider !== 'whisper' ? (

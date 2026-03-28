@@ -103,6 +103,8 @@ pub enum DisplaySystemState {
     Idle,
     Busy,
     Fault,
+    /// 麦克风录音中（voice_input 工具采集时）。
+    Recording,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]

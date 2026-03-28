@@ -118,7 +118,7 @@ export const AUDIO_SAMPLE_RATE_PRESETS = [8_000, 11_025, 16_000, 22_050, 44_100,
 
 export const AUDIO_BUFFER_PRESETS = [512, 1024, 2048, 4096, 8192] as const
 
-export const AUDIO_VAD_THRESHOLD_PRESETS = [0.3, 0.4, 0.5, 0.6, 0.7] as const
+export const AUDIO_VAD_THRESHOLD_PRESETS = [0.01, 0.02, 0.05, 0.08, 0.1, 0.2, 0.3, 0.5, 0.7] as const
 
 export const AUDIO_VAD_SILENCE_MS_PRESETS = [500, 750, 1000, 1500, 2000, 3000] as const
 

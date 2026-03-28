@@ -350,6 +350,13 @@ fn do_request(
         })
         .filter(|v| !v.is_empty());
 
+    let has_tool_calls = tool_calls.as_ref().is_some_and(|v| !v.is_empty());
+    let stop_reason = if has_tool_calls && stop_reason != StopReason::ToolUse {
+        StopReason::ToolUse
+    } else {
+        stop_reason
+    };
+
     Ok(LlmResponse {
         content,
         stop_reason,
@@ -490,9 +497,15 @@ impl OpenAiStreamAccumulator {
                 },
             })
             .collect();
+        let has_tool_calls = !tool_calls.is_empty();
+        let stop_reason = if has_tool_calls && self.stop_reason != StopReason::ToolUse {
+            StopReason::ToolUse
+        } else {
+            self.stop_reason
+        };
         LlmResponse {
             content: self.content,
-            stop_reason: self.stop_reason,
+            stop_reason,
             tool_calls: if tool_calls.is_empty() {
                 None
             } else {

@@ -794,6 +794,8 @@ struct BeetleOpts {
     flipped: bool,
     x_eyes: bool,
     wings: bool,
+    /// 录音态：触角张开、头部声波弧线。
+    listening: bool,
 }
 
 /// RGB565 color helpers.
@@ -845,19 +847,29 @@ fn draw_beetle<D: DrawTarget<Color = Rgb565>>(
     let line_style = PrimitiveStyle::with_stroke(color, 2);
 
     // --- Antennae (simplified as 2 straight lines) ---
-    let ant_tip_dy = dir * size * 20 / 100;
+    // listening 态：触角更大张开（"竖起耳朵"）
+    let ant_tip_dy = if opts.listening {
+        dir * size * 28 / 100
+    } else {
+        dir * size * 20 / 100
+    };
+    let ant_spread = if opts.listening {
+        size * 30 / 100
+    } else {
+        size * 20 / 100
+    };
     let ant_base_dy = dir * head_r * 8 / 10;
     // Left antenna
     let _ = Line::new(
         Point::new(cx - head_r / 2, head_cy - ant_base_dy),
-        Point::new(cx - size * 20 / 100, head_cy - ant_tip_dy),
+        Point::new(cx - ant_spread, head_cy - ant_tip_dy),
     )
     .into_styled(line_style)
     .draw(target);
     // Right antenna
     let _ = Line::new(
         Point::new(cx + head_r / 2, head_cy - ant_base_dy),
-        Point::new(cx + size * 20 / 100, head_cy - ant_tip_dy),
+        Point::new(cx + ant_spread, head_cy - ant_tip_dy),
     )
     .into_styled(line_style)
     .draw(target);
@@ -1252,6 +1264,10 @@ fn render_dashboard<D: DrawTarget<Color = Rgb565>>(target: &mut D, p: &Dashboard
             x_eyes: true,
             ..Default::default()
         },
+        DisplaySystemState::Recording => BeetleOpts {
+            listening: true,
+            ..Default::default()
+        },
         _ => BeetleOpts::default(),
     };
     let (cx, body_cy, body_r, head_cy, head_r) = draw_beetle(
@@ -1350,6 +1366,67 @@ fn render_dashboard<D: DrawTarget<Color = Rgb565>>(target: &mut D, p: &Dashboard
                     .draw(target);
             }
         }
+        DisplaySystemState::Recording => {
+            // 麦克风图标：竖线（话筒杆）+ 顶部半圆（话筒头）+ 底部短横（底座）
+            let mic_style = PrimitiveStyle::with_stroke(Rgb565::WHITE, 2);
+            let mic_h = body_r * 60 / 100; // 话筒杆高度
+            let mic_top = body_cy - mic_h / 2;
+            let mic_bot = body_cy + mic_h / 2;
+            // 话筒杆
+            let _ = Line::new(Point::new(cx, mic_top), Point::new(cx, mic_bot))
+                .into_styled(mic_style)
+                .draw(target);
+            // 话筒头（顶部半圆，用小圆近似）
+            let head_sz = body_r * 28 / 100;
+            let _ = Circle::new(
+                Point::new(cx - head_sz, mic_top - head_sz),
+                (head_sz * 2) as u32,
+            )
+            .into_styled(PrimitiveStyle::with_stroke(Rgb565::WHITE, 2))
+            .draw(target);
+            // 底座短横
+            let base_w = body_r * 30 / 100;
+            let _ = Line::new(
+                Point::new(cx - base_w, mic_bot),
+                Point::new(cx + base_w, mic_bot),
+            )
+            .into_styled(mic_style)
+            .draw(target);
+
+            // 头部两侧声波弧线（2-3 层）
+            let wave_color = beetle_color;
+            let wave_style = PrimitiveStyle::with_stroke(wave_color, 1);
+            for layer in 1..=3i32 {
+                let r = head_r + layer * 5;
+                // 左侧弧线（向左的短弧）
+                let arc_pts = 5;
+                for j in 0..arc_pts {
+                    let a0 = 120 + j * (60 / arc_pts);
+                    let a1 = 120 + (j + 1) * (60 / arc_pts);
+                    let (c0, s0) = approx_cos_sin(a0 - 180);
+                    let (c1, s1) = approx_cos_sin(a1 - 180);
+                    let _ = Line::new(
+                        Point::new(cx - r * c0 / 100, head_cy + r * s0 / 100),
+                        Point::new(cx - r * c1 / 100, head_cy + r * s1 / 100),
+                    )
+                    .into_styled(wave_style)
+                    .draw(target);
+                }
+                // 右侧弧线（向右的短弧，对称）
+                for j in 0..arc_pts {
+                    let a0 = 120 + j * (60 / arc_pts);
+                    let a1 = 120 + (j + 1) * (60 / arc_pts);
+                    let (c0, s0) = approx_cos_sin(a0 - 180);
+                    let (c1, s1) = approx_cos_sin(a1 - 180);
+                    let _ = Line::new(
+                        Point::new(cx + r * c0 / 100, head_cy + r * s0 / 100),
+                        Point::new(cx + r * c1 / 100, head_cy + r * s1 / 100),
+                    )
+                    .into_styled(wave_style)
+                    .draw(target);
+                }
+            }
+        }
     }
 
     // --- Title text: state name ---
@@ -1360,6 +1437,7 @@ fn render_dashboard<D: DrawTarget<Color = Rgb565>>(target: &mut D, p: &Dashboard
         DisplaySystemState::Idle => "IDLE",
         DisplaySystemState::Busy => "BUSY",
         DisplaySystemState::Fault => "FAULT",
+        DisplaySystemState::Recording => "LISTEN",
     };
     let _ = Text::new(
         state_name,
@@ -1493,6 +1571,7 @@ fn state_accent_color(state: DisplaySystemState) -> Rgb565 {
         DisplaySystemState::Idle => STATUS_SUCCESS,
         DisplaySystemState::Busy => STATUS_INFO,
         DisplaySystemState::Fault => STATUS_DANGER,
+        DisplaySystemState::Recording => rgb565(0x44, 0xcc, 0x44),
     }
 }
 

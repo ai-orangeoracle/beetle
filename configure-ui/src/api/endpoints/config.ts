@@ -7,9 +7,11 @@ import type {
 } from '../../types/appConfig'
 import type { ApiResult } from '../client'
 
-export async function getConfig(baseUrl: string): Promise<ApiResult<AppConfig>> {
+export async function getConfig(baseUrl: string, pairingCode?: string): Promise<ApiResult<AppConfig>> {
   if (!baseUrl?.trim()) return { ok: false, error: API_ERROR.NO_BASE_URL }
-  return request<AppConfig>(baseUrl, '/api/config')
+  return request<AppConfig>(baseUrl, '/api/config', {
+    pairingCode: pairingCode?.trim(),
+  })
 }
 
 export async function saveLlm(

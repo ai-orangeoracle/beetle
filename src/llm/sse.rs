@@ -57,7 +57,13 @@ impl SseLineReader {
             } else if self.pos < SSE_LINE_BUF_SIZE {
                 self.buf[self.pos] = b;
                 self.pos += 1;
-                // 超出缓冲区的字节被丢弃；对正常 SSE 行（< 4KB）不会发生。
+            } else if self.pos == SSE_LINE_BUF_SIZE {
+                // 首次溢出时警告一次；后续同行字节静默丢弃。
+                log::warn!(
+                    "[sse] line exceeds {} bytes, truncating (tool_use input may be lost)",
+                    SSE_LINE_BUF_SIZE
+                );
+                self.pos += 1; // pos > BUF_SIZE 后不再重复警告
             }
         }
     }
@@ -69,7 +75,7 @@ impl SseLineReader {
 
     /// 处理缓冲区中的一行（不含终止换行符）。
     fn process_line(&mut self) {
-        let line = &self.buf[..self.pos];
+        let line = &self.buf[..self.pos.min(SSE_LINE_BUF_SIZE)];
 
         // 空行 = 事件分隔符：若有累积 data 则生成事件。
         if line.is_empty() {

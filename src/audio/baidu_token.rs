@@ -37,8 +37,8 @@ impl BaiduTokenCache {
         api_key: &str,
         api_secret: &str,
     ) -> Result<String> {
-        let key = api_key.trim();
-        let secret = api_secret.trim();
+        let key = trim_credential(api_key);
+        let secret = trim_credential(api_secret);
         if key.is_empty() || secret.is_empty() {
             return Err(Error::config(
                 "baidu_token",
@@ -78,6 +78,11 @@ impl BaiduTokenCache {
     }
 }
 
+/// 去掉首尾空白与 UTF-8 BOM，避免从 JSON/编辑器复制密钥时带入不可见字符导致 OAuth 401。
+fn trim_credential(s: &str) -> &str {
+    s.trim().trim_start_matches('\u{feff}')
+}
+
 fn fetch_access_token(
     http: &mut dyn PlatformHttpClient,
     api_key: &str,
@@ -93,9 +98,15 @@ fn fetch_access_token(
         .post(BAIDU_TOKEN_URL, &headers, form.as_bytes())
         .map_err(|e| Error::config("baidu_token", e.to_string()))?;
     if status != 200 {
+        let detail = format_baidu_oauth_failure_detail(status, body_buf.as_slice());
+        log::warn!(
+            "[baidu_token] oauth failed status={} detail={}",
+            status,
+            detail
+        );
         return Err(Error::config(
             "baidu_token",
-            format!("token http status {}", status),
+            format!("token http status {}: {}", status, detail),
         ));
     }
     let v: Value = serde_json::from_slice(body_buf.as_slice())
@@ -107,4 +118,58 @@ fn fetch_access_token(
         .to_string();
     let expires_in = v.get("expires_in").and_then(|x| x.as_u64());
     Ok((token, expires_in))
+}
+
+/// 非 200 时从响应体提取可读说明（脱敏、截断）；便于区分 invalid_client 与网关页。
+fn format_baidu_oauth_failure_detail(status: u16, body: &[u8]) -> String {
+    const MAX: usize = 280;
+    if let Ok(v) = serde_json::from_slice::<Value>(body) {
+        let err = v
+            .get("error")
+            .and_then(|x| x.as_str())
+            .unwrap_or("");
+        let desc = v
+            .get("error_description")
+            .and_then(|x| x.as_str())
+            .or_else(|| v.get("message").and_then(|x| x.as_str()))
+            .unwrap_or("");
+        if !err.is_empty() || !desc.is_empty() {
+            let mut s = format!("{}{}{}", err, if err.is_empty() { "" } else { ": " }, desc);
+            s.truncate(MAX);
+            return s;
+        }
+    }
+    let lossy = String::from_utf8_lossy(body);
+    let t = lossy.trim();
+    if t.is_empty() {
+        if status == 401 {
+            return "empty body (401 多为 API Key / Secret 错误或未开通对应百度 AI 应用能力；请在控制台核对语音相关服务)"
+                .to_string();
+        }
+        return "empty response body".to_string();
+    }
+    let mut it = t.chars();
+    let mut out: String = it.by_ref().take(MAX).collect();
+    if it.next().is_some() {
+        out.push('…');
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{format_baidu_oauth_failure_detail, trim_credential};
+
+    #[test]
+    fn trim_credential_strips_bom() {
+        assert_eq!(trim_credential("\u{feff}abc "), "abc");
+    }
+
+    #[test]
+    fn oauth_detail_parses_json_error() {
+        let b = br#"{"error":"invalid_client","error_description":"unknown client id"}"#;
+        let d = format_baidu_oauth_failure_detail(401, b);
+        assert!(d.contains("invalid_client"));
+        assert!(d.contains("unknown client id"));
+    }
 }

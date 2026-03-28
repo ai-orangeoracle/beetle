@@ -14,6 +14,23 @@ use crate::Platform;
 use serde_json::json;
 use std::sync::Arc;
 
+/// RAII guard：创建时设 orchestrator 录音标志，Drop 时清除。
+/// 确保无论正常返回还是 `?` 早退，标志都会被清除。
+struct AudioRecordingGuard;
+
+impl AudioRecordingGuard {
+    fn new() -> Self {
+        crate::orchestrator::set_audio_recording(true);
+        Self
+    }
+}
+
+impl Drop for AudioRecordingGuard {
+    fn drop(&mut self) {
+        crate::orchestrator::set_audio_recording(false);
+    }
+}
+
 pub struct VoiceInputTool {
     platform: Arc<dyn Platform>,
     audio_cfg: AudioSegment,
@@ -88,9 +105,15 @@ impl Tool for VoiceInputTool {
         let mut frame = vec![0i16; AUDIO_CAPTURE_FRAME_SAMPLES];
         let mut started = false;
         let mut elapsed = 0u32;
-        let max_samples = (max_ms as usize).saturating_mul(mic_sr as usize) / 1000;
-        let mut captured: Vec<i16> =
-            Vec::with_capacity(max_samples.min(AUDIO_STT_MAX_PCM_BYTES / 2));
+        let mut dbg_next_log_ms = 0u32;
+        let max_pcm_samples = (max_ms as usize)
+            .saturating_mul(mic_sr as usize)
+            .min(AUDIO_STT_MAX_PCM_BYTES)
+            / 1000;
+        // Start small (~2s worth), grow on demand; avoids 384KB upfront spike.
+        let init_cap = (2 * mic_sr as usize).min(max_pcm_samples);
+        let mut captured: Vec<i16> = Vec::with_capacity(init_cap);
+        let _recording_guard = AudioRecordingGuard::new();
         while elapsed < max_ms {
             let n = self.platform.read_mic_pcm_i16(&mut frame)?;
             if n == 0 {
@@ -98,6 +121,17 @@ impl Tool for VoiceInputTool {
                 continue;
             }
             let chunk = &frame[..n.min(frame.len())];
+            if elapsed >= dbg_next_log_ms {
+                let rms = crate::audio::energy::normalized_rms(chunk);
+                let (mn, mx) = chunk.iter().fold((i16::MAX, i16::MIN), |(lo, hi), &v| {
+                    (lo.min(v), hi.max(v))
+                });
+                log::info!(
+                    "[voice_input] dbg t={}ms samples={} rms={:.5} min={} max={} thr={:.3}",
+                    elapsed, n, rms, mn, mx, endpoint_cfg.threshold
+                );
+                dbg_next_log_ms = elapsed.saturating_add(1000);
+            }
             match endpoint.update(chunk, frame_ms, &endpoint_cfg) {
                 EndpointEvent::SpeechStart => {
                     started = true;
