@@ -68,9 +68,23 @@ fn parse_jsonl_line(line: &str) -> Option<SessionMessage> {
     }
     match serde_json::from_str::<SessionMessage>(line) {
         Ok(m) => Some(m),
-        Err(e) => {
-            log::warn!("[{}] skip bad line: {}", TAG, e);
-            None
+        Err(e_strict) => {
+            let mut iter = serde_json::Deserializer::from_str(line).into_iter::<SessionMessage>();
+            match iter.next() {
+                Some(Ok(m)) => {
+                    log::warn!(
+                        "[{}] strict parse failed ({}); using first message JSON only",
+                        TAG,
+                        e_strict
+                    );
+                    Some(m)
+                }
+                Some(Err(e)) => {
+                    log::warn!("[{}] skip bad line: {}", TAG, e);
+                    None
+                }
+                None => None,
+            }
         }
     }
 }

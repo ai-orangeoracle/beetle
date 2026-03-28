@@ -165,9 +165,14 @@ pub fn write_file(path: impl AsRef<Path>, data: &[u8]) -> Result<()> {
             .to_str()
             .ok_or_else(|| Error::config("spiffs_write", "invalid path"))?;
         let _guard = lock_spiffs();
+        // ESP-IDF SPIFFS+VFS：部分环境下 `create` 短写不会缩短对象长度，文件尾残留旧字节，
+        // 导致 JSON 解析报 trailing characters。先删再建与截断等价且更可靠。
+        // ESP-IDF SPIFFS+VFS: shorter writes may not shrink the object; stale tail breaks JSON parse.
+        let _ = std::fs::remove_file(path_str);
         let mut f = std::fs::File::create(path_str).map_err(|e| Error::io("spiffs_write", e))?;
         f.write_all(data)
             .map_err(|e| Error::io("spiffs_write", e))?;
+        f.sync_all().map_err(|e| Error::io("spiffs_write", e))?;
         Ok(())
     }
     #[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]

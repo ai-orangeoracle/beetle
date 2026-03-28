@@ -9,6 +9,31 @@ use crate::display::{
 use crate::error::{Error, Result};
 use crate::platform::ConfigStore;
 use serde::{Deserialize, Serialize};
+use serde::de::DeserializeOwned;
+
+/// SPIFFS 读出的单体 JSON：默认严格解析（与历史行为一致）；仅当整段非法而「第一个顶层值」仍合法时降级
+/// （典型：短写未截断导致尾部旧字节 → `trailing characters`），并打 warn，避免静默掩盖其它错误。
+fn deserialize_spiffs_json_loose_tail<T: DeserializeOwned>(
+    s: &str,
+) -> std::result::Result<T, serde_json::Error> {
+    let s = s.trim_start();
+    match serde_json::from_str::<T>(s) {
+        Ok(v) => Ok(v),
+        Err(e_strict) => {
+            let mut iter = serde_json::Deserializer::from_str(s).into_iter::<T>();
+            match iter.next() {
+                Some(Ok(v)) => {
+                    log::warn!(
+                        "[config] SPIFFS JSON strict parse failed ({}); accepted first top-level value only — re-save config or check flash write",
+                        e_strict
+                    );
+                    Ok(v)
+                }
+                Some(Err(_)) | None => Err(e_strict),
+            }
+        }
+    }
+}
 
 /// SPIFFS 配置文件读写，用于 config/llm.json、config/channels.json。由 Platform 实现。
 pub trait ConfigFileStore: Send + Sync {
@@ -415,7 +440,7 @@ impl AppConfig {
 
     /// 从 SPIFFS 读到的 llm.json 字符串合并到当前 config（仅覆盖 LLM 相关字段）。
     pub fn merge_llm_from_json(&mut self, json: &str, errors: &mut Vec<String>) {
-        match serde_json::from_str::<LlmSegment>(json) {
+        match deserialize_spiffs_json_loose_tail::<LlmSegment>(json) {
             Ok(seg) => {
                 self.llm_stream = seg.llm_stream;
                 self.llm_router_source_index = seg.llm_router_source_index;
@@ -438,7 +463,7 @@ impl AppConfig {
 
     /// 从 SPIFFS 读到的 channels.json 字符串合并到当前 config（仅覆盖通道相关字段）。
     pub fn merge_channels_from_json(&mut self, json: &str, errors: &mut Vec<String>) {
-        match serde_json::from_str::<ChannelsSegment>(json) {
+        match deserialize_spiffs_json_loose_tail::<ChannelsSegment>(json) {
             Ok(seg) => {
                 self.tg_token = seg.tg_token;
                 self.tg_allowed_chat_ids = seg.tg_allowed_chat_ids;
@@ -471,7 +496,7 @@ impl AppConfig {
     /// 从 SPIFFS 读到的 hardware.json 字符串合并到当前 config（仅覆盖硬件设备列表）。
     /// 解析成功后校验；校验失败则不覆盖、保留空列表，并记录 hardware_validation_failed。
     pub fn merge_hardware_from_json(&mut self, json: &str, errors: &mut Vec<String>) {
-        match serde_json::from_str::<HardwareSegment>(json) {
+        match deserialize_spiffs_json_loose_tail::<HardwareSegment>(json) {
             Ok(seg) => {
                 if let Err(e) = validate_hardware_segment(&seg) {
                     log::warn!("[config] merge_hardware_from_json validation failed: {}", e);
@@ -492,7 +517,7 @@ impl AppConfig {
 
     /// 从 SPIFFS 读到的 display.json 字符串合并到当前 config。
     pub fn merge_display_from_json(&mut self, json: &str, errors: &mut Vec<String>) {
-        match serde_json::from_str::<DisplayConfig>(json) {
+        match deserialize_spiffs_json_loose_tail::<DisplayConfig>(json) {
             Ok(mut cfg) => {
                 if cfg.version == 0 {
                     cfg.version = DISPLAY_CONFIG_VERSION;
@@ -513,7 +538,7 @@ impl AppConfig {
 
     /// 从 SPIFFS 读到的 audio.json 字符串合并到当前 config。
     pub fn merge_audio_from_json(&mut self, json: &str, errors: &mut Vec<String>) {
-        match serde_json::from_str::<AudioSegment>(json) {
+        match deserialize_spiffs_json_loose_tail::<AudioSegment>(json) {
             Ok(mut seg) => {
                 if seg.version == 0 {
                     seg.version = AUDIO_CONFIG_VERSION;
