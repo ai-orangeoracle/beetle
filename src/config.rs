@@ -233,7 +233,14 @@ fn default_tg_group_activation() -> String {
     "mention".into()
 }
 fn default_session_max_messages() -> u32 {
-    32
+    #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+    {
+        32
+    }
+    #[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+    {
+        128
+    }
 }
 
 impl AppConfig {

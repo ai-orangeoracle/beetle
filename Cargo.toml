@@ -83,15 +83,20 @@ tools_network_extra = []
 thread_panic_catch = []
 
 [profile.release]
-opt-level = "s"
+opt-level = 3
 lto = true
 debug = false
 strip = true
 codegen-units = 1
-# 去掉 panic 展开，显著减小固件（unwinding 表与代码不再链接）
 panic = "abort"
 
-# S3 等 Flash 充足时可选用，换取 LLM/JSON 路径更高性能：cargo build --profile release-speed
+# ESP32 固件构建：优化大小而非速度（Flash 受限）
+# 使用: cargo build --profile release-size --target xtensa-esp32s3-espidf
+[profile.release-size]
+inherits = "release"
+opt-level = "s"
+
+# 已废弃：默认 release 已使用 opt-level=3
 [profile.release-speed]
 inherits = "release"
 opt-level = 3

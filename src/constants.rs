@@ -8,19 +8,31 @@ pub const DEFAULT_CAPACITY: usize = 16;
 pub const DEFAULT_CAPACITY: usize = 64;
 
 /// 单条消息 content 最大长度（字节）。
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 pub const MAX_CONTENT_LEN: usize = 64 * 1024;
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+pub const MAX_CONTENT_LEN: usize = 256 * 1024;
 
 /// HTTP 响应体最大读取字节数。
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 pub const MAX_RESPONSE_BODY_LEN: usize = 512 * 1024;
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+pub const MAX_RESPONSE_BODY_LEN: usize = 2 * 1024 * 1024;
 
 /// LLM 请求体最大字节数，与 MAX_RESPONSE_BODY_LEN 一致。
 pub const MAX_REQUEST_BODY_LEN: usize = MAX_RESPONSE_BODY_LEN;
 
 /// 系统提示总长度上界（字符）。
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 pub const DEFAULT_SYSTEM_MAX_LEN: usize = 32 * 1024;
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+pub const DEFAULT_SYSTEM_MAX_LEN: usize = 64 * 1024;
 
 /// 会话 messages 总长度上界（字符）。
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 pub const DEFAULT_MESSAGES_MAX_LEN: usize = 24 * 1024;
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+pub const DEFAULT_MESSAGES_MAX_LEN: usize = 128 * 1024;
 
 /// TLS 准入：有 PSRAM 时允许发起单次 TLS（HTTP/WSS）要求的最小 internal 空闲（字节）。
 /// 有 PSRAM 时 mbedTLS 大部分分配走 SPIRAM，internal 仅需 ~15KB 给硬件加密/DMA。
