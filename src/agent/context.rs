@@ -1,4 +1,4 @@
-//! Agent 上下文构建：从 MemoryStore + SessionStore + 工具说明聚合 system 与 messages。
+//! Agent 上下文构建：从 MemoryStore + SessionStore 聚合 system 与 messages。
 //! Pure logic; no platform dependency; for use by agent::loop.
 
 use crate::bus::PcMsg;
@@ -35,7 +35,7 @@ pub struct ContextParams<'a> {
     pub memory: &'a dyn MemoryStore,
     pub session: &'a dyn SessionStore,
     pub important_message_store: &'a dyn ImportantMessageStore,
-    pub tool_descriptions: &'a str,
+    pub has_tools: bool,
     pub skill_descriptions: &'a str,
     pub system_max_len: usize,
     pub messages_max_len: usize,
@@ -48,8 +48,8 @@ pub struct ContextParams<'a> {
 
 /// 根据入站 PcMsg 与 store 构建 (system, messages)，供 LlmClient.chat 使用。
 ///
-/// **system 组成顺序**：SOUL → USER → MEMORY → daily_notes → tool_descriptions → skill_descriptions → 群组/SILENT 约定；总长 ≤ system_max_len。
-/// **截断策略**：base_max 用于 system_base（memory::build_system_prompt）；剩余空间依次给 tools、skills，超长从尾部截断；最后若仍超 system_max_len 则整体 truncate。
+/// **system 组成顺序**：SOUL → USER → MEMORY → daily_notes → skill_descriptions → 工具使用约束（有工具时）→ 群组/SILENT 约定；总长 ≤ system_max_len。
+/// **截断策略**：base_max 直接使用 `system_max_len` 构造 system_base；skills/约束追加后若超限则按字符边界截断。
 /// **失败降级**：任一源（get_soul/get_user/get_memory/list_daily_note_names）加载失败时降级为空字符串并打日志，不阻塞 build。
 ///
 /// **messages**：历史会话（最近 session_max_messages 条）+ 当前用户 content，总长 ≤ messages_max_len；超限从最旧消息起丢弃。
@@ -81,10 +81,7 @@ pub fn build_context(p: &ContextParams<'_>) -> Result<(String, Vec<Message>)> {
             daily_contents.push(c);
         }
     }
-    let tools_max = p.system_max_len / 4; // 预留约 1/4 给工具说明
-    let base_max = p
-        .system_max_len
-        .saturating_sub(p.tool_descriptions.len().min(tools_max));
+    let base_max = p.system_max_len;
     let system_base = build_system_prompt(&soul, &user, &mem, &daily_contents, base_max);
     let mut system = String::with_capacity(p.system_max_len);
     system.push_str(&system_base);
@@ -107,7 +104,7 @@ pub fn build_context(p: &ContextParams<'_>) -> Result<(String, Vec<Message>)> {
         }
     }
     // 工具使用行为约束：告诉模型直接调用而非文字描述，并鼓励简要说明推理
-    if !p.tool_descriptions.is_empty() {
+    if p.has_tools {
         let constraint = "\n\nWhen you decide to use a tool, call it directly via structured tool_use. Never describe or narrate the tool call in plain text. Before using tools, you may briefly explain your reasoning (1-2 sentences) to help track your thought process.";
         let remain = p.system_max_len.saturating_sub(system.len());
         if constraint.len() <= remain {

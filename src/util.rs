@@ -291,17 +291,8 @@ pub fn parse_iso8601(s: &str) -> Option<u64> {
     Some(ymdhms_to_epoch(y, m, day, h, min, sec))
 }
 
-#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
-/// 当前 Unix 秒。Host 用 SystemTime。
-pub fn current_unix_secs() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
-}
-
-#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
-/// 当前 Unix 秒。SNTP 同步后 ESP-IDF 自动更新系统时钟，SystemTime 即可取得正确时间。
+/// 当前 Unix 秒。Host 与 ESP 都通过 `SystemTime` 获取；
+/// ESP 在 SNTP 同步后同样由系统时钟提供正确 Unix 时间。
 pub fn current_unix_secs() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

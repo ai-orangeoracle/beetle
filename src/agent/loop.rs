@@ -240,6 +240,88 @@ fn try_send_outbound(outbound_tx: &OutboundTx, msg: PcMsg, log_prefix: &str) -> 
     }
 }
 
+enum GateResult {
+    Proceed,
+    Skipped,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn handle_llm_gate(
+    msg: &PcMsg,
+    req_id: &str,
+    loc: UiLocale,
+    user_inbound_tx: &UserInboundTx,
+    system_inbound_tx: &SystemInboundTx,
+    outbound_tx: &OutboundTx,
+    config: &AgentLoopConfig,
+) -> GateResult {
+    crate::orchestrator::refresh_heap_if_stale();
+    match crate::orchestrator::can_call_llm_pub() {
+        LlmDecision::Proceed => GateResult::Proceed,
+        LlmDecision::RetryLater { delay_ms } => {
+            let mut retry_msg = msg.clone();
+            retry_msg.enqueue_ts_ms = now_unix_ms();
+            let inbound_tx =
+                choose_inbound_tx(retry_msg.ingress, user_inbound_tx, system_inbound_tx);
+            match inbound_tx.try_send(retry_msg) {
+                Ok(()) => {}
+                Err(std::sync::mpsc::TrySendError::Full(m)) => {
+                    let _ = config.pending_retry.save_pending_retry(&m);
+                    let suffix = if msg.ingress == IngressKind::System {
+                        "(system)"
+                    } else {
+                        ""
+                    };
+                    log::warn!(
+                        "[agent] llm retry-later{}: inbound full, pending_retry saved chat_id={}",
+                        suffix,
+                        m.chat_id
+                    );
+                }
+                Err(std::sync::mpsc::TrySendError::Disconnected(_)) => {
+                    let suffix = if msg.ingress == IngressKind::System {
+                        "(system)"
+                    } else {
+                        ""
+                    };
+                    log::error!(
+                        "[agent] inbound_tx disconnected during retry-later{}",
+                        suffix
+                    );
+                }
+            }
+            std::thread::sleep(Duration::from_millis(delay_ms));
+            crate::platform::task_wdt::feed_current_task();
+            GateResult::Skipped
+        }
+        LlmDecision::Degrade { reason } => {
+            if msg.ingress == IngressKind::System {
+                log::info!("[agent] system task degraded, retry later: {}", reason);
+                let mut retry_msg = msg.clone();
+                retry_msg.enqueue_ts_ms = now_unix_ms();
+                let inbound_tx =
+                    choose_inbound_tx(retry_msg.ingress, user_inbound_tx, system_inbound_tx);
+                if let Err(std::sync::mpsc::TrySendError::Full(m)) = inbound_tx.try_send(retry_msg) {
+                    let _ = config.pending_retry.save_pending_retry(&m);
+                }
+            } else {
+                log::info!("[agent] LLM degraded: {}", reason);
+                let out = PcMsg {
+                    channel: msg.channel.clone(),
+                    chat_id: msg.chat_id.clone(),
+                    content: tr(UiMessage::LowMemoryUserDefer, loc),
+                    req_id: Some(req_id.to_owned()),
+                    ingress: IngressKind::User,
+                    enqueue_ts_ms: now_unix_ms(),
+                    is_group: false,
+                };
+                let _ = try_send_outbound(outbound_tx, out, "llm-degrade");
+            }
+            GateResult::Skipped
+        }
+    }
+}
+
 impl LlmHttpClient for AgentToolCtx<'_> {
     fn do_post(
         &mut self,
@@ -408,10 +490,6 @@ pub trait StreamEditor {
 struct RoundProgress {
     /// 本轮是否产生新信息（工具成功或内容长度显著增加）
     new_info: bool,
-    /// 本轮工具调用是否有成功
-    tool_success: bool,
-    /// 本轮 LLM 响应内容长度
-    content_len: usize,
 }
 
 /// Agent 循环的存储与运行参数，由 main 构建并传入 run_agent_loop，减少参数数量。
@@ -509,7 +587,7 @@ fn run_agent_loop_lane(
     bootstrap_pending_retry: bool,
 ) -> Result<()> {
     let worker_lane_tag = worker_lane.as_str();
-    let tool_descriptions = registry.format_descriptions_for_system_prompt(8 * 1024);
+    let has_tools = registry.has_tools();
     let skill_descriptions = (config.get_skill_descriptions)();
 
     // Track repeated LLM failure for same request body, avoid infinite retry.
@@ -706,113 +784,31 @@ fn run_agent_loop_lane(
             f(&msg.channel, &msg.chat_id, http);
         }
 
-        let final_content = if msg.ingress == IngressKind::System {
-            crate::orchestrator::refresh_heap_if_stale();
-            match crate::orchestrator::can_call_llm_pub() {
-                LlmDecision::Proceed => {}
-                LlmDecision::RetryLater { delay_ms } => {
-                    let mut retry_msg = msg.clone();
-                    retry_msg.enqueue_ts_ms = now_unix_ms();
-                    let inbound_tx =
-                        choose_inbound_tx(retry_msg.ingress, &user_inbound_tx, &system_inbound_tx);
-                    match inbound_tx.try_send(retry_msg) {
-                        Ok(()) => {}
-                        Err(std::sync::mpsc::TrySendError::Full(m)) => {
-                            let _ = config.pending_retry.save_pending_retry(&m);
-                            log::warn!(
-                                "[agent] llm retry-later(system): inbound full, pending_retry saved chat_id={}",
-                                m.chat_id
-                            );
-                        }
-                        Err(std::sync::mpsc::TrySendError::Disconnected(_)) => {
-                            log::error!(
-                                "[agent] inbound_tx disconnected during retry-later(system)"
-                            );
-                        }
-                    }
-                    std::thread::sleep(Duration::from_millis(delay_ms));
-                    crate::platform::task_wdt::feed_current_task();
-                    continue;
-                }
-                LlmDecision::Degrade { reason } => {
-                    log::info!("[agent] system task degraded, retry later: {}", reason);
-                    let mut retry_msg = msg.clone();
-                    retry_msg.enqueue_ts_ms = now_unix_ms();
-                    let inbound_tx =
-                        choose_inbound_tx(retry_msg.ingress, &user_inbound_tx, &system_inbound_tx);
-                    if let Err(std::sync::mpsc::TrySendError::Full(m)) =
-                        inbound_tx.try_send(retry_msg)
-                    {
-                        let _ = config.pending_retry.save_pending_retry(&m);
-                    }
-                    continue;
-                }
-            }
-            run_worker_path(
-                http,
-                worker_llm,
+        if matches!(
+            handle_llm_gate(
                 &msg,
-                registry,
-                config,
-                &tool_descriptions,
-                &skill_descriptions,
-                &mut tool_call_repeat_buf,
+                &req_id,
                 loc,
-            )
-        } else {
-            // LLM 门控：Critical 压力下降级，Cautious 堆不足时延迟重试
-            crate::orchestrator::refresh_heap_if_stale();
-            match crate::orchestrator::can_call_llm_pub() {
-                LlmDecision::Proceed => {}
-                LlmDecision::RetryLater { delay_ms } => {
-                    let mut retry_msg = msg.clone();
-                    retry_msg.enqueue_ts_ms = now_unix_ms();
-                    let inbound_tx =
-                        choose_inbound_tx(retry_msg.ingress, &user_inbound_tx, &system_inbound_tx);
-                    match inbound_tx.try_send(retry_msg) {
-                        Ok(()) => {}
-                        Err(std::sync::mpsc::TrySendError::Full(m)) => {
-                            let _ = config.pending_retry.save_pending_retry(&m);
-                            log::warn!(
-                                "[agent] llm retry-later: inbound full, pending_retry saved chat_id={}",
-                                m.chat_id
-                            );
-                        }
-                        Err(std::sync::mpsc::TrySendError::Disconnected(_)) => {
-                            log::error!("[agent] inbound_tx disconnected during retry-later");
-                        }
-                    }
-                    std::thread::sleep(Duration::from_millis(delay_ms));
-                    crate::platform::task_wdt::feed_current_task();
-                    continue;
-                }
-                LlmDecision::Degrade { reason } => {
-                    log::info!("[agent] LLM degraded: {}", reason);
-                    let out = PcMsg {
-                        channel: msg.channel.clone(),
-                        chat_id: msg.chat_id.clone(),
-                        content: tr(UiMessage::LowMemoryUserDefer, loc),
-                        req_id: Some(req_id.clone()),
-                        ingress: IngressKind::User,
-                        enqueue_ts_ms: now_unix_ms(),
-                        is_group: false,
-                    };
-                    let _ = try_send_outbound(&outbound_tx, out, "llm-degrade");
-                    continue;
-                }
-            }
-            run_worker_path(
-                http,
-                worker_llm,
-                &msg,
-                registry,
+                &user_inbound_tx,
+                &system_inbound_tx,
+                &outbound_tx,
                 config,
-                &tool_descriptions,
-                &skill_descriptions,
-                &mut tool_call_repeat_buf,
-                loc,
-            )
-        };
+            ),
+            GateResult::Skipped
+        ) {
+            continue;
+        }
+        let final_content = run_worker_path(
+            http,
+            worker_llm,
+            &msg,
+            registry,
+            config,
+            has_tools,
+            &skill_descriptions,
+            &mut tool_call_repeat_buf,
+            loc,
+        );
 
         let (outcome, consumed_round, streamed, mut worker_latency) = match final_content {
             Ok(ok) => ok,
@@ -1108,7 +1104,7 @@ fn run_worker_path(
     msg: &crate::bus::PcMsg,
     registry: &crate::tools::ToolRegistry,
     config: &AgentLoopConfig,
-    tool_descriptions: &str,
+    has_tools: bool,
     skill_descriptions: &str,
     tool_call_repeat: &mut HashMap<u64, u8>,
     loc: UiLocale,
@@ -1158,7 +1154,7 @@ fn run_worker_path(
         memory: config.memory_store.as_ref(),
         session: config.session_store.as_ref(),
         important_message_store: config.important_message_store.as_ref(),
-        tool_descriptions,
+        has_tools,
         skill_descriptions,
         system_max_len: budget.system_prompt_max,
         messages_max_len: budget.messages_max,
@@ -1347,14 +1343,6 @@ fn run_worker_path(
                 content.push_str(&tr(UiMessage::ReplyTruncated, loc));
             }
             final_content = content;
-            // P1 Enhancement 3: 记录本轮进度（MaxTokens 路径）。
-            progress_history[0] = progress_history[1];
-            progress_history[1] = progress_history[2];
-            progress_history[2] = Some(RoundProgress {
-                new_info: final_content.len() > 100,
-                tool_success: false,
-                content_len: final_content.len(),
-            });
             break;
         }
 
@@ -1394,21 +1382,11 @@ fn run_worker_path(
                 progress_history[1] = progress_history[2];
                 progress_history[2] = Some(RoundProgress {
                     new_info: false,
-                    tool_success: false,
-                    content_len: content.len(),
                 });
                 continue;
             }
 
             final_content = content;
-            // P1 Enhancement 3: 记录本轮进度（EndTurn 正常结束路径）。
-            progress_history[0] = progress_history[1];
-            progress_history[1] = progress_history[2];
-            progress_history[2] = Some(RoundProgress {
-                new_info: final_content.len() > 100,
-                tool_success: false,
-                content_len: final_content.len(),
-            });
             break;
         }
 
@@ -1492,7 +1470,7 @@ fn run_worker_path(
                                         "[agent_tool] {} execute failed: {} input={:?}",
                                         tc.name,
                                         e,
-                                        &tc.input[..tc.input.len().min(200)]
+                                        crate::util::truncate_content_to_max(&tc.input, 200).as_ref()
                                     );
                                     state::set_last_error(&e);
                                     tool_error_buf.clear();
@@ -1614,8 +1592,6 @@ fn run_worker_path(
             progress_history[1] = progress_history[2];
             progress_history[2] = Some(RoundProgress {
                 new_info: round_tool_success,
-                tool_success: round_tool_success,
-                content_len: 0, // ToolUse 轮次内容长度不重要
             });
             continue;
         }
@@ -1648,14 +1624,6 @@ fn run_worker_path(
             ));
         }
         final_content = content;
-        // P1 Enhancement 3: 记录本轮进度（fallback 路径）。
-        progress_history[0] = progress_history[1];
-        progress_history[1] = progress_history[2];
-        progress_history[2] = Some(RoundProgress {
-            new_info: final_content.len() > 100,
-            tool_success: false,
-            content_len: final_content.len(),
-        });
         break;
     }
     // 流式编辑：最终确认发送完整内容（工具执行中已通过 per-tool 进度 edit 续期可见性）。

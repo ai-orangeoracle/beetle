@@ -91,10 +91,3 @@ pub fn chunk_str_by_utf8_bytes_iter<'a>(
     }
 }
 
-/// 按最多 max_bytes 个 UTF-8 字节分片，不拆开多字节字符。
-#[allow(dead_code)]
-pub fn chunk_str_by_utf8_bytes(s: &str, max_bytes: usize) -> Vec<String> {
-    chunk_str_by_utf8_bytes_iter(s, max_bytes)
-        .map(|x| x.to_string())
-        .collect()
-}

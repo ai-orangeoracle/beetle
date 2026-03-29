@@ -28,10 +28,10 @@
 
 ## 编译与性能
 
-- 默认 `cargo build --release` 使用 `opt-level = "s"`（体积与速度兼顾）。
-- ESP32-S3 若 Flash 充足且希望提升 LLM/JSON 性能，可选用：  
-  `cargo build --profile release-speed`  
-  即继承 release 并将 `opt-level` 设为 3。
+- 默认 `cargo build --release` 使用 `opt-level = 3`（性能优先）。
+- 若更关注固件体积，可使用：  
+  `cargo build --profile release-size`  
+  即使用 `opt-level = "s"`。
 
 ---
 

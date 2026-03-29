@@ -194,11 +194,7 @@ fn run_scan_loop(
         if has_sta {
             let in_cooldown = cooldown_until.is_some_and(|t| Instant::now() < t);
             if !in_cooldown {
-                let sta_l2 = wifi
-                    .wifi()
-                    .driver()
-                    .is_sta_connected()
-                    .unwrap_or(false);
+                let sta_l2 = wifi.wifi().driver().is_sta_connected().unwrap_or(false);
                 let sta_ip_ok = read_sta_ipv4_string()
                     .map(|s| s != "0.0.0.0")
                     .unwrap_or(false);

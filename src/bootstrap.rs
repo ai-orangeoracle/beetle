@@ -84,7 +84,7 @@ fn esp_boot_display_after_wifi(
     if let Some(display_cfg) = config.display.as_ref() {
         if display_cfg.enabled {
             if let Err(e) = platform.init_display(display_cfg) {
-                log::warn!("[] display init failed (degraded): {}", TAG, e);
+                log::warn!("[{}] display init failed (degraded): {}", TAG, e);
             } else {
                 log::info!("[{}] display initialized", TAG);
                 let _ = platform.display_command(DisplayCommand::UpdateBootProgress { stage: 0 });

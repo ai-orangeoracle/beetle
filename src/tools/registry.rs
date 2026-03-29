@@ -66,7 +66,13 @@ impl ToolRegistry {
         out
     }
 
-    /// 供阶段 7 注入系统提示：格式化为工具说明文本，总长度不超过 max_chars。
+    /// Whether registry contains any tool.
+    pub fn has_tools(&self) -> bool {
+        !self.tools.is_empty()
+    }
+
+    /// 仅供调试/外部消费：格式化工具说明文本，总长度不超过 max_chars。
+    /// NOTE: agent context 不再注入该文本；工具规格由 LLM API `tools` 参数承载。
     pub fn format_descriptions_for_system_prompt(&self, max_chars: usize) -> String {
         let mut s = String::with_capacity(max_chars.min(4096));
         for tool in self.tools.values() {

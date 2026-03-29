@@ -1591,9 +1591,9 @@ fn validate_audio_segment(seg: &AudioSegment) -> Result<()> {
                 ),
             ));
         }
-        validate_pin_range(seg.microphone.pins.ws)?;
-        validate_pin_range(seg.microphone.pins.sck)?;
-        validate_pin_range(seg.microphone.pins.din)?;
+        validate_pin_range(seg.microphone.pins.ws, "audio")?;
+        validate_pin_range(seg.microphone.pins.sck, "audio")?;
+        validate_pin_range(seg.microphone.pins.din, "audio")?;
         validate_audio_sample_rate(seg.microphone.sample_rate, "microphone.sample_rate")?;
         validate_audio_bits_per_sample(
             seg.microphone.bits_per_sample,
@@ -1619,11 +1619,11 @@ fn validate_audio_segment(seg: &AudioSegment) -> Result<()> {
                 ),
             ));
         }
-        validate_pin_range(seg.speaker.pins.ws)?;
-        validate_pin_range(seg.speaker.pins.sck)?;
-        validate_pin_range(seg.speaker.pins.dout)?;
+        validate_pin_range(seg.speaker.pins.ws, "audio")?;
+        validate_pin_range(seg.speaker.pins.sck, "audio")?;
+        validate_pin_range(seg.speaker.pins.dout, "audio")?;
         if let Some(sd) = seg.speaker.pins.sd {
-            validate_pin_range(sd)?;
+            validate_pin_range(sd, "audio")?;
         }
         validate_audio_sample_rate(seg.speaker.sample_rate, "speaker.sample_rate")?;
         validate_audio_bits_per_sample(seg.speaker.bits_per_sample, "speaker.bits_per_sample")?;
@@ -1674,7 +1674,7 @@ fn validate_audio_segment(seg: &AudioSegment) -> Result<()> {
         ));
     }
     if seg.led_indicator.enabled {
-        validate_pin_range(seg.led_indicator.pin)?;
+        validate_pin_range(seg.led_indicator.pin, "audio")?;
     }
     if seg.led_indicator.states.listening.len() > CONFIG_FIELD_MAX_LEN
         || seg.led_indicator.states.processing.len() > CONFIG_FIELD_MAX_LEN
@@ -2004,21 +2004,21 @@ fn validate_hardware_segment(seg: &HardwareSegment) -> Result<()> {
     Ok(())
 }
 
-fn validate_pin_range(pin: i32) -> Result<()> {
+fn validate_pin_range(pin: i32, stage: &'static str) -> Result<()> {
     if !(HARDWARE_PIN_MIN..=HARDWARE_PIN_MAX).contains(&pin) {
         return Err(Error::config(
-            "display",
+            stage,
             format!(
-                "DISPLAY_CONFIG_INVALID_GPIO: pin {} out of range {}..={}",
+                "pin {} out of range {}..={}",
                 pin, HARDWARE_PIN_MIN, HARDWARE_PIN_MAX
             ),
         ));
     }
     if HARDWARE_FORBIDDEN_PINS.contains(&pin) {
         return Err(Error::config(
-            "display",
+            stage,
             format!(
-                "DISPLAY_CONFIG_INVALID_GPIO: pin {} is forbidden (strapping pin)",
+                "pin {} is forbidden (strapping pin)",
                 pin
             ),
         ));
@@ -2051,7 +2051,7 @@ fn validate_display_segment(cfg: &DisplayConfig, hardware_devices: &[DeviceEntry
     let pins = collect_display_pins(cfg);
     let mut seen = std::collections::HashSet::new();
     for (name, pin) in &pins {
-        validate_pin_range(*pin)?;
+        validate_pin_range(*pin, "display")?;
         if !seen.insert(*pin) {
             return Err(Error::config(
                 "display",

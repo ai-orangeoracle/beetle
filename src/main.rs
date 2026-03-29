@@ -793,7 +793,9 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
         let pending = Arc::clone(&pending_retry_store);
         let pf = Arc::clone(&platform);
         let cfg = Arc::clone(&config);
-        spawn_planned("feishu_ws", 8192, move || {
+        // WSS protocol parse + serde_json on ESP can exceed 8KB stack in bursts.
+        // Keep a higher stack budget to avoid runtime pthread stack overflow.
+        spawn_planned("feishu_ws", 16384, move || {
             run_feishu_ws_loop(
                 id,
                 sec,
@@ -823,7 +825,8 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
                 let qq_pending = Arc::clone(&pending_retry_store);
                 let pf = Arc::clone(&platform);
                 let cfg = Arc::clone(&config);
-                spawn_planned("qq_ws", 8192, move || {
+                // QQ WS path handles hello/dispatch JSON frames; 8KB stack is unsafe on ESP.
+                spawn_planned("qq_ws", 16384, move || {
                     beetle::run_qq_ws_loop(
                         qq_id,
                         qq_sec,
@@ -1110,6 +1113,9 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
             TAG
         );
     }
+
+    #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+    beetle::platform::task_wdt::register_current_task_to_task_wdt();
 
     loop {
         beetle::platform::task_wdt::feed_current_task();

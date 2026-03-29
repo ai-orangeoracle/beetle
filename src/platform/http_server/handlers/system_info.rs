@@ -109,6 +109,7 @@ pub fn body(ctx: &HandlerContext) -> Result<String, std::io::Error> {
     let ota_available = cfg!(feature = "ota");
     let locale = config::get_locale(ctx.config_store.as_ref());
     let lan_ip = crate::platform::wifi::wifi_sta_ip().unwrap_or_else(|| "—".to_string());
+    #[allow(unused_mut)]
     let mut json = serde_json::json!({
         "product_name": product_name,
         "system_status": system_status,

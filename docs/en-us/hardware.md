@@ -28,10 +28,10 @@ For **board selection and troubleshooting**: supported boards, memory and build 
 
 ## Build and performance
 
-- Default `cargo build --release` uses `opt-level = "s"` (size and speed balance).
-- For more LLM/JSON performance when Flash allows:  
-  `cargo build --profile release-speed`  
-  (inherits release and sets `opt-level` to 3.)
+- Default `cargo build --release` uses `opt-level = 3` (performance first).
+- If you need a smaller firmware image, use:  
+  `cargo build --profile release-size`  
+  (`opt-level = "s"`).
 
 ---
 

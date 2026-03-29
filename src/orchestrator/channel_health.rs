@@ -10,7 +10,7 @@ use super::state::{channel_to_index, OrchestratorState};
 /// Per-channel health state — all atomic, no locks.
 pub struct ChannelHealthSlot {
     pub consecutive_failures: AtomicU32,
-    pub last_failure_epoch_secs: AtomicU32, // 系统启动后秒数
+    pub last_failure_uptime_secs: AtomicU32, // 系统启动后秒数
     pub total_failures: AtomicU32,
     pub total_successes: AtomicU32,
 }
@@ -25,7 +25,7 @@ impl ChannelHealthSlot {
     pub const fn new() -> Self {
         Self {
             consecutive_failures: AtomicU32::new(0),
-            last_failure_epoch_secs: AtomicU32::new(0),
+            last_failure_uptime_secs: AtomicU32::new(0),
             total_failures: AtomicU32::new(0),
             total_successes: AtomicU32::new(0),
         }
@@ -50,7 +50,7 @@ pub fn record_channel_result(state: &OrchestratorState, channel: &str, success: 
         slot.total_successes.fetch_add(1, Ordering::Relaxed);
     } else {
         slot.consecutive_failures.fetch_add(1, Ordering::Relaxed);
-        slot.last_failure_epoch_secs
+        slot.last_failure_uptime_secs
             .store(uptime_secs(), Ordering::Relaxed);
         slot.total_failures.fetch_add(1, Ordering::Relaxed);
     }
@@ -74,7 +74,7 @@ pub fn is_channel_healthy_by_index(state: &OrchestratorState, idx: usize) -> boo
         return true;
     }
     // 冷却期已过则恢复
-    let last = slot.last_failure_epoch_secs.load(Ordering::Relaxed);
+    let last = slot.last_failure_uptime_secs.load(Ordering::Relaxed);
     uptime_secs().saturating_sub(last) >= CHANNEL_FAIL_COOLDOWN_SECS as u32
 }
 
@@ -89,7 +89,7 @@ pub fn snapshot_by_index(
     let healthy = if consecutive_failures < CHANNEL_FAIL_THRESHOLD {
         true
     } else {
-        let last = slot.last_failure_epoch_secs.load(Ordering::Relaxed);
+        let last = slot.last_failure_uptime_secs.load(Ordering::Relaxed);
         uptime_secs().saturating_sub(last) >= CHANNEL_FAIL_COOLDOWN_SECS as u32
     };
     super::state::ChannelHealthSnapshot {
