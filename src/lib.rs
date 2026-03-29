@@ -35,6 +35,7 @@ pub mod cron;
 pub mod heartbeat;
 pub mod i18n;
 pub mod orchestrator;
+pub mod runtime;
 pub mod skills;
 
 pub use agent::{
