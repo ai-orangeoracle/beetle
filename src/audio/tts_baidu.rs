@@ -9,9 +9,14 @@ use crate::config::{AudioSttConfig, AudioTtsConfig};
 use crate::error::{Error, Result};
 use crate::platform::{PlatformHttpClient, ResponseBody};
 use std::fmt::Write as _;
+use std::time::Instant;
 
 const BAIDU_TTS_URL: &str = "https://tsn.baidu.com/text2audio";
 const TTS_ERROR_PREVIEW_MAX_BYTES: usize = 1024;
+/// 单次 TTS 流式下载最长时间（秒），防止无限等待。
+const TTS_STREAM_TIMEOUT_SECS: u64 = 90;
+/// TTS 最大样本数（5 分钟 @ 16kHz），防止无限长音频。
+const MAX_TTS_SAMPLES: usize = 16_000 * 300;
 
 pub fn synthesize_wav(
     http: &mut dyn PlatformHttpClient,
@@ -59,12 +64,17 @@ where
     let mut text_preview = Vec::new();
     let mut text_response = false;
     let mut first_byte_seen = false;
+    let stream_start = Instant::now();
     let status = http
         .post_streaming(
             BAIDU_TTS_URL,
             &headers,
             body.as_bytes(),
+            None,  // 无限制：边下载边播放，内存占用恒定
             &mut |chunk: &[u8]| -> Result<()> {
+                if stream_start.elapsed().as_secs() > TTS_STREAM_TIMEOUT_SECS {
+                    return Err(Error::config("tts_baidu_timeout", "stream timeout"));
+                }
                 if chunk.is_empty() {
                     return Ok(());
                 }
@@ -274,6 +284,9 @@ impl WavPcmStreamDecoder {
                 break;
             }
             self.consume_pcm_even_prefix(even, on_chunk)?;
+            if self.played_samples > MAX_TTS_SAMPLES {
+                return Err(Error::config("tts_baidu_wav", "audio too long (max 5 min)"));
+            }
             self.pending.drain(..even);
             self.data_bytes_remaining = Some(rem - even);
             if rem == even {

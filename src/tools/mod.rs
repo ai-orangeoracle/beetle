@@ -130,11 +130,13 @@ pub trait ToolContext {
         body: &[u8],
     ) -> Result<(u16, crate::platform::ResponseBody)>;
     /// 流式 POST：逐块回调响应体，默认回退到整包 post_with_headers。
+    /// `max_response_bytes`: None = 无限制；Some(n) = 限制总字节数。
     fn post_streaming(
         &mut self,
         url: &str,
         headers: &[(&str, &str)],
         body: &[u8],
+        _max_response_bytes: Option<usize>,
         on_chunk: &mut dyn FnMut(&[u8]) -> Result<()>,
     ) -> Result<u16> {
         let (status, resp) = self.post_with_headers(url, headers, body)?;

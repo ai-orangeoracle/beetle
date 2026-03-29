@@ -127,12 +127,14 @@ pub trait LlmHttpClient {
         body: &[u8],
     ) -> Result<(u16, crate::platform::ResponseBody)>;
 
-    /// SSE 流式 POST：发送后逐块回调 on_chunk。默认回退到 do_post + 单次 on_chunk。
+    /// 流式 POST：发送后逐块回调 on_chunk。默认回退到 do_post + 单次 on_chunk。
+    /// `max_response_bytes`: None = 无限制；Some(n) = 限制总字节数。
     fn do_post_streaming(
         &mut self,
         url: &str,
         headers: &[(&str, &str)],
         body: &[u8],
+        _max_response_bytes: Option<usize>,
         on_chunk: &mut dyn FnMut(&[u8]) -> Result<()>,
     ) -> Result<u16> {
         let (status, resp_body) = self.do_post(url, headers, body)?;

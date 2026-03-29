@@ -337,9 +337,10 @@ impl LlmHttpClient for AgentToolCtx<'_> {
         url: &str,
         headers: &[(&str, &str)],
         body: &[u8],
+        max_response_bytes: Option<usize>,
         on_chunk: &mut dyn FnMut(&[u8]) -> Result<()>,
     ) -> Result<u16> {
-        crate::platform::PlatformHttpClient::post_streaming(self.http, url, headers, body, on_chunk)
+        crate::platform::PlatformHttpClient::post_streaming(self.http, url, headers, body, max_response_bytes, on_chunk)
     }
 
     fn reset_connection_for_retry(&mut self) {
@@ -368,9 +369,10 @@ impl ToolContext for AgentToolCtx<'_> {
         url: &str,
         headers: &[(&str, &str)],
         body: &[u8],
+        max_response_bytes: Option<usize>,
         on_chunk: &mut dyn FnMut(&[u8]) -> Result<()>,
     ) -> Result<u16> {
-        crate::platform::PlatformHttpClient::post_streaming(self.http, url, headers, body, on_chunk)
+        crate::platform::PlatformHttpClient::post_streaming(self.http, url, headers, body, max_response_bytes, on_chunk)
     }
     fn patch_with_headers(
         &mut self,

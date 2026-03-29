@@ -424,7 +424,7 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
         let session_http = Arc::clone(&session_store);
         let http_inbound_tx = user_inbound_tx.clone();
         let http_qq_cache = Arc::clone(&qq_msg_id_cache);
-        spawn_planned("http_server", 8192, move || {
+        spawn_planned("http_server", 16384, move || {
             if let Err(e) = beetle::platform::http_server::run(
                 platform_http,
                 inc,
@@ -794,7 +794,7 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
         let pf = Arc::clone(&platform);
         let cfg = Arc::clone(&config);
         // WSS protocol parse + serde_json on ESP can exceed 8KB stack in bursts.
-        // Keep a higher stack budget to avoid runtime pthread stack overflow.
+        // Keep 16KB stack to avoid runtime pthread stack overflow.
         spawn_planned("feishu_ws", 16384, move || {
             run_feishu_ws_loop(
                 id,
@@ -825,7 +825,7 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
                 let qq_pending = Arc::clone(&pending_retry_store);
                 let pf = Arc::clone(&platform);
                 let cfg = Arc::clone(&config);
-                // QQ WS path handles hello/dispatch JSON frames; 8KB stack is unsafe on ESP.
+                // QQ WS path handles hello/dispatch JSON frames; 16KB required (tested, 8KB caused reboot).
                 spawn_planned("qq_ws", 16384, move || {
                     beetle::run_qq_ws_loop(
                         qq_id,
@@ -849,7 +849,8 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
     if platform.create_http_client(config.as_ref()).is_ok() {
         let outbound_rx_for_dispatch = outbound_rx;
         let sinks_clone = Arc::clone(&sinks);
-        spawn_planned("dispatch", 8192, move || {
+        // Increased stack for QQ message handling (JSON serialization + HTTP can exceed 8KB).
+        spawn_planned("dispatch", 16384, move || {
             run_dispatch(outbound_rx_for_dispatch, sinks_clone)
         });
 

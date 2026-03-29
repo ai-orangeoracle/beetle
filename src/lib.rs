@@ -112,9 +112,10 @@ impl<T: platform::PlatformHttpClient> llm::LlmHttpClient for T {
         url: &str,
         headers: &[(&str, &str)],
         body: &[u8],
+        max_response_bytes: Option<usize>,
         on_chunk: &mut dyn FnMut(&[u8]) -> Result<()>,
     ) -> Result<u16> {
-        platform::PlatformHttpClient::post_streaming(self, url, headers, body, on_chunk)
+        platform::PlatformHttpClient::post_streaming(self, url, headers, body, max_response_bytes, on_chunk)
     }
     fn reset_connection_for_retry(&mut self) {
         platform::PlatformHttpClient::reset_connection_for_retry(self);
@@ -145,9 +146,10 @@ impl<T: platform::PlatformHttpClient> tools::ToolContext for T {
         url: &str,
         headers: &[(&str, &str)],
         body: &[u8],
+        max_response_bytes: Option<usize>,
         on_chunk: &mut dyn FnMut(&[u8]) -> Result<()>,
     ) -> Result<u16> {
-        platform::PlatformHttpClient::post_streaming(self, url, headers, body, on_chunk)
+        platform::PlatformHttpClient::post_streaming(self, url, headers, body, max_response_bytes, on_chunk)
     }
     fn patch_with_headers(
         &mut self,

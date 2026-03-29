@@ -24,7 +24,8 @@ const KEEPALIVE_INTERVAL_SECS: u64 = 10;
 const KEEPALIVE_COUNT: u16 = 3;
 /// close 超时 tick（FreeRTOS tick = 10ms, 200 ticks = 2s）。
 const CLOSE_TIMEOUT_TICKS: u32 = 200;
-const EVENT_BUF_POOL_MAX: usize = 32;
+/// 缓冲池容量：单通道场景（飞书或QQ二选一），4个缓冲区足够应对突发流量。
+const EVENT_BUF_POOL_MAX: usize = 4;
 static EVENT_BUF_POOL: OnceLock<Mutex<Vec<Vec<u8>>>> = OnceLock::new();
 
 fn take_event_buf(min_capacity: usize) -> Vec<u8> {

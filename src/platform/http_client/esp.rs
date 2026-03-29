@@ -301,13 +301,14 @@ impl EspHttpClient {
         self.do_request_with_body(Method::Patch, url, headers, body)
     }
 
-    /// SSE 流式 POST：发送请求后循环 read + 回调 on_chunk，不将完整响应体读入内存。
-    /// 每次 read 前喂看门狗；总读量超 budget 时截断。
+    /// 流式 POST：发送请求后循环 read + 回调 on_chunk，不将完整响应体读入内存。
+    /// 每次 read 前喂看门狗；`max_response_bytes` 为 None 时无限制（适用于边到达边消费的场景如 TTS）。
     pub fn do_post_streaming(
         &mut self,
         url: &str,
         headers: &[(&str, &str)],
         body: &[u8],
+        max_response_bytes: Option<usize>,
         on_chunk: &mut dyn FnMut(&[u8]) -> Result<()>,
     ) -> Result<u16> {
         self.check_proxy_and_watchdog()?;
@@ -331,7 +332,9 @@ impl EspHttpClient {
             })?;
             let status = response.status();
 
-            let max_len = crate::orchestrator::current_budget().response_body_max;
+            let max_len = max_response_bytes
+                .unwrap_or_else(|| crate::orchestrator::current_budget().response_body_max);
+            let enforce_limit = max_response_bytes.is_some();
             let mut total = 0usize;
             let mut buf = [0u8; RESPONSE_READ_CHUNK];
             loop {
@@ -340,7 +343,7 @@ impl EspHttpClient {
                     break;
                 }
                 total += n;
-                if total > max_len {
+                if enforce_limit && total > max_len {
                     log::warn!(
                         "[{}] streaming response truncated at {} bytes",
                         TAG,
@@ -503,9 +506,10 @@ impl crate::platform::PlatformHttpClient for EspHttpClient {
         url: &str,
         headers: &[(&str, &str)],
         body: &[u8],
+        max_response_bytes: Option<usize>,
         on_chunk: &mut dyn FnMut(&[u8]) -> Result<()>,
     ) -> Result<u16> {
-        EspHttpClient::do_post_streaming(self, url, headers, body, on_chunk)
+        EspHttpClient::do_post_streaming(self, url, headers, body, max_response_bytes, on_chunk)
     }
     fn patch(
         &mut self,

@@ -257,6 +257,7 @@ impl EspHttpClient {
         url: &str,
         headers: &[(&str, &str)],
         body: &[u8],
+        max_response_bytes: Option<usize>,
         on_chunk: &mut dyn FnMut(&[u8]) -> Result<()>,
     ) -> Result<u16> {
         let role = crate::orchestrator::permit::current_http_thread_role();
@@ -275,7 +276,9 @@ impl EspHttpClient {
             .map_err(|e| ureq_to_other(e, "http_post_request"))?;
         let status = resp.status();
         let mut reader = resp.into_reader();
-        let max_len = crate::orchestrator::current_budget().response_body_max;
+        let max_len = max_response_bytes
+            .unwrap_or_else(|| crate::orchestrator::current_budget().response_body_max);
+        let enforce_limit = max_response_bytes.is_some();
         let mut total = 0usize;
         let mut buf = [0u8; RESPONSE_READ_CHUNK];
         loop {
@@ -287,7 +290,7 @@ impl EspHttpClient {
                 break;
             }
             total += n;
-            if total > max_len {
+            if enforce_limit && total > max_len {
                 log::warn!(
                     "[{}] streaming response truncated at {} bytes",
                     TAG,
@@ -331,9 +334,10 @@ impl crate::platform::PlatformHttpClient for EspHttpClient {
         url: &str,
         headers: &[(&str, &str)],
         body: &[u8],
+        max_response_bytes: Option<usize>,
         on_chunk: &mut dyn FnMut(&[u8]) -> Result<()>,
     ) -> Result<u16> {
-        EspHttpClient::do_post_streaming(self, url, headers, body, on_chunk)
+        EspHttpClient::do_post_streaming(self, url, headers, body, max_response_bytes, on_chunk)
     }
 
     fn patch(

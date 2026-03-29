@@ -434,7 +434,12 @@ fn do_request_streaming(
     let mut progress_cb = on_progress;
 
     let status = http
-        .do_post_streaming(url, &headers, body, &mut |chunk| {
+        .do_post_streaming(
+            url,
+            &headers,
+            body,
+            Some(crate::orchestrator::current_budget().response_body_max),
+            &mut |chunk| {
             sse_reader.feed(chunk);
             while let Some(event) = sse_reader.next_event() {
                 let delta_text = accumulator.handle_event_value(&event.event, &event.data);
