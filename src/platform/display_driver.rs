@@ -39,6 +39,7 @@ mod esp_backend {
         height: u16,
         framebuf: *mut u8,
         framebuf_len: usize,
+        max_transfer_sz: usize,
     }
 
     // SAFETY: SpiDisplayBackend is only accessed from the display thread (behind Mutex).
@@ -60,6 +61,8 @@ mod esp_backend {
             let width = config.width;
             let height = config.height;
             let framebuf_len = width as usize * height as usize * 2;
+            // SPI DMA 分块传输：20 行 ≈ 9.6KB，避免 112KB 大缓冲区分配失败
+            let max_transfer_sz = (width as usize * 20 * 2).min(framebuf_len);
 
             let framebuf = heap::alloc_spiram_buffer(framebuf_len).ok_or_else(|| {
                 crate::error::Error::config(
@@ -151,7 +154,7 @@ mod esp_backend {
                 bus_cfg.data5_io_num = -1;
                 bus_cfg.data6_io_num = -1;
                 bus_cfg.data7_io_num = -1;
-                bus_cfg.max_transfer_sz = framebuf_len as i32;
+                bus_cfg.max_transfer_sz = max_transfer_sz as i32;
                 bus_cfg.flags = SPICOMMON_BUSFLAG_MASTER;
                 bus_cfg
             };
@@ -179,7 +182,7 @@ mod esp_backend {
                     },
                 },
                 data_io_default_level: false,
-                max_transfer_sz: framebuf_len as i32,
+                max_transfer_sz: max_transfer_sz as i32,
                 flags: SPICOMMON_BUSFLAG_MASTER,
                 isr_cpu_id: esp_intr_cpu_affinity_t_ESP_INTR_CPU_AFFINITY_AUTO,
                 intr_flags: 0,
@@ -225,6 +228,7 @@ mod esp_backend {
                 height,
                 framebuf,
                 framebuf_len,
+                max_transfer_sz,
             };
 
             // --- Send display init commands ---
@@ -403,8 +407,8 @@ mod esp_backend {
             let start = ry as usize * row_bytes;
             let end = start + rh as usize * row_bytes;
             let buf = unsafe { core::slice::from_raw_parts(self.framebuf, self.framebuf_len) };
-            const CHUNK_SIZE: usize = 32768;
-            for chunk in buf[start..end].chunks(CHUNK_SIZE) {
+            // 使用 max_transfer_sz 分块传输，避免超过 SPI DMA 缓冲区限制
+            for chunk in buf[start..end].chunks(self.max_transfer_sz) {
                 self.send_data(chunk)?;
             }
             Ok(())
