@@ -80,7 +80,6 @@ fn unix_to_iso(secs: u64) -> String {
 
 /// 计算 cron 表达式的下次触发时间。返回 (next_unix_secs, next_iso_string)。
 /// Compute next trigger time for a 5-field cron expression. Returns (unix_secs, iso_string).
-#[allow(dead_code)]
 pub(crate) fn next_cron_trigger(expr: &str, now_secs: u64) -> Result<(u64, String)> {
     let parts: Vec<&str> = expr.split_whitespace().collect();
     if parts.len() != 5 {

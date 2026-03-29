@@ -49,6 +49,7 @@ pub mod sessions;
 pub mod skills;
 pub mod soul;
 pub mod system_info;
+pub mod tools;
 pub mod user;
 pub mod webhook;
 pub mod wecom_webhook;

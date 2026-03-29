@@ -33,6 +33,40 @@ fn chat_id_from_uri(uri: &str) -> Option<String> {
     None
 }
 
+/// Extract pagination parameters from URI: page (default 1) and limit (default 20).
+#[inline(never)]
+fn pagination_from_uri(uri: &str) -> (usize, usize) {
+    let query = uri.find('?').map(|i| &uri[i + 1..]).unwrap_or("");
+    let mut page = 1;
+    let mut limit = 20;
+    for pair in query.split('&') {
+        let mut it = pair.splitn(2, '=');
+        if let Some(key) = it.next() {
+            if let Some(val) = it.next() {
+                if key.eq_ignore_ascii_case("page") {
+                    page = val.parse().unwrap_or(1);
+                } else if key.eq_ignore_ascii_case("limit") {
+                    limit = val.parse().unwrap_or(20);
+                }
+            }
+        }
+    }
+    (page, limit)
+}
+
+/// Extract format parameter from URI (e.g., ?format=prometheus).
+#[inline(never)]
+fn format_from_uri(uri: &str) -> Option<&str> {
+    let query = uri.find('?').map(|i| &uri[i + 1..]).unwrap_or("");
+    for pair in query.split('&') {
+        let mut it = pair.splitn(2, '=');
+        if it.next().is_some_and(|k| k.eq_ignore_ascii_case("format")) {
+            return it.next();
+        }
+    }
+    None
+}
+
 #[inline(never)]
 fn api_to_out(r: ApiResponse) -> OutgoingResponse {
     OutgoingResponse {
@@ -350,14 +384,26 @@ pub fn dispatch(
             if let Some(r) = auth::require_activated(store) {
                 return Ok(api_to_out(r));
             }
-            let body =
-                handlers::metrics::body(ctx).map_err(|e| err_other("http_router_dispatch", e))?;
-            Ok(OutgoingResponse::json(
-                200,
-                "OK",
-                CORS_HEADERS,
-                body.into_bytes(),
-            ))
+            let format = format_from_uri(uri);
+            if format == Some("prometheus") {
+                let body = handlers::metrics::body_prometheus(ctx)
+                    .map_err(|e| err_other("http_router_dispatch", e))?;
+                Ok(OutgoingResponse::json(
+                    200,
+                    "OK",
+                    CORS_AND_TEXT_PLAIN,
+                    body.into_bytes(),
+                ))
+            } else {
+                let body = handlers::metrics::body(ctx)
+                    .map_err(|e| err_other("http_router_dispatch", e))?;
+                Ok(OutgoingResponse::json(
+                    200,
+                    "OK",
+                    CORS_HEADERS,
+                    body.into_bytes(),
+                ))
+            }
         }
         ("GET", "/api/resource") => {
             if let Some(r) = auth::require_activated(store) {
@@ -365,6 +411,19 @@ pub fn dispatch(
             }
             let body =
                 handlers::resource::body(ctx).map_err(|e| err_other("http_router_dispatch", e))?;
+            Ok(OutgoingResponse::json(
+                200,
+                "OK",
+                CORS_HEADERS,
+                body.into_bytes(),
+            ))
+        }
+        ("GET", "/api/tools") => {
+            if let Some(r) = auth::require_activated(store) {
+                return Ok(api_to_out(r));
+            }
+            let body =
+                handlers::tools::body(ctx).map_err(|e| err_other("http_router_dispatch", e))?;
             Ok(OutgoingResponse::json(
                 200,
                 "OK",
@@ -437,7 +496,10 @@ pub fn dispatch(
             let chat_id = common::name_from_uri(uri).or_else(|| chat_id_from_uri(uri));
             let result = match chat_id {
                 Some(id) => handlers::sessions::detail(ctx, &id),
-                None => handlers::sessions::body(ctx),
+                None => {
+                    let (page, limit) = pagination_from_uri(uri);
+                    handlers::sessions::body(ctx, page, limit)
+                }
             };
             match result {
                 Ok(body) => Ok(OutgoingResponse::json(

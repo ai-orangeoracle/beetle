@@ -28,6 +28,9 @@ pub mod tools;
 #[cfg(feature = "cli")]
 pub mod cli;
 
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+pub mod commands;
+
 #[cfg(all(feature = "ota", any(target_arch = "xtensa", target_arch = "riscv32")))]
 pub mod ota;
 

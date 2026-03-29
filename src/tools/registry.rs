@@ -117,6 +117,7 @@ pub fn build_default_registry(
 ) -> ToolRegistry {
     let mut registry = ToolRegistry::new();
     registry.register(Box::new(super::GetTimeTool));
+    registry.register(Box::new(super::EnvTool::new()));
     registry.register(Box::new(super::FilesTool::new(platform.state_fs())));
     #[cfg(feature = "tools_network_extra")]
     registry.register(Box::new(super::WebSearchTool::new(config)));
@@ -221,5 +222,11 @@ pub fn build_default_registry(
             }
         }
     }
+    #[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+    registry.register(Box::new(super::ShellTool::new()));
+    #[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+    registry.register(Box::new(super::ProcessTool::new()));
+    #[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+    registry.register(Box::new(super::NetworkTool::new()));
     registry
 }

@@ -42,14 +42,15 @@ fn collect_esp() -> String {
     let uptime_secs = crate::platform::time::uptime_secs();
     let idf_version = option_env!("IDF_VERSION").unwrap_or("unknown");
     let wifi_sta_connected = crate::platform::is_wifi_sta_connected();
-    let spiffs = crate::platform::spiffs_usage().map(|(total, used)| {
+    let (spiffs, spiffs_usage_pct) = crate::platform::spiffs_usage().map(|(total, used)| {
         let free = total.saturating_sub(used);
-        json!({
+        let pct = if total > 0 { (used as f32 / total as f32) * 100.0 } else { 0.0 };
+        (json!({
             "total_bytes": total,
             "used_bytes": used,
             "free_bytes": free,
-        })
-    });
+        }), pct)
+    }).unwrap_or((serde_json::Value::Null, 0.0));
 
     let out = json!({
         "platform": "esp32",
@@ -68,6 +69,7 @@ fn collect_esp() -> String {
         "hint": snap.budget.llm_hint,
         "wifi_sta_connected": wifi_sta_connected,
         "spiffs": spiffs,
+        "spiffs_usage_percent": spiffs_usage_pct,
     });
     out.to_string()
 }
@@ -351,6 +353,71 @@ fn parse_proc_cpu_model() -> String {
     linux_device_tree_model()
 }
 
+#[cfg(target_os = "linux")]
+fn linux_load_avg() -> (f32, f32, f32, u32) {
+    let s = std::fs::read_to_string("/proc/loadavg").unwrap_or_default();
+    let parts: Vec<&str> = s.split_whitespace().collect();
+    let load1 = parts.first().and_then(|s| s.parse::<f32>().ok()).unwrap_or(0.0);
+    let load5 = parts.get(1).and_then(|s| s.parse::<f32>().ok()).unwrap_or(0.0);
+    let load15 = parts.get(2).and_then(|s| s.parse::<f32>().ok()).unwrap_or(0.0);
+    let procs = parts.get(3).and_then(|s| {
+        s.split('/').nth(1).and_then(|n| n.parse::<u32>().ok())
+    }).unwrap_or(0);
+    (load1, load5, load15, procs)
+}
+
+#[cfg(target_os = "linux")]
+fn linux_cpu_usage() -> f32 {
+    let s = std::fs::read_to_string("/proc/stat").unwrap_or_default();
+    for line in s.lines() {
+        if line.starts_with("cpu ") {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() < 5 { break; }
+            let user = parts[1].parse::<u64>().unwrap_or(0);
+            let nice = parts[2].parse::<u64>().unwrap_or(0);
+            let system = parts[3].parse::<u64>().unwrap_or(0);
+            let idle = parts[4].parse::<u64>().unwrap_or(0);
+            let total = user + nice + system + idle;
+            if total > 0 {
+                return ((total - idle) as f32 / total as f32) * 100.0;
+            }
+            break;
+        }
+    }
+    0.0
+}
+
+#[cfg(target_os = "linux")]
+fn linux_thermal_temp() -> Option<f32> {
+    for i in 0..10 {
+        let path = format!("/sys/class/thermal/thermal_zone{}/temp", i);
+        if let Ok(s) = std::fs::read_to_string(&path) {
+            if let Ok(millidegrees) = s.trim().parse::<i32>() {
+                return Some(millidegrees as f32 / 1000.0);
+            }
+        }
+    }
+    None
+}
+
+#[cfg(target_os = "linux")]
+fn linux_network_interfaces() -> Vec<serde_json::Value> {
+    let mut ifaces = Vec::new();
+    if let Ok(entries) = std::fs::read_dir("/sys/class/net") {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name == "lo" { continue; }
+            let addr = std::fs::read_to_string(format!("/sys/class/net/{}/address", name))
+                .ok().map(|s| s.trim().to_string()).unwrap_or_default();
+            ifaces.push(json!({
+                "name": name,
+                "mac": addr,
+            }));
+        }
+    }
+    ifaces
+}
+
 #[cfg(all(
     not(any(target_arch = "xtensa", target_arch = "riscv32")),
     target_os = "linux"
@@ -397,6 +464,21 @@ fn linux_host_payload(
     let state_root = crate::platform::state_mount_path();
     let storage = disk_storage_json(&state_root);
 
+    let (load1, load5, load15, proc_count) = linux_load_avg();
+    let cpu_usage = linux_cpu_usage();
+    let temp = linux_thermal_temp();
+    let ifaces = linux_network_interfaces();
+
+    let mem_usage_pct = if mem_total_bytes > 0 {
+        ((mem_total_bytes - mem_available_bytes) as f32 / mem_total_bytes as f32) * 100.0
+    } else { 0.0 };
+
+    let storage_usage_pct = if let Some(obj) = storage.as_object() {
+        let total = obj.get("total_bytes").and_then(|v| v.as_u64()).unwrap_or(0);
+        let used = obj.get("used_bytes").and_then(|v| v.as_u64()).unwrap_or(0);
+        if total > 0 { (used as f32 / total as f32) * 100.0 } else { 0.0 }
+    } else { 0.0 };
+
     json!({
         "platform": "linux",
         "uptime_secs": uptime_secs,
@@ -404,6 +486,7 @@ fn linux_host_payload(
         "hint": snap.budget.llm_hint,
         "wifi_sta_connected": wifi_sta_connected,
         "storage": storage,
+        "storage_usage_percent": storage_usage_pct,
         "arch": std::env::consts::ARCH,
         "hostname": hostname,
         "os": os_line,
@@ -412,8 +495,16 @@ fn linux_host_payload(
         "kernel_release": kernel_release,
         "cpu_model": cpu_model,
         "cpu_cores": cpu_cores,
+        "cpu_usage_percent": cpu_usage,
+        "load_avg_1": load1,
+        "load_avg_5": load5,
+        "load_avg_15": load15,
+        "process_count": proc_count,
         "mem_total_bytes": mem_total_bytes,
         "mem_available_bytes": mem_available_bytes,
+        "mem_usage_percent": mem_usage_pct,
+        "temperature_celsius": temp,
+        "network_interfaces": ifaces,
     })
 }
 

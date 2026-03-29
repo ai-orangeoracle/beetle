@@ -156,6 +156,15 @@ pub struct ResourceSnapshot {
     pub audio_recording: bool,
     /// 喇叭是否正在播放。
     pub audio_playing: bool,
+    /// Linux 特有：CPU 使用率（百分比）
+    #[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+    pub cpu_usage_percent: f32,
+    /// Linux 特有：系统负载（1/5/15分钟）
+    #[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+    pub load_average: (f32, f32, f32),
+    /// Linux 特有：进程内存使用（KB）
+    #[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+    pub process_memory_kb: u32,
 }
 
 impl ResourceSnapshot {
@@ -194,6 +203,48 @@ impl ResourceSnapshot {
             storage_total_kb: state.storage_total_kb.load(Ordering::Relaxed),
             audio_recording: state.audio_recording.load(Ordering::Relaxed) != 0,
             audio_playing: state.audio_playing.load(Ordering::Relaxed) != 0,
+            #[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+            cpu_usage_percent: get_cpu_usage(),
+            #[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+            load_average: get_load_average(),
+            #[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+            process_memory_kb: get_process_memory_kb(),
         }
     }
+}
+
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+fn get_cpu_usage() -> f32 {
+    // 简化实现：返回0，后续可以通过读取 /proc/stat 实现
+    0.0
+}
+
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+fn get_load_average() -> (f32, f32, f32) {
+    use std::fs;
+    if let Ok(content) = fs::read_to_string("/proc/loadavg") {
+        let parts: Vec<&str> = content.split_whitespace().collect();
+        if parts.len() >= 3 {
+            let load1 = parts[0].parse::<f32>().unwrap_or(0.0);
+            let load5 = parts[1].parse::<f32>().unwrap_or(0.0);
+            let load15 = parts[2].parse::<f32>().unwrap_or(0.0);
+            return (load1, load5, load15);
+        }
+    }
+    (0.0, 0.0, 0.0)
+}
+
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+fn get_process_memory_kb() -> u32 {
+    use std::fs;
+    if let Ok(content) = fs::read_to_string("/proc/self/status") {
+        for line in content.lines() {
+            if line.starts_with("VmRSS:") {
+                if let Some(kb_str) = line.split_whitespace().nth(1) {
+                    return kb_str.parse::<u32>().unwrap_or(0);
+                }
+            }
+        }
+    }
+    0
 }

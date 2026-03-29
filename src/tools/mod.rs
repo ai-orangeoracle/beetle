@@ -8,6 +8,7 @@ pub mod analyze_image;
 pub mod board_info;
 pub mod cron;
 pub mod cron_manage;
+pub mod env;
 pub mod file_write;
 pub mod files;
 pub mod get_time;
@@ -40,11 +41,18 @@ pub mod voice_input;
 pub mod voice_output;
 #[cfg(feature = "tools_network_extra")]
 pub mod web_search;
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+pub mod shell;
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+pub mod process;
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+pub mod network;
 
 #[cfg(feature = "tools_network_extra")]
 pub use analyze_image::AnalyzeImageTool;
 pub use board_info::BoardInfoTool;
 pub use cron_manage::CronManageTool;
+pub use env::EnvTool;
 pub use file_write::FileWriteTool;
 pub use files::FilesTool;
 pub use get_time::GetTimeTool;
@@ -77,6 +85,12 @@ pub use voice_input::VoiceInputTool;
 pub use voice_output::VoiceOutputTool;
 #[cfg(feature = "tools_network_extra")]
 pub use web_search::WebSearchTool;
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+pub use shell::ShellTool;
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+pub use process::ProcessTool;
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+pub use network::NetworkTool;
 
 use crate::error::{Error, Result};
 use serde_json::{Map, Value};

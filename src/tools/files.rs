@@ -11,6 +11,16 @@ const MAX_LIST_ENTRIES: usize = 256;
 /// read 模式下单文件原始字节上限（UTF-8 校验前），避免超大 Vec。
 const MAX_READ_RAW_BYTES: usize = MAX_TOOL_RESULT_LEN * 2;
 
+/// 受保护路径黑名单：禁止通过工具删除的关键文件。
+const PROTECTED_PATHS: &[&str] = &[
+    "config/llm.json",
+    "config/channels.json",
+    "config/wifi.json",
+    "config/SOUL.md",
+    "config/USER.md",
+    "memory/MEMORY.md",
+];
+
 pub struct FilesTool {
     state_fs: Arc<dyn crate::StateFs + Send + Sync>,
 }
@@ -26,14 +36,14 @@ impl Tool for FilesTool {
         "files"
     }
     fn description(&self) -> &'static str {
-        "List or read files from storage (SPIFFS). Args: path (string), mode (optional: 'list' or 'read', default 'read'). Read returns content truncated to limit; list returns entry names, max 256."
+        "List, read, or delete files from storage (SPIFFS). Args: path (string), mode (optional: 'list', 'read', or 'delete', default 'read'). Read returns content truncated to limit; list returns entry names, max 256; delete removes the file."
     }
     fn schema(&self) -> serde_json::Value {
         json!({
             "type": "object",
             "properties": {
                 "path": { "type": "string", "description": "Path under storage root, e.g. skills/foo.md" },
-                "mode": { "type": "string", "description": "list or read (default read)" }
+                "mode": { "type": "string", "description": "list, read, or delete (default read)" }
             },
             "required": ["path"]
         })
@@ -67,8 +77,22 @@ impl Tool for FilesTool {
                 .map_err(|e| Error::config("tool_files", e.to_string()));
         }
 
+        if mode == "delete" {
+            if PROTECTED_PATHS.contains(&rel.as_str()) {
+                return Err(Error::config("tool_files", "cannot delete protected file"));
+            }
+            self.state_fs.remove(&rel)?;
+            let out = json!({
+                "mode": "delete",
+                "path": path_arg,
+                "success": true
+            });
+            return serde_json::to_string(&out)
+                .map_err(|e| Error::config("tool_files", e.to_string()));
+        }
+
         if mode != "read" {
-            return Err(Error::config("tool_files", "mode must be 'list' or 'read'"));
+            return Err(Error::config("tool_files", "mode must be 'list', 'read', or 'delete'"));
         }
 
         match self.state_fs.read(&rel)? {

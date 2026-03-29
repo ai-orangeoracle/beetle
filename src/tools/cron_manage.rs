@@ -126,16 +126,25 @@ impl Tool for CronManageTool {
             }
             "list" => {
                 let tasks = self.load_tasks()?;
+                let now = crate::util::current_unix_secs();
                 let task_list: Vec<serde_json::Value> = tasks
                     .iter()
                     .map(|t| {
+                        let next_trigger = if t.enabled {
+                            crate::tools::cron::next_cron_trigger(&t.expr, now)
+                                .ok()
+                                .map(|(secs, iso)| json!({"unix_secs": secs, "iso": iso}))
+                        } else {
+                            None
+                        };
                         json!({
                             "id": t.id,
                             "expr": t.expr,
                             "action": t.action,
                             "channel": t.channel,
                             "chat_id": t.chat_id,
-                            "enabled": t.enabled
+                            "enabled": t.enabled,
+                            "next_trigger": next_trigger
                         })
                     })
                     .collect();

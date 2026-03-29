@@ -52,6 +52,8 @@ esp-idf-svc = "0.52.1"
 [target.'cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))'.dependencies]
 libc = "0.2"
 env_logger = "0.11"
+# CLI 系统（仅 Linux）
+clap = { version = "4.5", features = ["derive", "cargo"] }
 # Step 7.2：Linux 配置 API（同步 HTTP，无 tokio）
 tiny_http = "0.12"
 ureq = { version = "2.12", default-features = false, features = ["tls", "gzip", "socks-proxy"] }
@@ -61,7 +63,7 @@ tungstenite = { version = "0.24", default-features = false, features = ["handsha
 # Linux embedded WiFi：rtnetlink 控制面（仅 target_os=linux 编译进图）
 [target.'cfg(target_os = "linux")'.dependencies]
 rtnetlink = "0.20"
-tokio = { version = "1", features = ["rt", "macros", "net", "time"] }
+tokio = { version = "1", default-features = false, features = ["rt", "macros", "net", "time", "sync"] }
 futures = "0.3"
 
 [features]

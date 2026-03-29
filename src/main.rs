@@ -8,11 +8,11 @@ use beetle::constants::SOFTAP_DEFAULT_IPV4;
 use beetle::memory::{MemoryStore, SessionStore};
 #[cfg(feature = "feishu")]
 use beetle::run_feishu_ws_loop;
+use beetle::runtime::{execute_stream_http_op, spawn_planned, thread_plan};
 #[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
 use beetle::LinuxPlatform;
 use beetle::Platform;
 use beetle::PlatformHttpClient;
-use beetle::runtime::{execute_stream_http_op, spawn_planned, thread_plan};
 use beetle::{
     parse_allowed_chat_ids, run_dispatch, run_system_agent_loop, run_user_agent_loop,
     send_chat_action, AppConfig, MessageBus, DEFAULT_CAPACITY,
@@ -21,6 +21,8 @@ use beetle::{
 use beetle::{
     DisplayChannelStatus, DisplayCommand, DisplayPressureLevel, DisplaySystemState, Esp32Platform,
 };
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+use clap::Parser;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -91,9 +93,11 @@ struct TelegramStreamEditor {
 
 impl beetle::StreamEditor for TelegramStreamEditor {
     fn send_initial(&self, chat_id: &str, content: &str) -> beetle::Result<Option<String>> {
-        execute_stream_http_op(self.create_http.as_ref(), "tg_stream_send_initial", |http| {
-            beetle::tg_send_and_get_id(http, &self.token, chat_id, content)
-        })
+        execute_stream_http_op(
+            self.create_http.as_ref(),
+            "tg_stream_send_initial",
+            |http| beetle::tg_send_and_get_id(http, &self.token, chat_id, content),
+        )
     }
     fn edit(&self, chat_id: &str, message_id: &str, content: &str) -> beetle::Result<()> {
         execute_stream_http_op(self.create_http.as_ref(), "tg_stream_edit", |http| {
@@ -144,14 +148,18 @@ impl FeishuStreamEditor {
 impl beetle::StreamEditor for FeishuStreamEditor {
     fn send_initial(&self, chat_id: &str, content: &str) -> beetle::Result<Option<String>> {
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
-        execute_stream_http_op(self.create_http.as_ref(), "feishu_stream_send_initial", |http| {
-            let token = self.ensure_token(&mut state, http)?;
-            let r = beetle::feishu_send_and_get_id(http, &token, chat_id, content);
-            if r.is_err() {
-                state.token = None;
-            }
-            r
-        })
+        execute_stream_http_op(
+            self.create_http.as_ref(),
+            "feishu_stream_send_initial",
+            |http| {
+                let token = self.ensure_token(&mut state, http)?;
+                let r = beetle::feishu_send_and_get_id(http, &token, chat_id, content);
+                if r.is_err() {
+                    state.token = None;
+                }
+                r
+            },
+        )
     }
 
     fn edit(&self, _chat_id: &str, message_id: &str, content: &str) -> beetle::Result<()> {
@@ -192,23 +200,121 @@ fn compute_refresh_secs(
 }
 
 #[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+fn handle_config_command(platform: &Arc<dyn Platform>, action: beetle::commands::ConfigAction) {
+    use beetle::commands::ConfigAction;
+    let config_store = platform.config_store();
+
+    match action {
+        ConfigAction::Get { key } => match config_store.read_string(&key) {
+            Ok(Some(value)) => println!("{}", value),
+            Ok(None) => {
+                eprintln!("Config key '{}' not found", key);
+                std::process::exit(1);
+            }
+            Err(e) => {
+                eprintln!("Error reading config key '{}': {}", key, e);
+                std::process::exit(1);
+            }
+        },
+        ConfigAction::Set { key, value } => match config_store.write_string(&key, &value) {
+            Ok(_) => println!("Config '{}' set successfully", key),
+            Err(e) => {
+                eprintln!("Error writing config key '{}': {}", key, e);
+                std::process::exit(1);
+            }
+        },
+        ConfigAction::List => {
+            eprintln!("Config list not yet implemented");
+            std::process::exit(1);
+        }
+    }
+}
+
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+fn handle_status_command(platform: &Arc<dyn Platform>, json: bool) {
+    let (config, _) = beetle::bootstrap::bootstrap_config_and_wifi(platform);
+
+    if json {
+        println!("{{");
+        println!("  \"version\": \"{}\",", VERSION);
+        println!("  \"enabled_channel\": \"{}\"", config.enabled_channel);
+        println!("}}");
+    } else {
+        println!("beetle v{}", VERSION);
+        println!("Enabled channel: {}", config.enabled_channel);
+    }
+}
+
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
+fn handle_doctor_command(platform: &Arc<dyn Platform>) {
+    println!("Running beetle diagnostics...\n");
+
+    println!("✓ Platform initialized");
+
+    let (config, wifi_ok) = beetle::bootstrap::bootstrap_config_and_wifi(platform);
+    if wifi_ok {
+        println!("✓ WiFi configuration loaded");
+    } else {
+        println!("⚠ WiFi configuration not available");
+    }
+
+    println!("✓ Config loaded (channel: {})", config.enabled_channel);
+
+    let memory_store = platform.memory_store();
+    if memory_store.get_memory().is_ok() || memory_store.get_soul().is_ok() {
+        println!("✓ Memory store accessible");
+    } else {
+        println!("⚠ Memory store not accessible");
+    }
+
+    println!("\nDiagnostics complete.");
+}
+
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
 fn main() {
+    use beetle::commands::{Cli, Commands};
+
+    let cli = Cli::parse();
+
     if env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
         .try_init()
         .is_err()
     {
         eprintln!("[beetle] env_logger init failed (logging may be incomplete)");
     }
+
     let platform: Arc<dyn Platform> = Arc::new(LinuxPlatform::new());
     if let Err(e) = platform.init() {
         eprintln!("[{}] platform init failed: {}", TAG, e);
         std::process::exit(1);
     }
-    log::info!("========================================");
-    log::info!("  甲壳虫 beetle v{}", VERSION);
-    log::info!("========================================");
-    let (config, wifi_init_ok) = beetle::bootstrap::bootstrap_config_and_wifi(&platform);
-    run_app(platform, config, wifi_init_ok);
+
+    match cli.command {
+        Commands::Run {
+            config: config_path,
+        } => {
+            log::info!("========================================");
+            log::info!("  甲壳虫 beetle v{}", VERSION);
+            log::info!("========================================");
+            if let Some(path) = config_path {
+                log::info!("[{}] using config file: {}", TAG, path);
+            }
+            let (config, wifi_init_ok) = beetle::bootstrap::bootstrap_config_and_wifi(&platform);
+            run_app(platform, config, wifi_init_ok);
+        }
+        Commands::Config { action } => {
+            handle_config_command(&platform, action);
+        }
+        Commands::Status { json } => {
+            handle_status_command(&platform, json);
+        }
+        Commands::Doctor => {
+            handle_doctor_command(&platform);
+        }
+        Commands::Version => {
+            println!("beetle v{}", VERSION);
+        }
+    }
 }
 
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
@@ -826,8 +932,9 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
             if config.llm_stream {
                 let pf = Arc::clone(&platform);
                 let cfg = Arc::clone(&config);
-                let make_http: Arc<dyn Fn() -> beetle::Result<Box<dyn beetle::PlatformHttpClient>> + Send + Sync> =
-                    Arc::new(move || pf.create_http_client(cfg.as_ref()));
+                let make_http: Arc<
+                    dyn Fn() -> beetle::Result<Box<dyn beetle::PlatformHttpClient>> + Send + Sync,
+                > = Arc::new(move || pf.create_http_client(cfg.as_ref()));
                 match config.enabled_channel.as_str() {
                     "telegram" if !config.tg_token.trim().is_empty() => {
                         Some(Arc::new(TelegramStreamEditor {

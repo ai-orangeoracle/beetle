@@ -592,6 +592,25 @@ pub(super) fn register_all_esp_routes(
 
     esp_route!(
         server,
+        "/api/tools",
+        Get,
+        ctx,
+        env,
+        config_store,
+        EspBodyMode::None
+    );
+    esp_route!(
+        server,
+        "/api/tools",
+        Options,
+        ctx,
+        env,
+        config_store,
+        EspBodyMode::None
+    );
+
+    esp_route!(
+        server,
         "/api/csrf_token",
         Get,
         ctx,
