@@ -85,7 +85,7 @@ tools_network_extra = []
 thread_panic_catch = []
 
 [profile.release]
-opt-level = 3
+opt-level = 2
 lto = true
 debug = false
 strip = true

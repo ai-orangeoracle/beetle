@@ -103,7 +103,7 @@ pub const MAX_CONCURRENT_HTTP: usize = 16;
 
 /// 压力判级（ESP32）：Normal 阈值的 internal 空闲下限（字节）。
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
-pub const PRESSURE_NORMAL_INTERNAL_MIN_BYTES: usize = 65 * 1024;
+pub const PRESSURE_NORMAL_INTERNAL_MIN_BYTES: usize = 60 * 1024;
 /// 压力判级（Linux）：Normal 阈值的可用内存下限（字节）。64MB 以下视为紧张。
 #[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
 pub const PRESSURE_NORMAL_INTERNAL_MIN_BYTES: usize = 64 * 1024 * 1024;
