@@ -373,33 +373,24 @@ export function DevicePage() {
                       value={systemInfo.lan_ip?.trim() ? systemInfo.lan_ip : "—"}
                       valueNoWrap
                     />
-                    <Box
-                      sx={{
-                        display: "grid",
-                        gridTemplateColumns: "repeat(2, 1fr)",
-                        gap: 1.5,
-                      }}
-                    >
-                      <Row label={t("device.deviceInfoFirmware")} value={systemInfo.firmware_version} />
-                      <Row label={t("device.deviceInfoStatus")} value={systemInfo.system_status} />
-                      {systemInfo.locale != null && (
-                        <Row label={t("device.deviceInfoLocale")} value={systemInfo.locale} />
-                      )}
-                      {systemInfo.ota_available != null && (
-                        <Row
-                          label={t("device.deviceInfoOtaAvailable")}
-                          value={systemInfo.ota_available ? t("common.yes") : t("common.no")}
-                        />
-                      )}
-                      {systemInfo.current_time && (
-                        <Row
-                          wide
-                          label={t("device.deviceInfoCurrentTime")}
-                          value={systemInfo.current_time}
-                          valueNoWrap
-                        />
-                      )}
-                    </Box>
+                    <Row label={t("device.deviceInfoFirmware")} value={systemInfo.firmware_version} />
+                    <Row label={t("device.deviceInfoStatus")} value={systemInfo.system_status} />
+                    {systemInfo.locale != null && (
+                      <Row label={t("device.deviceInfoLocale")} value={systemInfo.locale} />
+                    )}
+                    {systemInfo.ota_available != null && (
+                      <Row
+                        label={t("device.deviceInfoOtaAvailable")}
+                        value={systemInfo.ota_available ? t("common.yes") : t("common.no")}
+                      />
+                    )}
+                    {systemInfo.current_time && (
+                      <Row
+                        label={t("device.deviceInfoCurrentTime")}
+                        value={systemInfo.current_time}
+                        valueNoWrap
+                      />
+                    )}
                   </Box>
                 )}
               </Box>
@@ -458,23 +449,19 @@ function Row({
   label,
   value,
   valueColor = "var(--text-primary)",
-  wide,
   breakWords,
   valueNoWrap,
 }: {
   label: string;
   value: string;
   valueColor?: string;
-  /** 占满两列（与 `gridTemplateColumns: repeat(2, 1fr)` 父级配合）。 */
-  wide?: boolean;
   breakWords?: boolean;
-  /** 时间等短串：整段不换行（需配合 `wide` 保证有足够横向空间）。 */
+  /** 时间等短串：整段不换行；过长时横向滚动。 */
   valueNoWrap?: boolean;
 }) {
   return (
     <Box
       sx={{
-        gridColumn: wide ? "1 / -1" : undefined,
         display: "flex",
         flexWrap: valueNoWrap ? "nowrap" : "wrap",
         gap: 0.5,

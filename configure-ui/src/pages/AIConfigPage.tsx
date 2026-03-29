@@ -51,6 +51,19 @@ const DEFAULT_PROVIDER: (typeof LLM_PROVIDER_VALUES)[number] = "openai_compatibl
 
 type LlmProviderValue = (typeof LLM_PROVIDER_VALUES)[number];
 
+/** 与 `LLM_PROVIDER_VALUES` 顺序无关；下拉项与文案一一对应，避免只改数组忘改 MenuItem。 */
+const LLM_PROVIDER_LABEL_KEY: Record<LlmProviderValue, string> = {
+  anthropic: "config.providerAnthropic",
+  openai: "config.providerOpenai",
+  openai_compatible: "config.providerOpenaiCompatible",
+  gemini: "config.providerGemini",
+  glm: "config.providerGlm",
+  qwen: "config.providerQwen",
+  deepseek: "config.providerDeepseek",
+  moonshot: "config.providerMoonshot",
+  ollama: "config.providerOllama",
+};
+
 function normalizeProvider(provider: string): LlmProviderValue {
   return (LLM_PROVIDER_VALUES as readonly string[]).includes(provider)
     ? (provider as LlmProviderValue)
@@ -64,6 +77,52 @@ function toSourceRows(sources: LlmSource[]): SourceFormRow[] {
     ...s,
     provider: normalizeProvider(s.provider),
   }));
+}
+
+const LLM_SOURCE_LABEL_MAX_MODEL = 40;
+const LLM_SOURCE_LABEL_MAX_HOST = 28;
+
+function hostFromApiUrl(url: string): string {
+  const u = url.trim();
+  if (!u) return "";
+  try {
+    const parsed = new URL(u);
+    return parsed.host || u.slice(0, LLM_SOURCE_LABEL_MAX_HOST);
+  } catch {
+    return u.slice(0, LLM_SOURCE_LABEL_MAX_HOST);
+  }
+}
+
+function truncateMiddle(s: string, max: number): string {
+  if (s.length <= max) return s;
+  if (max <= 3) return "…";
+  const head = Math.ceil((max - 1) / 2);
+  const tail = max - 1 - head;
+  return `${s.slice(0, head)}…${s.slice(s.length - tail)}`;
+}
+
+/** 主用/备用下拉里区分「同 provider、不同模型/端点」的源。 */
+function formatLlmSourceSelectLabel(
+  index: number,
+  row: SourceFormRow,
+  t: (key: string) => string,
+): string {
+  const raw = row.provider.trim();
+  const provDisplay =
+    (LLM_PROVIDER_VALUES as readonly string[]).includes(raw)
+      ? t(LLM_PROVIDER_LABEL_KEY[raw as LlmProviderValue])
+      : raw || t("config.llmSource");
+  const model = row.model.trim();
+  const host = hostFromApiUrl(row.api_url);
+  let detail: string;
+  if (model) {
+    detail = truncateMiddle(model, LLM_SOURCE_LABEL_MAX_MODEL);
+  } else if (host) {
+    detail = truncateMiddle(host, LLM_SOURCE_LABEL_MAX_HOST);
+  } else {
+    detail = t("config.llmOptionNoModel");
+  }
+  return `#${index} · ${provDisplay} · ${detail}`;
 }
 
 function validateSources(
@@ -324,11 +383,11 @@ export function AIConfigPage() {
                       updateSource(i, "provider", e.target.value)
                     }
                   >
-                    <MenuItem value="anthropic">{t("config.providerAnthropic")}</MenuItem>
-                    <MenuItem value="openai">{t("config.providerOpenai")}</MenuItem>
-                    <MenuItem value="openai_compatible">
-                      {t("config.providerOpenaiCompatible")}
-                    </MenuItem>
+                    {LLM_PROVIDER_VALUES.map((p) => (
+                      <MenuItem key={p} value={p}>
+                        {t(LLM_PROVIDER_LABEL_KEY[p])}
+                      </MenuItem>
+                    ))}
                   </Select>
                 </FormControl>
                 <TextField
@@ -411,7 +470,7 @@ export function AIConfigPage() {
                 <option value="">{t("config.llmIndexNone")}</option>
                 {sources.map((s, idx) => (
                   <option key={idx} value={idx}>
-                    {idx}: {s.provider.trim() || t("config.llmSource")}
+                    {formatLlmSourceSelectLabel(idx, s, t)}
                   </option>
                 ))}
               </TextField>
@@ -437,7 +496,7 @@ export function AIConfigPage() {
                 <option value="">{t("config.llmIndexNone")}</option>
                 {sources.map((s, idx) => (
                   <option key={idx} value={idx}>
-                    {idx}: {s.provider.trim() || t("config.llmSource")}
+                    {formatLlmSourceSelectLabel(idx, s, t)}
                   </option>
                 ))}
               </TextField>
