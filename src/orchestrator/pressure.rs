@@ -92,6 +92,7 @@ pub fn budget_for_level(level: PressureLevel) -> ResourceBudget {
 pub fn compute_pressure(state: &OrchestratorState) -> PressureLevel {
     let internal = state.heap_free_internal.load(Ordering::Relaxed) as usize;
     let spiram = state.heap_free_spiram.load(Ordering::Relaxed) as usize;
+    let baseline = state.heap_baseline_internal.load(Ordering::Relaxed) as usize;
     let active_http = state.active_http_count.load(Ordering::Relaxed);
     let queue_total =
         state.inbound_depth.load(Ordering::Relaxed) + state.outbound_depth.load(Ordering::Relaxed);
@@ -110,8 +111,14 @@ pub fn compute_pressure(state: &OrchestratorState) -> PressureLevel {
         return PressureLevel::Critical;
     }
 
-    // Cautious: 堆不足 Normal 阈值
-    if internal < PRESSURE_NORMAL_INTERNAL_MIN_BYTES
+    // Cautious: 结合相对使用率与绝对阈值判断
+    // 只有当使用率 > 85% 且绝对空闲 < 60KB 时才触发 Cautious，避免误判正常运行状态
+    let usage_percent = if baseline > 0 && internal < baseline {
+        ((baseline - internal) * 100) / baseline
+    } else {
+        0
+    };
+    if (usage_percent > 85 && internal < PRESSURE_NORMAL_INTERNAL_MIN_BYTES)
         || (spiram > 0 && spiram < PRESSURE_NORMAL_PSRAM_MIN_BYTES)
     {
         return PressureLevel::Cautious;

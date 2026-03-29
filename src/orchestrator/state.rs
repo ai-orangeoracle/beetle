@@ -39,6 +39,9 @@ pub struct OrchestratorState {
     pub heap_free_internal: AtomicU32,
     pub heap_free_spiram: AtomicU32,
     pub heap_largest_block: AtomicU32,
+    /// internal 堆基线（首次 update_heap 时设置，用于相对使用率计算）。
+    /// Internal heap baseline (set on first update_heap, used for relative usage calculation).
+    pub heap_baseline_internal: AtomicU32,
 
     // 连接计数（permit acquire/release 时增减）
     pub active_http_count: AtomicU32,
@@ -83,6 +86,7 @@ impl OrchestratorState {
             heap_free_internal: AtomicU32::new(u32::MAX),
             heap_free_spiram: AtomicU32::new(0),
             heap_largest_block: AtomicU32::new(u32::MAX),
+            heap_baseline_internal: AtomicU32::new(0),
             active_http_count: AtomicU32::new(0),
             active_agent_tasks: AtomicU32::new(0),
             pressure_level: AtomicU8::new(0), // PressureLevel::Normal
@@ -104,7 +108,14 @@ impl OrchestratorState {
     }
 
     /// 更新堆状态（由 heartbeat / update_heap_state 调用）。
+    /// 首次调用时设置 baseline，后续若空闲增加则更新 baseline（避免负使用率）。
     pub fn update_heap(&self, internal: u32, spiram: u32, largest_block: u32) {
+        let baseline = self.heap_baseline_internal.load(Ordering::Relaxed);
+        if baseline == 0 {
+            self.heap_baseline_internal.store(internal, Ordering::Relaxed);
+        } else if internal > baseline {
+            self.heap_baseline_internal.store(internal, Ordering::Relaxed);
+        }
         self.heap_free_internal.store(internal, Ordering::Relaxed);
         self.heap_free_spiram.store(spiram, Ordering::Relaxed);
         self.heap_largest_block
