@@ -169,13 +169,14 @@ impl<'a> WebSocketEventType<'a> {
                 }
             }
             esp_websocket_event_id_t_WEBSOCKET_EVENT_CLOSED => Ok(Self::Closed),
-            #[cfg(esp_idf_version_major = "5")]
+            // IDF 5+ (incl. v6): component emits these; `esp_idf_version_major = "5"` wrongly excluded v6.
+            #[cfg(not(esp_idf_version_major = "4"))]
             esp_websocket_event_id_t_WEBSOCKET_EVENT_BEFORE_CONNECT => Ok(Self::BeforeConnect),
             // esp_websocket_client (Component Registry / IDF 5.4+) emits lifecycle events not present in older IDF.
             // Map to BeforeConnect so high-level code can ignore them like other pre-connect noise.
-            #[cfg(esp_idf_version_major = "5")]
+            #[cfg(not(esp_idf_version_major = "4"))]
             esp_websocket_event_id_t_WEBSOCKET_EVENT_BEGIN => Ok(Self::BeforeConnect),
-            #[cfg(esp_idf_version_major = "5")]
+            #[cfg(not(esp_idf_version_major = "4"))]
             esp_websocket_event_id_t_WEBSOCKET_EVENT_FINISH => Ok(Self::BeforeConnect),
             _ => Err(EspError::from_infallible::<ESP_ERR_INVALID_ARG>().into()),
         }

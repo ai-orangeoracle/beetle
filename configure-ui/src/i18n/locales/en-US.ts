@@ -142,6 +142,18 @@ export const enUS = {
     audioConfig: {
       sectionMain: 'Audio devices',
       sectionMainDesc: 'Configure microphone, speaker, VAD, wake word, and STT/TTS parameters. Restart required after save.',
+      tabOverview: 'Overview',
+      tabMic: 'Microphone',
+      tabSpeaker: 'Speaker',
+      tabSpeech: 'STT & TTS',
+      tabMore: 'Ambient & LED',
+      sectionOverview: 'Quick toggles',
+      overviewIntro:
+        'Turn features on here first, then open each tab for hardware and cloud settings. For daily use you often only need this page.',
+      overviewMicHint: 'Voice in, wake word, speech-to-text',
+      overviewSpkHint: 'Playback and text-to-speech',
+      accordionMicHw: 'Hardware (bit depth, buffer, I2S pins)',
+      accordionSpkHw: 'Pins & SD shutdown',
       sectionBasic: 'Master switch',
       sectionMicrophone: 'Microphone',
       sectionSpeaker: 'Speaker / amplifier',

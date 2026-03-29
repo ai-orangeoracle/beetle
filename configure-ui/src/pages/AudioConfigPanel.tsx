@@ -1,8 +1,12 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import Accordion from '@mui/material/Accordion'
+import AccordionDetails from '@mui/material/AccordionDetails'
+import AccordionSummary from '@mui/material/AccordionSummary'
 import Box from '@mui/material/Box'
 import Button from '@mui/material/Button'
 import Checkbox from '@mui/material/Checkbox'
+import Divider from '@mui/material/Divider'
 import FormControl from '@mui/material/FormControl'
 import FormControlLabel from '@mui/material/FormControlLabel'
 import FormGroup from '@mui/material/FormGroup'
@@ -10,8 +14,14 @@ import InputLabel from '@mui/material/InputLabel'
 import MenuItem from '@mui/material/MenuItem'
 import Select from '@mui/material/Select'
 import Switch from '@mui/material/Switch'
+import List from '@mui/material/List'
+import ListItem from '@mui/material/ListItem'
+import ListItemText from '@mui/material/ListItemText'
+import Tab from '@mui/material/Tab'
+import Tabs from '@mui/material/Tabs'
 import TextField from '@mui/material/TextField'
 import Typography from '@mui/material/Typography'
+import ExpandMoreRounded from '@mui/icons-material/ExpandMoreRounded'
 import SaveRounded from '@mui/icons-material/SaveRounded'
 import HearingRounded from '@mui/icons-material/HearingRounded'
 import type { SelectChangeEvent } from '@mui/material/Select'
@@ -189,11 +199,16 @@ export function AudioConfigPanel() {
   const { setDirty } = useUnsaved()
   const { isRevealed, getRevealHandlers } = useRevealedPasswordFields()
   const [draft, setDraft] = useState<AudioConfig | null>(null)
+  const [audioTab, setAudioTab] = useState(0)
   const form = draft ?? audioConfig ?? defaultAudioConfig()
 
   useEffect(() => {
     void loadAudioConfig()
   }, [loadAudioConfig])
+
+  useEffect(() => {
+    if (!form.enabled) setAudioTab(0)
+  }, [form.enabled])
 
   const saveDisabled = saveFeedback.status === 'saving'
   const setDraftSafe = (next: AudioConfig) => {
@@ -332,6 +347,98 @@ export function AudioConfigPanel() {
 
           {audioOn ? (
             <>
+              <Tabs
+                value={audioTab}
+                onChange={(_, v) => setAudioTab(v)}
+                variant="scrollable"
+                allowScrollButtonsMobile
+                sx={{
+                  borderBottom: 1,
+                  borderColor: 'var(--border-subtle)',
+                  minHeight: 44,
+                  '& .MuiTab-root': {
+                    minHeight: 44,
+                    textTransform: 'none',
+                    fontSize: '0.875rem',
+                  },
+                }}
+              >
+                <Tab label={t('audioConfig.tabOverview')} />
+                <Tab label={t('audioConfig.tabMic')} />
+                <Tab label={t('audioConfig.tabSpeaker')} />
+                <Tab label={t('audioConfig.tabSpeech')} />
+                <Tab label={t('audioConfig.tabMore')} />
+              </Tabs>
+              <Box sx={{ pt: 2.5 }}>
+                {audioTab === 0 && (
+                  <FormSectionSub title={t('audioConfig.sectionOverview')}>
+                    <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                      {t('audioConfig.overviewIntro')}
+                    </Typography>
+                    <List
+                      disablePadding
+                      sx={{
+                        border: '1px solid var(--border-subtle)',
+                        borderRadius: 'var(--radius-card)',
+                        overflow: 'hidden',
+                      }}
+                    >
+                      <ListItem
+                        secondaryAction={
+                          <Switch
+                            edge="end"
+                            checked={form.microphone.enabled}
+                            onChange={(_, checked) =>
+                              setDraftSafe({
+                                ...form,
+                                microphone: { ...form.microphone, enabled: checked },
+                              })
+                            }
+                          />
+                        }
+                        sx={{ py: 1.75, px: 2, alignItems: 'flex-start' }}
+                      >
+                        <ListItemText
+                          primary={t('audioConfig.microphoneEnabled')}
+                          secondary={t('audioConfig.overviewMicHint')}
+                          primaryTypographyProps={{ variant: 'body2', fontWeight: 600 }}
+                          secondaryTypographyProps={{
+                            variant: 'caption',
+                            sx: { display: 'block', mt: 0.5 },
+                          }}
+                        />
+                      </ListItem>
+                      <Divider component="li" sx={{ borderColor: 'var(--border-subtle)' }} />
+                      <ListItem
+                        secondaryAction={
+                          <Switch
+                            edge="end"
+                            checked={form.speaker.enabled}
+                            onChange={(_, checked) =>
+                              setDraftSafe({
+                                ...form,
+                                speaker: { ...form.speaker, enabled: checked },
+                              })
+                            }
+                          />
+                        }
+                        sx={{ py: 1.75, px: 2, alignItems: 'flex-start' }}
+                      >
+                        <ListItemText
+                          primary={t('audioConfig.speakerEnabled')}
+                          secondary={t('audioConfig.overviewSpkHint')}
+                          primaryTypographyProps={{ variant: 'body2', fontWeight: 600 }}
+                          secondaryTypographyProps={{
+                            variant: 'caption',
+                            sx: { display: 'block', mt: 0.5 },
+                          }}
+                        />
+                      </ListItem>
+                    </List>
+                  </FormSectionSub>
+                )}
+
+                {audioTab === 1 && (
               <FormSectionSub title={t('audioConfig.sectionMicrophone')}>
                 <FormControlLabel
                   control={
@@ -348,7 +455,8 @@ export function AudioConfigPanel() {
                   label={t('audioConfig.microphoneEnabled')}
                 />
                 {micOn ? (
-                  <Box sx={fieldGridSx}>
+                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                    <Box sx={fieldGridSx}>
                     <FormControl size="small" fullWidth>
                       <InputLabel id="mic-device-type">{t('audioConfig.deviceType')}</InputLabel>
                       <Select
@@ -396,6 +504,26 @@ export function AudioConfigPanel() {
                         ))}
                       </Select>
                     </FormControl>
+                    </Box>
+                    <Accordion
+                      defaultExpanded={false}
+                      disableGutters
+                      elevation={0}
+                      sx={{
+                        '&:before': { display: 'none' },
+                        border: '1px solid var(--border-subtle)',
+                        borderRadius: 'var(--radius-card)',
+                        boxShadow: 'none',
+                        '&.Mui-expanded': { m: 0 },
+                      }}
+                    >
+                      <AccordionSummary expandIcon={<ExpandMoreRounded />}>
+                        <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                          {t('audioConfig.accordionMicHw')}
+                        </Typography>
+                      </AccordionSummary>
+                      <AccordionDetails sx={{ pt: 0, px: 0 }}>
+                        <Box sx={fieldGridSx}>
                     <FormControl size="small" fullWidth>
                       <InputLabel id="mic-bits">{t('audioConfig.bitsPerSample')}</InputLabel>
                       <Select
@@ -488,10 +616,15 @@ export function AudioConfigPanel() {
                         })
                       }}
                     />
+                        </Box>
+                      </AccordionDetails>
+                    </Accordion>
                   </Box>
                 ) : null}
               </FormSectionSub>
+                )}
 
+                {audioTab === 2 && (
               <FormSectionSub title={t('audioConfig.sectionSpeaker')}>
                 <FormControlLabel
                   control={
@@ -509,26 +642,6 @@ export function AudioConfigPanel() {
                 />
                 {spkOn ? (
                   <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                    <FormControlLabel
-                      control={
-                        <Switch
-                          checked={form.speaker.pins.sd != null}
-                          onChange={(_, checked) =>
-                            setDraftSafe({
-                              ...form,
-                              speaker: {
-                                ...form.speaker,
-                                pins: {
-                                  ...form.speaker.pins,
-                                  sd: checked ? (form.speaker.pins.sd ?? 21) : null,
-                                },
-                              },
-                            })
-                          }
-                        />
-                      }
-                      label={t('audioConfig.useSdPin')}
-                    />
                     <Box sx={fieldGridSx}>
                       <FormControl size="small" fullWidth>
                         <InputLabel id="spk-device-type">{t('audioConfig.deviceType')}</InputLabel>
@@ -599,77 +712,124 @@ export function AudioConfigPanel() {
                           ))}
                         </Select>
                       </FormControl>
-                      <TextField
-                        size="small"
-                        label={t('audioConfig.pinWs')}
-                        value={String(form.speaker.pins.ws)}
-                        onChange={(e) => {
-                          const v = asNumber(e.target.value)
-                          if (v == null) return
-                          setDraftSafe({
-                            ...form,
-                            speaker: {
-                              ...form.speaker,
-                              pins: { ...form.speaker.pins, ws: Math.trunc(v) },
-                            },
-                          })
-                        }}
-                      />
-                      <TextField
-                        size="small"
-                        label={t('audioConfig.pinSck')}
-                        value={String(form.speaker.pins.sck)}
-                        onChange={(e) => {
-                          const v = asNumber(e.target.value)
-                          if (v == null) return
-                          setDraftSafe({
-                            ...form,
-                            speaker: {
-                              ...form.speaker,
-                              pins: { ...form.speaker.pins, sck: Math.trunc(v) },
-                            },
-                          })
-                        }}
-                      />
-                      <TextField
-                        size="small"
-                        label={t('audioConfig.pinDout')}
-                        value={String(form.speaker.pins.dout)}
-                        onChange={(e) => {
-                          const v = asNumber(e.target.value)
-                          if (v == null) return
-                          setDraftSafe({
-                            ...form,
-                            speaker: {
-                              ...form.speaker,
-                              pins: { ...form.speaker.pins, dout: Math.trunc(v) },
-                            },
-                          })
-                        }}
-                      />
-                      {form.speaker.pins.sd != null ? (
-                        <TextField
-                          size="small"
-                          label={t('audioConfig.pinSdOptional')}
-                          value={String(form.speaker.pins.sd)}
-                          onChange={(e) => {
-                            const v = asNumber(e.target.value)
-                            if (v == null) return
-                            setDraftSafe({
-                              ...form,
-                              speaker: {
-                                ...form.speaker,
-                                pins: { ...form.speaker.pins, sd: Math.trunc(v) },
-                              },
-                            })
-                          }}
-                        />
-                      ) : null}
                     </Box>
+                    <Accordion
+                      defaultExpanded={false}
+                      disableGutters
+                      elevation={0}
+                      sx={{
+                        '&:before': { display: 'none' },
+                        border: '1px solid var(--border-subtle)',
+                        borderRadius: 'var(--radius-card)',
+                        boxShadow: 'none',
+                        '&.Mui-expanded': { m: 0 },
+                      }}
+                    >
+                      <AccordionSummary expandIcon={<ExpandMoreRounded />}>
+                        <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                          {t('audioConfig.accordionSpkHw')}
+                        </Typography>
+                      </AccordionSummary>
+                      <AccordionDetails sx={{ pt: 0, px: 0 }}>
+                        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                          <FormControlLabel
+                            control={
+                              <Switch
+                                checked={form.speaker.pins.sd != null}
+                                onChange={(_, checked) =>
+                                  setDraftSafe({
+                                    ...form,
+                                    speaker: {
+                                      ...form.speaker,
+                                      pins: {
+                                        ...form.speaker.pins,
+                                        sd: checked ? (form.speaker.pins.sd ?? 21) : null,
+                                      },
+                                    },
+                                  })
+                                }
+                              />
+                            }
+                            label={t('audioConfig.useSdPin')}
+                          />
+                          <Box sx={fieldGridSx}>
+                            <TextField
+                              size="small"
+                              label={t('audioConfig.pinWs')}
+                              value={String(form.speaker.pins.ws)}
+                              onChange={(e) => {
+                                const v = asNumber(e.target.value)
+                                if (v == null) return
+                                setDraftSafe({
+                                  ...form,
+                                  speaker: {
+                                    ...form.speaker,
+                                    pins: { ...form.speaker.pins, ws: Math.trunc(v) },
+                                  },
+                                })
+                              }}
+                            />
+                            <TextField
+                              size="small"
+                              label={t('audioConfig.pinSck')}
+                              value={String(form.speaker.pins.sck)}
+                              onChange={(e) => {
+                                const v = asNumber(e.target.value)
+                                if (v == null) return
+                                setDraftSafe({
+                                  ...form,
+                                  speaker: {
+                                    ...form.speaker,
+                                    pins: { ...form.speaker.pins, sck: Math.trunc(v) },
+                                  },
+                                })
+                              }}
+                            />
+                            <TextField
+                              size="small"
+                              label={t('audioConfig.pinDout')}
+                              value={String(form.speaker.pins.dout)}
+                              onChange={(e) => {
+                                const v = asNumber(e.target.value)
+                                if (v == null) return
+                                setDraftSafe({
+                                  ...form,
+                                  speaker: {
+                                    ...form.speaker,
+                                    pins: { ...form.speaker.pins, dout: Math.trunc(v) },
+                                  },
+                                })
+                              }}
+                            />
+                            {form.speaker.pins.sd != null ? (
+                              <TextField
+                                size="small"
+                                label={t('audioConfig.pinSdOptional')}
+                                value={String(form.speaker.pins.sd)}
+                                onChange={(e) => {
+                                  const v = asNumber(e.target.value)
+                                  if (v == null) return
+                                  setDraftSafe({
+                                    ...form,
+                                    speaker: {
+                                      ...form.speaker,
+                                      pins: { ...form.speaker.pins, sd: Math.trunc(v) },
+                                    },
+                                  })
+                                }}
+                              />
+                            ) : null}
+                          </Box>
+                        </Box>
+                      </AccordionDetails>
+                    </Accordion>
                   </Box>
                 ) : null}
               </FormSectionSub>
+                )}
 
+                {audioTab === 3 && (
+                <>
               {showVadWake ? (
                 <FormSectionSub title={t('audioConfig.sectionVadWakeWord')}>
                   <Box sx={fieldGridSx}>
@@ -1063,8 +1223,10 @@ export function AudioConfigPanel() {
                   ) : null}
                 </FormSectionSub>
               ) : null}
+                </>
+                )}
 
-              {showAmbientBlock || showLedBlock ? (
+              {audioTab === 4 && (showAmbientBlock || showLedBlock) ? (
                 <>
                   {showAmbientBlock ? (
                     <FormSectionSub title={t('audioConfig.sectionAmbient')}>
@@ -1331,6 +1493,7 @@ export function AudioConfigPanel() {
                   ) : null}
                 </>
               ) : null}
+              </Box>
             </>
           ) : null}
         </FormFieldStack>

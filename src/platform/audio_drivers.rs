@@ -148,7 +148,8 @@ fn init_mic_channel(seg: &AudioSegment) -> Result<MicState> {
 
     // -- 1. Allocate channel on I2S port 0, RX only --------------------------
     let chan_cfg = i2s_chan_config_t {
-        id: i2s_port_t_I2S_NUM_0,
+        // IDF 6: `i2s_port_t` is plain `c_int`; peripheral 0 == I2S0.
+        id: 0,
         role: i2s_role_t_I2S_ROLE_MASTER,
         dma_desc_num: 6,
         dma_frame_num: 240,
@@ -256,7 +257,7 @@ fn init_speaker_channel(seg: &AudioSegment) -> Result<SpeakerState> {
 
     // -- 1. Allocate channel on I2S port 1, TX only --------------------------
     let chan_cfg = i2s_chan_config_t {
-        id: i2s_port_t_I2S_NUM_1,
+        id: 1,
         role: i2s_role_t_I2S_ROLE_MASTER,
         dma_desc_num: 6,
         dma_frame_num: 240,

@@ -137,19 +137,53 @@ mod esp_backend {
             }
 
             // --- Initialize SPI bus ---
-            // ESP-IDF 5.4 bindings use anonymous unions for pin fields.
-            let mut bus_cfg: spi_bus_config_t = unsafe { core::mem::zeroed() };
-            bus_cfg.__bindgen_anon_1.mosi_io_num = spi.mosi;
-            bus_cfg.__bindgen_anon_2.miso_io_num = -1;
-            bus_cfg.sclk_io_num = spi.sclk;
-            bus_cfg.__bindgen_anon_3.quadwp_io_num = -1;
-            bus_cfg.__bindgen_anon_4.quadhd_io_num = -1;
-            bus_cfg.data4_io_num = -1;
-            bus_cfg.data5_io_num = -1;
-            bus_cfg.data6_io_num = -1;
-            bus_cfg.data7_io_num = -1;
-            bus_cfg.max_transfer_sz = framebuf_len as i32;
-            bus_cfg.flags = SPICOMMON_BUSFLAG_MASTER;
+            // Bindgen layout differs: IDF 5.x flat-ish anon fields vs IDF 6 extra nesting
+            // (same as `esp-idf-hal` `SpiDriver::new_internal`).
+            #[cfg(not(esp_idf_version_at_least_6_0_0))]
+            let bus_cfg = {
+                let mut bus_cfg: spi_bus_config_t = unsafe { core::mem::zeroed() };
+                bus_cfg.__bindgen_anon_1.mosi_io_num = spi.mosi;
+                bus_cfg.__bindgen_anon_2.miso_io_num = -1;
+                bus_cfg.sclk_io_num = spi.sclk;
+                bus_cfg.__bindgen_anon_3.quadwp_io_num = -1;
+                bus_cfg.__bindgen_anon_4.quadhd_io_num = -1;
+                bus_cfg.data4_io_num = -1;
+                bus_cfg.data5_io_num = -1;
+                bus_cfg.data6_io_num = -1;
+                bus_cfg.data7_io_num = -1;
+                bus_cfg.max_transfer_sz = framebuf_len as i32;
+                bus_cfg.flags = SPICOMMON_BUSFLAG_MASTER;
+                bus_cfg
+            };
+            #[cfg(esp_idf_version_at_least_6_0_0)]
+            let bus_cfg = spi_bus_config_t {
+                __bindgen_anon_1: spi_bus_config_t__bindgen_ty_1 {
+                    __bindgen_anon_1: spi_bus_config_t__bindgen_ty_1__bindgen_ty_1 {
+                        sclk_io_num: spi.sclk,
+                        data4_io_num: -1,
+                        data5_io_num: -1,
+                        data6_io_num: -1,
+                        data7_io_num: -1,
+                        __bindgen_anon_1: spi_bus_config_t__bindgen_ty_1__bindgen_ty_1__bindgen_ty_1 {
+                            mosi_io_num: spi.mosi,
+                        },
+                        __bindgen_anon_2: spi_bus_config_t__bindgen_ty_1__bindgen_ty_1__bindgen_ty_2 {
+                            miso_io_num: -1,
+                        },
+                        __bindgen_anon_3: spi_bus_config_t__bindgen_ty_1__bindgen_ty_1__bindgen_ty_3 {
+                            quadwp_io_num: -1,
+                        },
+                        __bindgen_anon_4: spi_bus_config_t__bindgen_ty_1__bindgen_ty_1__bindgen_ty_4 {
+                            quadhd_io_num: -1,
+                        },
+                    },
+                },
+                data_io_default_level: false,
+                max_transfer_sz: framebuf_len as i32,
+                flags: SPICOMMON_BUSFLAG_MASTER,
+                isr_cpu_id: esp_intr_cpu_affinity_t_ESP_INTR_CPU_AFFINITY_AUTO,
+                intr_flags: 0,
+            };
             let spi_host = spi.host as u32;
             unsafe {
                 let ret = spi_bus_initialize(spi_host, &bus_cfg, spi_common_dma_t_SPI_DMA_CH_AUTO);
