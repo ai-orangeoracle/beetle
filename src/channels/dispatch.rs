@@ -478,7 +478,7 @@ pub fn spawn_sender_threads(
         let qq_cache = c.msg_id_cache;
         crate::util::spawn_guarded_with_profile(
             "qq_sender",
-            16384,
+            8192,
             Some(crate::util::SpawnCore::Core0),
             crate::util::HttpThreadRole::Io,
             move || {

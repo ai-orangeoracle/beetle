@@ -124,7 +124,7 @@ pub fn connect(config: &AppConfig) -> Result<Option<WifiScanHandle>> {
     let (scan_resp_tx, scan_resp_rx) = mpsc::channel::<ScanResponse>();
     crate::util::spawn_guarded_with_profile(
         "wifi_worker",
-        16384,
+        8192,
         Some(crate::util::SpawnCore::Core0),
         crate::util::HttpThreadRole::Io,
         move || {

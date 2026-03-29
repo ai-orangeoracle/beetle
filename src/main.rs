@@ -424,7 +424,7 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
         let session_http = Arc::clone(&session_store);
         let http_inbound_tx = user_inbound_tx.clone();
         let http_qq_cache = Arc::clone(&qq_msg_id_cache);
-        spawn_planned("http_server", 16384, move || {
+        spawn_planned("http_server", 8192, move || {
             if let Err(e) = beetle::platform::http_server::run(
                 platform_http,
                 inc,
@@ -850,7 +850,7 @@ fn run_app(platform: std::sync::Arc<dyn Platform>, config: Arc<AppConfig>, wifi_
         let outbound_rx_for_dispatch = outbound_rx;
         let sinks_clone = Arc::clone(&sinks);
         // Increased stack for QQ message handling (JSON serialization + HTTP can exceed 8KB).
-        spawn_planned("dispatch", 16384, move || {
+        spawn_planned("dispatch", 8192, move || {
             run_dispatch(outbound_rx_for_dispatch, sinks_clone)
         });
 
