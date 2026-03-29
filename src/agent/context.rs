@@ -106,9 +106,9 @@ pub fn build_context(p: &ContextParams<'_>) -> Result<(String, Vec<Message>)> {
             }
         }
     }
-    // 工具使用行为约束：告诉模型直接调用而非文字描述
+    // 工具使用行为约束：告诉模型直接调用而非文字描述，并鼓励简要说明推理
     if !p.tool_descriptions.is_empty() {
-        let constraint = "\n\nWhen you decide to use a tool, call it directly via structured tool_use. Never describe or narrate the tool call in plain text.";
+        let constraint = "\n\nWhen you decide to use a tool, call it directly via structured tool_use. Never describe or narrate the tool call in plain text. Before using tools, you may briefly explain your reasoning (1-2 sentences) to help track your thought process.";
         let remain = p.system_max_len.saturating_sub(system.len());
         if constraint.len() <= remain {
             system.push_str(constraint);

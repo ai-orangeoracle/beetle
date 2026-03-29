@@ -48,11 +48,11 @@ const REACT_FULL_MSGS_KEPT: usize = REACT_FULL_ROUNDS_KEPT * 2;
 /// 早期轮次工具结果摘要：每条结果保留的首行预览字符数（UTF-8 安全截断）。
 const TOOL_RESULT_PREVIEW_CHARS: usize = 80;
 const TOOL_REPEAT_NOTE_2: &str =
-    "[NOTE: identical tool call #2 - if the outcome is unchanged, try another strategy.]\n";
+    "[NOTE: identical tool call #2 - check the result above. If it's the same as before or didn't help, this approach isn't working. Try a completely different strategy.]\n";
 const TOOL_REPEAT_NOTE_3: &str =
-    "[NOTE: identical tool call #3 - try a different approach or explain the blocker to the user.]\n";
+    "[NOTE: identical tool call #3 - you've tried this exact call multiple times. The repeated results show this method won't work. Either try a fundamentally different approach or explain the blocker to the user.]\n";
 const TOOL_REPEAT_NOTE_MANY: &str =
-    "[NOTE: identical tool call (repeated) - try a different approach or explain the blocker to the user.]\n";
+    "[NOTE: identical tool call (repeated many times) - this is clearly not working. Stop repeating the same call. Either find a completely different solution or honestly explain to the user why you're stuck.]\n";
 
 /// 程序性会话摘要：单次轻量 LLM 调用的 system 提示。
 const SUMMARY_SYSTEM: &str = "You are a conversation summarizer. Compress the following conversation into a concise summary (max 800 chars) preserving key facts, user preferences and pending tasks. Reply with the summary only.";
@@ -401,6 +401,17 @@ pub trait StreamEditor {
     fn send_initial(&self, chat_id: &str, content: &str) -> Result<Option<String>>;
     /// 编辑已发送的消息。
     fn edit(&self, chat_id: &str, message_id: &str, content: &str) -> Result<()>;
+}
+
+/// 单轮进度指标，用于检测 agent 是否陷入无效循环。
+#[derive(Clone, Copy)]
+struct RoundProgress {
+    /// 本轮是否产生新信息（工具成功或内容长度显著增加）
+    new_info: bool,
+    /// 本轮工具调用是否有成功
+    tool_success: bool,
+    /// 本轮 LLM 响应内容长度
+    content_len: usize,
 }
 
 /// Agent 循环的存储与运行参数，由 main 构建并传入 run_agent_loop，减少参数数量。
@@ -1179,6 +1190,9 @@ fn run_worker_path(
     let mut stream_edit_fail_count: u8 = 0; // edit 连续失败计数
     const EDIT_THROTTLE_MS: u64 = 500;
     const MAX_EDIT_FAILURES: u8 = 3;
+    // P1 Enhancement 3: 进度跟踪（最近3轮），用于检测无效循环。
+    let mut progress_history: [Option<RoundProgress>; 3] = [None; 3];
+    let mut any_tool_used = false; // 本次请求是否使用过任何工具
 
     for round in 0..MAX_REACT_ROUNDS {
         latency.react_rounds = round as u32 + 1;
@@ -1200,6 +1214,17 @@ fn run_worker_path(
         }
         if round >= 2 {
             compact_early_tool_rounds(&mut messages, initial_msg_count);
+        }
+        // P1 Enhancement 3: 检测连续3轮无进展，注入提示。
+        if round >= 3
+            && progress_history[0].map_or(false, |p| !p.new_info)
+            && progress_history[1].map_or(false, |p| !p.new_info)
+            && progress_history[2].map_or(false, |p| !p.new_info)
+        {
+            messages.push(Message {
+                role: Cow::Borrowed("user"),
+                content: "[SYSTEM] You've made no progress in the last 3 rounds. The current approach isn't working. Either try a fundamentally different strategy or explain the blocker to the user.".to_string(),
+            });
         }
         let t0 = metrics::record_llm_call_start();
         let llm_round_start = Instant::now();
@@ -1322,6 +1347,14 @@ fn run_worker_path(
                 content.push_str(&tr(UiMessage::ReplyTruncated, loc));
             }
             final_content = content;
+            // P1 Enhancement 3: 记录本轮进度（MaxTokens 路径）。
+            progress_history[0] = progress_history[1];
+            progress_history[1] = progress_history[2];
+            progress_history[2] = Some(RoundProgress {
+                new_info: final_content.len() > 100,
+                tool_success: false,
+                content_len: final_content.len(),
+            });
             break;
         }
 
@@ -1345,7 +1378,37 @@ fn run_worker_path(
                     latency,
                 ));
             }
+            // P1 Enhancement 4: 任务完成检查 - 检测回复是否过短且没用工具（语言无关）。
+            if !any_tool_used && round < MAX_REACT_ROUNDS - 1 && content.len() < 100 {
+                // 回复很短且没用任何工具，可能是敷衍回复，给 LLM 一次机会。
+                messages.push(Message {
+                    role: Cow::Borrowed("assistant"),
+                    content: content.clone(),
+                });
+                messages.push(Message {
+                    role: Cow::Borrowed("user"),
+                    content: "[SYSTEM] Your response is very brief and you haven't used any tools. If the user's query requires gathering information or performing actions, please use appropriate tools to provide a complete answer.".to_string(),
+                });
+                // 记录本轮进度（任务未完成，继续下一轮）。
+                progress_history[0] = progress_history[1];
+                progress_history[1] = progress_history[2];
+                progress_history[2] = Some(RoundProgress {
+                    new_info: false,
+                    tool_success: false,
+                    content_len: content.len(),
+                });
+                continue;
+            }
+
             final_content = content;
+            // P1 Enhancement 3: 记录本轮进度（EndTurn 正常结束路径）。
+            progress_history[0] = progress_history[1];
+            progress_history[1] = progress_history[2];
+            progress_history[2] = Some(RoundProgress {
+                new_info: final_content.len() > 100,
+                tool_success: false,
+                content_len: final_content.len(),
+            });
             break;
         }
 
@@ -1371,6 +1434,8 @@ fn run_worker_path(
             user_content_raw.push_str(TOOL_RESULTS_PREFIX);
             let mut truncated = false;
             latency.tool_calls = latency.tool_calls.saturating_add(tool_calls.len() as u32);
+            // P1 Enhancement 3: 跟踪本轮工具是否有成功。
+            let mut round_tool_success = false;
             for (i, tc) in tool_calls.iter().enumerate() {
                 // 流式编辑：进入每个工具前更新进度（Telegram typing ~5s 过期；此处用 edit 续期可见活跃状态）。
                 if let (Some(ref mid), Some(ed)) = (&stream_msg_id, editor) {
@@ -1414,6 +1479,8 @@ fn run_worker_path(
                                         .saturating_add(tool_exec_start.elapsed().as_millis());
                                     metrics::record_tool_call(true);
                                     result_owned = Some(crate::util::scrub_credentials(&s));
+                                    round_tool_success = true;
+                                    any_tool_used = true;
                                 }
                                 Err(e) => {
                                     latency.tool_exec_ms = latency
@@ -1429,11 +1496,52 @@ fn run_worker_path(
                                     );
                                     state::set_last_error(&e);
                                     tool_error_buf.clear();
+                                    // 根据错误类型生成具体的引导提示
+                                    let hint = match &e {
+                                        crate::error::Error::Config { message, .. } => {
+                                            if message.contains("not found") || message.contains("does not exist") {
+                                                " Try a different approach or verify the resource exists."
+                                            } else if message.contains("invalid") || message.contains("parse") {
+                                                " Check the input format and try with corrected parameters."
+                                            } else {
+                                                " Review the parameters and try a different approach."
+                                            }
+                                        }
+                                        crate::error::Error::Http { status_code, .. } => {
+                                            if *status_code == 404 {
+                                                " Resource not found. Verify the URL or identifier."
+                                            } else if *status_code == 403 || *status_code == 401 {
+                                                " Permission denied. This operation may not be allowed."
+                                            } else if *status_code >= 500 {
+                                                " Server error. Try again later or use an alternative method."
+                                            } else {
+                                                " Consider an alternative approach."
+                                            }
+                                        }
+                                        crate::error::Error::Io { source, .. } => {
+                                            if source.kind() == std::io::ErrorKind::NotFound {
+                                                " File or resource not found. Check the path."
+                                            } else if source.kind() == std::io::ErrorKind::PermissionDenied {
+                                                " Permission denied. This operation may not be allowed."
+                                            } else if source.kind() == std::io::ErrorKind::TimedOut {
+                                                " Operation timed out. Try with simpler parameters or check connectivity."
+                                            } else {
+                                                " Try a different approach."
+                                            }
+                                        }
+                                        _ => {
+                                            if e.is_connect_error() {
+                                                " Connection failed. Check network connectivity or try later."
+                                            } else {
+                                                " Consider an alternative strategy."
+                                            }
+                                        }
+                                    };
                                     let _ = write!(
                                         &mut tool_error_buf,
-                                        "[tool error] {} (stage: {})",
+                                        "[tool error] {}.{}",
                                         e,
-                                        e.stage()
+                                        hint
                                     );
                                     result_view = tool_error_buf.as_str();
                                 }
@@ -1501,6 +1609,14 @@ fn run_worker_path(
                 role: Cow::Borrowed("user"),
                 content: user_content_raw,
             });
+            // P1 Enhancement 3: 记录本轮进度（ToolUse 路径）。
+            progress_history[0] = progress_history[1];
+            progress_history[1] = progress_history[2];
+            progress_history[2] = Some(RoundProgress {
+                new_info: round_tool_success,
+                tool_success: round_tool_success,
+                content_len: 0, // ToolUse 轮次内容长度不重要
+            });
             continue;
         }
 
@@ -1532,6 +1648,14 @@ fn run_worker_path(
             ));
         }
         final_content = content;
+        // P1 Enhancement 3: 记录本轮进度（fallback 路径）。
+        progress_history[0] = progress_history[1];
+        progress_history[1] = progress_history[2];
+        progress_history[2] = Some(RoundProgress {
+            new_info: final_content.len() > 100,
+            tool_success: false,
+            content_len: final_content.len(),
+        });
         break;
     }
     // 流式编辑：最终确认发送完整内容（工具执行中已通过 per-tool 进度 edit 续期可见性）。
